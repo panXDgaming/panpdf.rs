@@ -1,0 +1,35 @@
+[package]
+name = "pdf-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+pdf-bytes = { path = "../pdf-bytes" }
+pdf-cli = { path = "../pdf-cli" }
+pdf-content = { path = "../pdf-content" }
+pdf-edit = { path = "../pdf-edit" }
+pdf-ocr = { path = "../pdf-ocr" }
+pdf-print = { path = "../pdf-print" }
+pdf-paint = { path = "../pdf-paint" }
+pdf-render = { path = "../pdf-render" }
+pdf-semantics = { path = "../pdf-semantics" }
+pdf-session = { path = "../pdf-session" }
+pdf-syntax = { path = "../pdf-syntax" }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+pdf-agent = { path = "../pdf-agent" }
+
+# The growth harness carries the fitting of an exponent to a series of
+# measurements, and `AGENTS.md` asks that a measuring instrument be proved on a
+# known answer. An example's tests are not run unless it says so here.
+[[example]]
+name = "blockgrowth"
+path = "examples/blockgrowth.rs"
+test = true
+
+[lints]
+workspace = true
