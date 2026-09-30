@@ -2,7 +2,7 @@ use convert_pdf_canvas::{Canvas, Rgb, TextStyle};
 
 fn font(name: &str) -> Vec<u8> {
     let path = format!(
-        "{}/../../../panpdf.rs/fonts/packaged/{name}",
+        "{}/../../../fonts/packaged/{name}",
         env!("CARGO_MANIFEST_DIR")
     );
     std::fs::read(path).expect("the engine's font package")
@@ -86,7 +86,7 @@ fn a_calibri_paragraph_falls_back_by_script_and_wraps() {
     use convert_pdf_canvas::{FontBook, Span, layout};
     use std::sync::Arc;
     let package = format!(
-        "{}/../../../panpdf.rs/fonts/packaged",
+        "{}/../../../fonts/packaged",
         env!("CARGO_MANIFEST_DIR")
     );
     let provider = pdf_font::system_fonts::SystemFontProvider::discover_in(&[package.into()]);
@@ -123,7 +123,7 @@ fn lao_prefers_document_faces() {
     use convert_pdf_canvas::FontBook;
     use std::sync::Arc;
     let package = format!(
-        "{}/../../../panpdf.rs/fonts/packaged",
+        "{}/../../../fonts/packaged",
         env!("CARGO_MANIFEST_DIR")
     );
     let provider = pdf_font::system_fonts::SystemFontProvider::discover_in(&[package.into()]);

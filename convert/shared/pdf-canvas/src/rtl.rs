@@ -419,7 +419,7 @@ mod tests {
     fn dejavu() -> (crate::Canvas, FontId) {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../../panpdf.rs/fonts/packaged/DejaVuSans.ttf"
+            "/../../../fonts/packaged/DejaVuSans.ttf"
         );
         let mut canvas = crate::Canvas::new();
         let font = canvas

@@ -4,7 +4,7 @@ use convert_pdf_canvas::{Canvas, Direction, FontBook, Line, Span, layout, layout
 
 fn book() -> FontBook {
     let package = format!(
-        "{}/../../../panpdf.rs/fonts/packaged",
+        "{}/../../../fonts/packaged",
         env!("CARGO_MANIFEST_DIR")
     );
     let provider = pdf_font::system_fonts::SystemFontProvider::discover_in(&[package.into()]);

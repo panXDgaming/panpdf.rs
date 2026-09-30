@@ -146,7 +146,7 @@ mod tests {
     fn bold_and_italic_answer_by_their_own_faces() {
         let packaged = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../../panpdf.rs/fonts/packaged"
+            "/../../../fonts/packaged"
         );
         let mut fonts = HeldFonts::new();
         for stem in [

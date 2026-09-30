@@ -146,9 +146,10 @@ reads a page as headings, paragraphs, lists and tables; `convert-layout`,
 `convert-pdf-canvas` and `convert-drawingml` lay out and draw new documents;
 `convert-zip`, `convert-xml` and `convert-office-read` are the file formats)
 and `convert/tools/` is one crate per tool. They were written against this
-engine and are kept byte for byte as that repository has them, apart from
-their lint tables, so a change there can be carried here by copying a
-folder. Each tool's command-line program stays in that repository.
+engine and are kept as that repository has them -- apart from their lint
+tables, the loops clippy 1.98 asked for as arrays, the path their tests take
+to `fonts/packaged`, and a recogniser for `ocr-pdf`'s test, which was an empty
+file there -- so a change there can be carried here by copying a folder.
 
 Two things set them apart from `crates/`. Their lint table is their own:
 `unsafe_code` is `deny` rather than `forbid`, because each tool can name its

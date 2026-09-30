@@ -5,7 +5,7 @@ use convert_structure::bytes_tool::{FontFile, Fonts, Input, Settings};
 fn package() -> Vec<FontFile> {
     let dir = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../../panpdf.rs/fonts/packaged"
+        "/../../../fonts/packaged"
     );
     let mut paths: Vec<_> = std::fs::read_dir(dir)
         .expect("the engine's font package")

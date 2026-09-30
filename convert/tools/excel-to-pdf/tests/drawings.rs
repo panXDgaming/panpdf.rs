@@ -18,7 +18,7 @@ fn fonts() -> HeldFonts {
         ("Noto Sans Thai", "NotoSansThai-Regular.ttf"),
         ("Noto Sans Thai", "NotoSansThai-Bold.ttf"),
     ] {
-        let bytes = std::fs::read(path(&format!("../../../panpdf.rs/fonts/packaged/{file}")))
+        let bytes = std::fs::read(path(&format!("../../../fonts/packaged/{file}")))
             .expect("the engine's font package");
         held.add(family, bytes).expect(file);
     }
