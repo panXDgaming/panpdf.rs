@@ -1,0 +1,16 @@
+[package]
+name = "convert-pdftool"
+description = "What every PDF-to-PDF tool shares: options, files in and out, the desktop program and the browser exports"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

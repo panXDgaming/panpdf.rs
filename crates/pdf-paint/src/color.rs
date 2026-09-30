@@ -594,7 +594,11 @@ fn parse_icc_based(
         if let Some(value) = calibrated_entry(operation, &profile.source, entries, b"/Range")? {
             let values = source_number_vector(operation, &profile.source, value)?;
             if values.len() != components.value * 2
-                || values.chunks_exact(2).any(|pair| pair[0] > pair[1])
+                || values
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .any(|pair| pair[0] > pair[1])
             {
                 return Err(InterpretError::at(
                     operation,
@@ -1019,7 +1023,9 @@ fn indexed_base_ranges(base: &IndexedBase) -> Vec<[f64; 2]> {
         IndexedBase::IccBased(space) => space
             .range
             .value
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|pair| [pair[0], pair[1]])
             .collect(),
         IndexedBase::Separation(space) => {
@@ -1189,7 +1195,7 @@ fn validate_icc_bytes(
         .filter(|end| *end <= bytes.len())
         .ok_or_else(|| InterpretError::at(operation, InterpretErrorKind::InvalidIccProfile))?;
     let mut tags = std::collections::HashSet::new();
-    for record in bytes[132..table_bytes].chunks_exact(12) {
+    for record in bytes[132..table_bytes].as_chunks::<12>().0 {
         if !tags.insert(<[u8; 4]>::try_from(&record[0..4]).unwrap()) {
             return Err(InterpretError::at(
                 operation,
@@ -1311,7 +1317,7 @@ pub(crate) fn group_blend_space_supported(space: &ColorSpace) -> bool {
         | ColorSpace::CalRgb(_) => true,
         ColorSpace::IccBased(space) => {
             space.header.data_color_space != *b"Lab "
-                && space.range.value.chunks_exact(2).all(|pair| {
+                && space.range.value.as_chunks::<2>().0.iter().all(|pair| {
                     pair[0].to_bits() == 0.0_f64.to_bits() && pair[1].to_bits() == 1.0_f64.to_bits()
                 })
         }

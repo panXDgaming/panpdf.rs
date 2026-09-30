@@ -761,7 +761,12 @@ impl Interpreter {
                         })?;
                     ranges.push(value);
                 }
-                if ranges.chunks_exact(2).any(|pair| pair[0] > pair[1]) {
+                if ranges
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .any(|pair| pair[0] > pair[1])
+                {
                     return Err(InterpretError::at(
                         operation,
                         InterpretErrorKind::InvalidImageEntry,

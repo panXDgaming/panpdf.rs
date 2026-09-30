@@ -868,7 +868,11 @@ fn function_domain_vector(
     )?;
     if domain.is_empty()
         || domain.len() % 2 != 0
-        || domain.chunks_exact(2).any(|pair| pair[0] >= pair[1])
+        || domain
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .any(|pair| pair[0] >= pair[1])
     {
         return Err(InterpretError::at(
             operation,
@@ -893,7 +897,13 @@ fn function_range(
         object,
         InterpretErrorKind::InvalidFunction,
     )?;
-    if range.len() != outputs * 2 || range.chunks_exact(2).any(|pair| pair[0] > pair[1]) {
+    if range.len() != outputs * 2
+        || range
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .any(|pair| pair[0] > pair[1])
+    {
         return Err(InterpretError::at(
             operation,
             InterpretErrorKind::InvalidFunction,

@@ -21,6 +21,44 @@ members = [
     "crates/pdf-security",
     "crates/pdf-syntax",
     "crates/pdf-window",
+    "convert/shared/cli",
+    "convert/shared/drawingml",
+    "convert/shared/files",
+    "convert/shared/gif",
+    "convert/shared/layout",
+    "convert/shared/office-read",
+    "convert/shared/ooxml",
+    "convert/shared/pdf-canvas",
+    "convert/shared/pdfdoc",
+    "convert/shared/pdftool",
+    "convert/shared/raster",
+    "convert/shared/structure",
+    "convert/shared/svg",
+    "convert/shared/wasm",
+    "convert/shared/xml",
+    "convert/shared/zip",
+    "convert/tools/compare-pdf",
+    "convert/tools/compress-pdf",
+    "convert/tools/excel-to-pdf",
+    "convert/tools/html-to-pdf",
+    "convert/tools/image-to-pdf",
+    "convert/tools/ocr-pdf",
+    "convert/tools/pdf-to-excel",
+    "convert/tools/pdf-to-html",
+    "convert/tools/pdf-to-image",
+    "convert/tools/pdf-to-markdown",
+    "convert/tools/pdf-to-pdfa",
+    "convert/tools/pdf-to-powerpoint",
+    "convert/tools/pdf-to-text",
+    "convert/tools/pdf-to-word",
+    "convert/tools/powerpoint-to-pdf",
+    "convert/tools/protect-pdf",
+    "convert/tools/redact-pdf",
+    "convert/tools/repair-pdf",
+    "convert/tools/scan-to-pdf",
+    "convert/tools/sign-pdf",
+    "convert/tools/unlock-pdf",
+    "convert/tools/word-to-pdf",
 ]
 
 [workspace.package]
@@ -29,6 +67,36 @@ edition = "2024"
 rust-version = "1.97"
 license = "AGPL-3.0-only"
 repository = "https://github.com/panXDgaming/panpdf.rs"
+publish = false
+
+[workspace.dependencies]
+pdf-bytes = { path = "crates/pdf-bytes" }
+pdf-content = { path = "crates/pdf-content" }
+pdf-edit = { path = "crates/pdf-edit" }
+pdf-font = { path = "crates/pdf-font" }
+pdf-ocr = { path = "crates/pdf-ocr" }
+pdf-paint = { path = "crates/pdf-paint" }
+pdf-render = { path = "crates/pdf-render" }
+pdf-security = { path = "crates/pdf-security" }
+pdf-semantics = { path = "crates/pdf-semantics" }
+pdf-session = { path = "crates/pdf-session" }
+pdf-syntax = { path = "crates/pdf-syntax" }
+convert-cli = { path = "convert/shared/cli" }
+convert-drawingml = { path = "convert/shared/drawingml" }
+convert-files = { path = "convert/shared/files" }
+convert-gif = { path = "convert/shared/gif" }
+convert-layout = { path = "convert/shared/layout" }
+convert-office-read = { path = "convert/shared/office-read" }
+convert-ooxml = { path = "convert/shared/ooxml" }
+convert-pdf-canvas = { path = "convert/shared/pdf-canvas" }
+convert-pdfdoc = { path = "convert/shared/pdfdoc" }
+convert-pdftool = { path = "convert/shared/pdftool" }
+convert-raster = { path = "convert/shared/raster" }
+convert-structure = { path = "convert/shared/structure" }
+convert-svg = { path = "convert/shared/svg" }
+convert-wasm = { path = "convert/shared/wasm" }
+convert-xml = { path = "convert/shared/xml" }
+convert-zip = { path = "convert/shared/zip", default-features = false }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

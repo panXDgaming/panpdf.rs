@@ -42,7 +42,9 @@ pub fn read_page(
         height: canvas.height,
         pixels: canvas
             .to_rgb8()
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|pixel| {
                 let sum = 299 * u32::from(pixel[0])
                     + 587 * u32::from(pixel[1])

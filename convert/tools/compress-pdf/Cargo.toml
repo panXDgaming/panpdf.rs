@@ -1,0 +1,32 @@
+[package]
+name = "compress-pdf"
+description = "A PDF made smaller: pictures resampled and re-encoded, duplicates merged, object streams"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "compress-pdf"
+path = "src/main.rs"
+
+[dependencies]
+convert-files.workspace = true
+convert-raster = { workspace = true, features = ["paint"] }
+convert-pdfdoc.workspace = true
+pdf-bytes.workspace = true
+pdf-paint.workspace = true
+pdf-session.workspace = true
+
+[dev-dependencies]
+pdf-content.workspace = true
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

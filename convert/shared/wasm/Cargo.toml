@@ -1,0 +1,18 @@
+[package]
+name = "convert-wasm"
+description = "What every browser bundle shares: bytes in, bytes out, progress"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[dependencies]
+convert-structure.workspace = true
+convert-zip.workspace = true

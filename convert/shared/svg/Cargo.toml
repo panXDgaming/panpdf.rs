@@ -1,0 +1,17 @@
+[package]
+name = "convert-svg"
+description = "SVG drawn as PDF vector graphics: shapes, paths, gradients, clipping, text through the caller's shaping"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+convert-pdf-canvas.workspace = true
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

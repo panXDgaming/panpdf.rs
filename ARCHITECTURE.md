@@ -137,6 +137,27 @@ frame. The window draws such a frame from those same rows and that same rule
 about which run a line takes, so what a person sees given up is what the text
 gives up.
 
+The converters (2026-09-30) are the tools of `github.com/panXDgaming/pdf_tool`
+-- PDF to Word, Excel, PowerPoint, HTML, Markdown, text and pictures, those
+formats back to PDF, and compress, repair, redact, protect, unlock, sign,
+compare and PDF/A -- carried in `convert/` so the window can run them in the
+same process. `convert/shared/` is what they share (`convert-structure`
+reads a page as headings, paragraphs, lists and tables; `convert-layout`,
+`convert-pdf-canvas` and `convert-drawingml` lay out and draw new documents;
+`convert-zip`, `convert-xml` and `convert-office-read` are the file formats)
+and `convert/tools/` is one crate per tool. They were written against this
+engine and are kept byte for byte as that repository has them, apart from
+their lint tables, so a change there can be carried here by copying a
+folder. Each tool's command-line program stays in that repository.
+
+Two things set them apart from `crates/`. Their lint table is their own:
+`unsafe_code` is `deny` rather than `forbid`, because each tool can name its
+exports for a browser bundle, which only a `wasm32` build compiles and which
+is never linked into the window; and clippy holds them to `all` rather than
+`pedantic`. And because every tool names the same exports, no two of them may
+be linked into one `wasm32` program, so nothing that the browser target builds
+may depend on them.
+
 Cycles are architecture failures.
 Rendering does not write PDFs. Semantics does not mutate atoms. The writer does
 not infer user intent.
@@ -264,3 +285,8 @@ change here; an edge added needs a reason above.
 | `pdf-window` | `pdf-agent`, `pdf-app`, `pdf-bytes`, `pdf-cli`, `pdf-content`, `pdf-edit`, `pdf-heap`, `pdf-ocr`, `pdf-paint`, `pdf-print`, `pdf-render`, `pdf-semantics`, `pdf-session`, `pdf-syntax` |
 | `pdf-desktop` | `pdf-app`, `pdf-bytes`, `pdf-cli`, `pdf-edit`, `pdf-semantics`, `pdf-session`, `pdf-window` |
 | `pdf-agent` | `pdf-bytes`, `pdf-cli`, `pdf-content`, `pdf-edit`, `pdf-paint`, `pdf-render`, `pdf-semantics`, `pdf-session` |
+
+A crate in `convert/` may depend on the engine crates `pdf-bytes`,
+`pdf-syntax`, `pdf-security`, `pdf-font`, `pdf-content`, `pdf-paint`,
+`pdf-render`, `pdf-semantics`, `pdf-edit`, `pdf-session` and `pdf-ocr`, and on
+other crates in `convert/`. No crate in `crates/` depends on one of them.

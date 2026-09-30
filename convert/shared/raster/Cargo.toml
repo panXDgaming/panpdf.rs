@@ -1,0 +1,29 @@
+[package]
+name = "convert-raster"
+description = "Pictures as pixels: an in-house baseline JPEG encoder, scaling, grey, turning, a photographed page made scanned"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+files = ["dep:pdf-edit"]
+paint = ["dep:pdf-paint", "dep:pdf-render", "dep:pdf-bytes", "dep:pdf-syntax"]
+
+[dependencies]
+pdf-edit = { workspace = true, optional = true }
+pdf-paint = { workspace = true, optional = true }
+pdf-render = { workspace = true, optional = true }
+pdf-bytes = { workspace = true, optional = true }
+pdf-syntax = { workspace = true, optional = true }
+
+[dev-dependencies]
+pdf-paint.workspace = true
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

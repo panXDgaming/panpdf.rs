@@ -298,7 +298,9 @@ fn curve(tag: &[u8]) -> Option<Curve> {
                     let samples = tag.get(12..12 + count.checked_mul(2)?)?;
                     Some(Curve::Sampled(
                         samples
-                            .chunks_exact(2)
+                            .as_chunks::<2>()
+                            .0
+                            .iter()
                             .map(|pair| f64::from(u16::from_be_bytes([pair[0], pair[1]])) / 65535.0)
                             .collect(),
                     ))

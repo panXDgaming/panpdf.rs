@@ -1,0 +1,21 @@
+[package]
+name = "convert-zip"
+description = "A ZIP writer: stored and deflated entries, CRC-32, central directory"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+default = ["deflate"]
+deflate = ["dep:pdf-syntax"]
+
+[dependencies]
+pdf-syntax = { workspace = true, optional = true }
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

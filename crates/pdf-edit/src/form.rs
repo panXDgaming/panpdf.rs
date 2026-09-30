@@ -453,7 +453,9 @@ impl Reader {
 fn text_string(bytes: &[u8]) -> String {
     if let Some(rest) = bytes.strip_prefix(b"\xfe\xff") {
         let units: Vec<u16> = rest
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
             .collect();
         return String::from_utf16_lossy(&units);

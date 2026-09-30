@@ -31,8 +31,8 @@ pub fn digest(data: &[u8]) -> [u8; 20] {
     block[56..].copy_from_slice(&bits.to_be_bytes());
     compress(&mut state, &block);
     let mut out = [0_u8; 20];
-    for (word, place) in state.iter().zip(out.chunks_exact_mut(4)) {
-        place.copy_from_slice(&word.to_be_bytes());
+    for (word, place) in state.iter().zip(out.as_chunks_mut::<4>().0) {
+        *place = word.to_be_bytes();
     }
     out
 }
@@ -43,8 +43,8 @@ pub fn digest(data: &[u8]) -> [u8; 20] {
 )]
 fn compress(state: &mut [u32; 5], block: &[u8; 64]) {
     let mut words = [0_u32; 80];
-    for (word, bytes) in words.iter_mut().zip(block.chunks_exact(4)) {
-        *word = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+    for (word, bytes) in words.iter_mut().zip(block.as_chunks::<4>().0) {
+        *word = u32::from_be_bytes(*bytes);
     }
     for at in 16..80 {
         words[at] =

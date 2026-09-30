@@ -1,0 +1,26 @@
+[package]
+name = "scan-to-pdf"
+description = "Photographs of paper to a PDF that looks scanned"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "scan-to-pdf"
+path = "src/main.rs"
+
+[dependencies]
+convert-files.workspace = true
+convert-raster = { workspace = true, features = ["files"] }
+image-to-pdf = { path = "../image-to-pdf", default-features = false }
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

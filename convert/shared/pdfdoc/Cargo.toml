@@ -1,0 +1,19 @@
+[package]
+name = "convert-pdfdoc"
+description = "A PDF held as owned objects: read (decrypted, or recovered from damage), changed, written whole as one clean revision"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+pdf-bytes.workspace = true
+pdf-syntax.workspace = true
+pdf-security.workspace = true
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

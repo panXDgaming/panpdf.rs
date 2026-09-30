@@ -159,8 +159,10 @@ fn string(element: &Element<'_>) -> String {
         0x1e => {
             let pairs: Vec<u16> = element
                 .content
-                .chunks_exact(2)
-                .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|pair| u16::from_be_bytes(*pair))
                 .collect();
             String::from_utf16_lossy(&pairs)
         }

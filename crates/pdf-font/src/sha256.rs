@@ -96,9 +96,9 @@ pub fn digest(bytes: &[u8]) -> [u8; 32] {
     }
     let bits = (bytes.len() as u64).wrapping_mul(8);
     padded.extend_from_slice(&bits.to_be_bytes());
-    for block in padded.chunks_exact(64) {
+    for block in padded.as_chunks::<64>().0 {
         let mut schedule = [0_u32; 64];
-        for (index, word) in block.chunks_exact(4).enumerate() {
+        for (index, word) in block.as_chunks::<4>().0.iter().enumerate() {
             schedule[index] = u32::from_be_bytes([word[0], word[1], word[2], word[3]]);
         }
         for index in 16..64 {

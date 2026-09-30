@@ -153,7 +153,7 @@ fn picture(name: &str, media_type: &'static str, bytes: &[u8]) -> Result<Attachm
 
 fn over_white(rgba: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(rgba.len() / 4 * 3);
-    for pixel in rgba.chunks_exact(4) {
+    for pixel in rgba.as_chunks::<4>().0 {
         let alpha = u32::from(pixel[3]);
         for channel in &pixel[..3] {
             let over = (u32::from(*channel) * alpha + 255 * (255 - alpha)) / 255;
