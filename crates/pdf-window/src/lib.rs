@@ -32,6 +32,7 @@ mod link_tool;
 mod live_typing;
 #[cfg(not(target_arch = "wasm32"))]
 mod memory;
+mod menus;
 mod meter;
 mod moment;
 mod naming;
@@ -50,9 +51,11 @@ mod properties;
 mod reporting;
 mod room;
 pub mod save_file;
+mod shortcuts;
 mod stamp_tool;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod startup;
+mod status_line;
 mod system_dialog;
 mod take_out;
 mod text;

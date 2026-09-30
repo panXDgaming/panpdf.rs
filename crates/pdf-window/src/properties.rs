@@ -163,19 +163,6 @@ impl Window {
         });
     }
 
-    pub(crate) fn read_the_properties_key(&mut self, ctx: &egui::Context) {
-        if self.leaving.is_some()
-            || self.loading.is_some()
-            || self.chooser.is_some()
-            || self.asks_for_a_password()
-        {
-            return;
-        }
-        if ctx.input(|input| input.modifiers.command && input.key_pressed(egui::Key::D)) {
-            self.open_the_properties();
-        }
-    }
-
     fn file_facts(&self) -> FileFacts {
         let Some(source) = self.editor.source() else {
             return FileFacts {

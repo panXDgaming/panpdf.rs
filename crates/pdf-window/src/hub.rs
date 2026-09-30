@@ -34,6 +34,50 @@ fn now() -> u64 {
         .map_or(0, |since| since.as_secs())
 }
 
+pub(crate) const WRITE_AFTER: f64 = 1.0;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Due {
+    Nothing,
+    Wait(f64),
+    Now,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct Keeping {
+    tried: Option<(PathBuf, usize)>,
+    changed_at: Option<f64>,
+}
+
+impl Keeping {
+    pub(crate) fn is_new(&mut self, path: &Path, page: usize) -> bool {
+        let same = self
+            .tried
+            .as_ref()
+            .is_some_and(|(tried, at)| tried == path && *at == page);
+        if !same {
+            self.tried = Some((path.to_path_buf(), page));
+        }
+        !same
+    }
+
+    pub(crate) fn changed(&mut self, now: f64) {
+        self.changed_at.get_or_insert(now);
+    }
+
+    pub(crate) fn written(&mut self) {
+        self.changed_at = None;
+    }
+
+    pub(crate) fn due(&self, now: f64) -> Due {
+        match self.changed_at {
+            None => Due::Nothing,
+            Some(then) if now - then >= WRITE_AFTER => Due::Now,
+            Some(then) => Due::Wait((WRITE_AFTER - (now - then)).max(0.0)),
+        }
+    }
+}
+
 impl Window {
     pub(crate) fn has_document(&self) -> bool {
         self.untitled || !self.opened.as_os_str().is_empty()
@@ -50,15 +94,31 @@ impl Window {
     pub(crate) fn remember_file(&mut self, path: &Path) {
         self.recent = recent::remember(&self.recent, path, self.focus, now());
         self.write_recent();
+        self.recent_keeping.written();
     }
 
-    pub(crate) fn keep_the_page_in_the_list(&mut self) {
-        let listed = self
-            .recent
-            .first()
-            .is_some_and(|head| head.path == self.opened && head.page == self.focus);
-        if !listed && self.loading.is_none() {
-            self.remember_here();
+    pub(crate) fn keep_the_page_in_the_list(&mut self, ctx: &egui::Context) {
+        let seen = ctx.input(|input| input.time);
+        if self.loading.is_none() && self.recent_keeping.is_new(&self.opened, self.focus) {
+            let next = recent::remember(&self.recent, &self.opened, self.focus, now());
+            if next != self.recent {
+                self.recent = next;
+                self.recent_keeping.changed(seen);
+            }
+        }
+        match self.recent_keeping.due(seen) {
+            Due::Now => self.flush_the_recent_list(),
+            Due::Wait(seconds) => {
+                ctx.request_repaint_after(std::time::Duration::from_secs_f64(seconds));
+            }
+            Due::Nothing => {}
+        }
+    }
+
+    pub(crate) fn flush_the_recent_list(&mut self) {
+        if self.recent_keeping.due(f64::INFINITY) == Due::Now {
+            self.write_recent();
+            self.recent_keeping.written();
         }
     }
 
@@ -127,6 +187,7 @@ impl Window {
             Chose::Nothing => {}
             Chose::Cancelled => {
                 self.chooser = None;
+                self.saving_then_leaving = None;
                 self.choosing_for = crate::page_actions::Choosing::Open;
             }
             Chose::Open(path) => {
@@ -174,6 +235,7 @@ impl Window {
             Chose::Save(path) => {
                 self.chooser = None;
                 self.write_what_was_chosen(&path);
+                self.carry_on_after_saving(ctx);
             }
         }
     }

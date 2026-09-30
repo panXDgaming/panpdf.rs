@@ -27,7 +27,6 @@ pub(crate) enum Opened {
 }
 
 pub(crate) fn install_look(ctx: &egui::Context) {
-    set_dark(ctx, false);
     ctx.options_mut(|options| options.zoom_with_keyboard = false);
     ctx.all_styles_mut(|style| {
         style.spacing.item_spacing = egui::vec2(2.0, 4.0);
@@ -43,9 +42,18 @@ pub(crate) fn set_dark(ctx: &egui::Context, dark: bool) {
     });
 }
 
+pub(crate) fn take_the_theme(ctx: &egui::Context, chosen: Option<bool>) -> bool {
+    ctx.options_mut(|options| options.fallback_theme = egui::Theme::Light);
+    match chosen {
+        Some(dark) => set_dark(ctx, dark),
+        None => ctx.set_theme(egui::ThemePreference::System),
+    }
+    ctx.theme() == egui::Theme::Dark
+}
+
 pub(crate) const fn desk(dark: bool) -> egui::Color32 {
     if dark {
-        egui::Color32::from_rgb(0x2a, 0x2b, 0x2e)
+        egui::Color32::from_rgb(0x0f, 0x10, 0x12)
     } else {
         egui::Color32::from_rgb(0xe6, 0xe8, 0xeb)
     }
@@ -891,6 +899,7 @@ pub(crate) struct Window {
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) agents_open: bool,
     pub(crate) dark: bool,
+    pub(crate) dark_chosen: bool,
     pub(crate) asking_to_open: bool,
     pub(crate) restriction_answered: bool,
     pub(crate) lang: Lang,
@@ -918,7 +927,10 @@ pub(crate) struct Window {
     pub(crate) toolbar_area: Option<egui::Rect>,
     pub(crate) held_still: Option<(egui::Pos2, f64)>,
     pub(crate) running: Option<Running>,
-    pub(crate) title: String,
+    pub(crate) system_title: String,
+    pub(crate) status_line: crate::status_line::StatusLine,
+    pub(crate) saving_then_leaving: Option<Leaving>,
+    pub(crate) save_after_the_field: bool,
     pub(crate) destination: PathBuf,
     pub(crate) drag: Option<Drag>,
     pub(crate) tool: Tool,
@@ -933,7 +945,6 @@ pub(crate) struct Window {
     pub(crate) marker: Pen,
     pub(crate) shape: Shape,
     pub(crate) form_tool: FormTool,
-    pub(crate) toolbar_choices: f32,
     pub(crate) toolbar_slack: f32,
     pub(crate) screen_fitted: bool,
     pub(crate) pages_folded: bool,
@@ -998,6 +1009,7 @@ pub(crate) struct Window {
     pub(crate) thumbs_wanted: Vec<usize>,
     pub(crate) home: bool,
     pub(crate) recent: Vec<pdf_app::recent::Recent>,
+    pub(crate) recent_keeping: crate::hub::Keeping,
     pub(crate) chooser: Option<crate::chooser::Chooser>,
     pub(crate) choosing_for: crate::page_actions::Choosing,
     pub(crate) chosen_pages: std::collections::BTreeSet<usize>,

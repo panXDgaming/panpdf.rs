@@ -1094,6 +1094,7 @@ impl Window {
         let view = room::View {
             pages_folded: self.pages_folded,
             pages_width: self.pages_width,
+            dark: self.dark_chosen.then_some(self.dark),
         };
         if let Some(folder) = file.parent() {
             let _ = std::fs::create_dir_all(folder);

@@ -42,6 +42,12 @@ impl Lang {
 
 const SEP: &str = " \u{00b7} ";
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Tone {
+    Trouble,
+    Information,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Message {
     UnsavedChanges,
@@ -456,7 +462,16 @@ pub enum Message {
         page: usize,
         count: usize,
     },
-    ZoomPercent(u32),
+    PageAndZoom {
+        page: usize,
+        count: usize,
+        percent: u32,
+    },
+    WindowTitle {
+        name: String,
+        unsaved: bool,
+    },
+    ProgramName,
 
     Opening(String),
     OpeningFailed,
@@ -780,11 +795,12 @@ pub enum Command {
     SendToBack,
     PreviousPage,
     NextPage,
+    Previous,
+    Next,
     ZoomIn,
     ZoomOut,
     NewDocument,
     AllowEditing,
-    Theme,
     File,
     Edit,
     View,
@@ -803,10 +819,7 @@ pub enum Command {
     Pages,
     HidePages,
     BackToReading,
-    Home,
     Page,
-    BlankPageBefore,
-    BlankPageAfter,
     SameSizeAsThisPage,
     Landscape,
     DeletePage,
@@ -823,16 +836,12 @@ pub enum Command {
     AiAssistant,
     ConnectAgents,
     Print,
-    PagesFromFileBefore,
-    PagesFromFileAfter,
     SaveAs,
     DuplicatePage,
     PagesToNewFile,
     SplitDocument,
     PagesAsPictures,
     PdfFromPictures,
-    PicturesAsPagesBefore,
-    PicturesAsPagesAfter,
     Insert,
     Tools,
     InsertPictures,
@@ -844,6 +853,23 @@ pub enum Command {
     InsertHere,
     AddPages,
     MoreForPage,
+    OpenDocument,
+    CloseDocument,
+    Export,
+    CreateAPdf,
+    PagesToPictures,
+    PicturesToPdf,
+    DocumentProperties,
+    Arrange,
+    Move,
+    InsertABlankPage,
+    InsertPagesFromAFile,
+    PicturesAsPages,
+    BeforeThisPage,
+    AfterThisPage,
+    PickBeforeThisPage,
+    PickAfterThisPage,
+    Assistant,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -907,6 +933,50 @@ impl Message {
     pub fn say(&self, lang: Lang) -> String {
         match lang {
             Lang::English => self.english(),
+        }
+    }
+
+    #[must_use]
+    pub const fn tone(&self) -> Tone {
+        if matches!(
+            self,
+            Self::Refused { .. }
+                | Self::Plain { .. }
+                | Self::OpeningFailed
+                | Self::EditFailedUnexpectedly
+                | Self::PageWillNotReadBack { .. }
+                | Self::CouldNotSave { .. }
+                | Self::CouldNotOpen { .. }
+                | Self::PagesNotRead { .. }
+                | Self::PictureNotRead { .. }
+                | Self::PageWillNotOpen { .. }
+                | Self::WillNotOpenFromDocument { .. }
+                | Self::LinkKindNotOpenable
+                | Self::RangeCannotBeCopied
+                | Self::CouldNotTakePagesOut { .. }
+                | Self::CouldNotWritePictures { .. }
+                | Self::CouldNotMakePages { .. }
+                | Self::NotReplaced { .. }
+                | Self::AnotherEditIsRunning
+                | Self::ResolveDraftBeforeSaving
+                | Self::LinkIsAlreadyThat
+                | Self::NoTextWasTyped
+                | Self::NoAddressesToLink
+                | Self::CaretLostAfterEdit
+                | Self::CaretGoneBeforeStyling
+                | Self::CaretGoneBeforeTyping
+                | Self::CaretGoneBeforeDeleting
+                | Self::BlockTextNotFound
+                | Self::FieldNotADate
+                | Self::FieldNoLink
+                | Self::FieldIsReadOnly
+                | Self::ReplacementHoldsTheSearch
+                | Self::DraftBlocksDelete
+                | Self::AndPressesRefused { .. }
+        ) {
+            Tone::Trouble
+        } else {
+            Tone::Information
         }
     }
 
@@ -1554,11 +1624,12 @@ impl Message {
                 Command::SendToBack => "Send to back",
                 Command::PreviousPage => "Previous page",
                 Command::NextPage => "Next page",
+                Command::Previous => "Previous",
+                Command::Next => "Next",
                 Command::ZoomIn => "Zoom in",
                 Command::ZoomOut => "Zoom out",
                 Command::NewDocument => "New document",
                 Command::AllowEditing => "Allow editing…",
-                Command::Theme => "Light or dark",
                 Command::File => "File",
                 Command::Edit => "Edit",
                 Command::View => "View",
@@ -1572,44 +1643,37 @@ impl Message {
                 Command::ShowDrawingSpeed => "Show drawing speed",
                 Command::Language => "Language",
                 Command::Help => "Help",
-                Command::ReportAProblem => "Report a problem...",
+                Command::ReportAProblem => "Report a problem\u{2026}",
                 Command::ShowTheLog => "Show the log",
                 Command::Pages => "Pages",
                 Command::HidePages => "Hide the pages",
                 Command::BackToReading => "Back to the document",
-                Command::Home => "Home",
                 Command::Page => "Page",
-                Command::BlankPageBefore => "Insert blank page before",
-                Command::BlankPageAfter => "Insert blank page after",
                 Command::SameSizeAsThisPage => "Same size as this page",
-                Command::Landscape => "Landscape",
+                Command::Landscape => "New pages in landscape",
                 Command::DeletePage => "Delete this page",
-                Command::MovePageEarlier => "Move page up",
-                Command::MovePageLater => "Move page down",
-                Command::MovePageFirst => "Move page to the start",
-                Command::MovePageLast => "Move page to the end",
+                Command::MovePageEarlier => "Up",
+                Command::MovePageLater => "Down",
+                Command::MovePageFirst => "To the start",
+                Command::MovePageLast => "To the end",
                 Command::RotateClockwise => "Rotate right",
                 Command::RotateCounterClockwise => "Rotate left",
                 Command::StampPageNumbers => "Page numbers\u{2026}",
                 Command::StampHeaderFooter => "Header & footer\u{2026}",
                 Command::StampWatermark => "Watermark\u{2026}",
                 Command::RecognizeText => "Recognize text (OCR)\u{2026}",
-                Command::AiAssistant => "AI assistant\u{2026}",
+                Command::AiAssistant => "AI assistant",
                 Command::ConnectAgents => "Connect agents\u{2026}",
                 Command::Print => "Print\u{2026}",
-                Command::PagesFromFileBefore => "Insert pages from a file before…",
-                Command::PagesFromFileAfter => "Insert pages from a file after…",
                 Command::SaveAs => "Save a copy as…",
                 Command::DuplicatePage => "Duplicate these pages",
                 Command::PagesToNewFile => "Save these pages as a new PDF…",
                 Command::SplitDocument => "Split into several PDFs…",
                 Command::PagesAsPictures => "Export pages as pictures…",
                 Command::PdfFromPictures => "Create a PDF from pictures…",
-                Command::PicturesAsPagesBefore => "Pictures as pages before these…",
-                Command::PicturesAsPagesAfter => "Pictures as pages after these…",
                 Command::Insert => "Insert",
                 Command::Tools => "Tools",
-                Command::InsertPictures => "Pictures…",
+                Command::InsertPictures => "Picture\u{2026}",
                 Command::InsertText => "Text box",
                 Command::InsertField => "Form field",
                 Command::InsertBlankPage => "Blank page",
@@ -1618,10 +1682,36 @@ impl Message {
                 Command::InsertHere => "Put pages in here",
                 Command::AddPages => "Add pages",
                 Command::MoreForPage => "More\u{2026}",
+                Command::OpenDocument => "Open\u{2026}",
+                Command::CloseDocument => "Close document",
+                Command::Export => "Export",
+                Command::CreateAPdf => "Create a PDF",
+                Command::PagesToPictures => "Pages as pictures\u{2026}",
+                Command::PicturesToPdf => "From pictures\u{2026}",
+                Command::DocumentProperties => "Document properties\u{2026}",
+                Command::Arrange => "Arrange",
+                Command::Move => "Move",
+                Command::InsertABlankPage => "Insert blank page",
+                Command::InsertPagesFromAFile => "Insert pages from a file",
+                Command::PicturesAsPages => "Pictures as pages",
+                Command::BeforeThisPage => "Before this page",
+                Command::AfterThisPage => "After this page",
+                Command::PickBeforeThisPage => "Before this page\u{2026}",
+                Command::PickAfterThisPage => "After this page\u{2026}",
+                Command::Assistant => "Assistant",
             }
             .to_owned(),
             Self::PageOf { page, count } => format!("{page} of {count}"),
-            Self::ZoomPercent(zoom) => format!("{zoom}%"),
+            Self::PageAndZoom {
+                page,
+                count,
+                percent,
+            } => format!("Page {page} of {count}{SEP}{percent}%"),
+            Self::WindowTitle { name, unsaved } => {
+                let mark = if *unsaved { "\u{2022} " } else { "" };
+                format!("{mark}{name} \u{2014} PanPDF")
+            }
+            Self::ProgramName => "PanPDF".to_owned(),
             Self::Opening(name) => format!("Opening {name}"),
             Self::OpeningFailed => "The document failed to open unexpectedly".to_owned(),
             Self::DocumentCount(count) => format!("{count} documents"),
@@ -1686,7 +1776,7 @@ impl Message {
             Self::RangeCannotBeCopied => {
                 format!("This range cannot be copied{SEP}the paragraph's text does not read")
             }
-            Self::Copied(count) => format!("{count} characters copied"),
+            Self::Copied(count) => format!("{} copied", edits::count(*count, "character")),
             Self::SelectionOf {
                 shown,
                 clusters,
@@ -2347,7 +2437,7 @@ mod tests {
     fn same_in_every_language(message: &Message) -> bool {
         matches!(
             message,
-            Message::ZoomPercent(_)
+            Message::ProgramName
                 | Message::Plain(_)
                 | Message::Quiet
                 | Message::OcrLanguage(_)
@@ -2358,7 +2448,7 @@ mod tests {
     #[test]
     fn a_message_that_is_the_same_everywhere_is_held_out_on_purpose() {
         for lang in Lang::ALL {
-            assert_eq!(Message::ZoomPercent(160).say(*lang), "160%");
+            assert_eq!(Message::ProgramName.say(*lang), "PanPDF");
             assert_eq!(
                 Message::Plain("xref 9 is past the end".to_owned()).say(*lang),
                 "xref 9 is past the end"
@@ -2367,6 +2457,72 @@ mod tests {
         let page_of = Message::PageOf { page: 3, count: 7 };
         assert_eq!(page_of.say(Lang::English), "3 of 7");
         assert!(!same_in_every_language(&page_of));
+    }
+
+    #[test]
+    fn the_status_line_names_the_page_and_the_zoom_in_one_breath() {
+        let said = Message::PageAndZoom {
+            page: 3,
+            count: 12,
+            percent: 100,
+        }
+        .say(Lang::English);
+        assert_eq!(said, "Page 3 of 12 \u{00b7} 100%");
+    }
+
+    #[test]
+    fn the_window_title_carries_a_dot_only_while_changes_are_unsaved() {
+        let title = |unsaved| {
+            Message::WindowTitle {
+                name: "invoice.pdf".to_owned(),
+                unsaved,
+            }
+            .say(Lang::English)
+        };
+        assert_eq!(title(false), "invoice.pdf \u{2014} PanPDF");
+        assert_eq!(title(true), "\u{2022} invoice.pdf \u{2014} PanPDF");
+        assert_eq!(Message::ProgramName.say(Lang::English), "PanPDF");
+    }
+
+    #[test]
+    fn one_character_copied_is_not_a_plural() {
+        assert_eq!(Message::Copied(1).say(Lang::English), "1 character copied");
+        assert_eq!(Message::Copied(0).say(Lang::English), "0 characters copied");
+        assert_eq!(
+            Message::Copied(12).say(Lang::English),
+            "12 characters copied"
+        );
+    }
+
+    #[test]
+    fn a_refusal_and_a_failure_are_trouble_and_a_report_is_not() {
+        use super::Tone;
+        let trouble = [
+            Message::Refused("no".to_owned().into()),
+            Message::Plain("xref 9 is past the end".to_owned()),
+            Message::OpeningFailed,
+            Message::CouldNotSave {
+                name: "a.pdf".to_owned(),
+                why: "disk full".to_owned(),
+            },
+            Message::AnotherEditIsRunning,
+        ];
+        for message in &trouble {
+            assert_eq!(message.tone(), Tone::Trouble, "{message:?}");
+        }
+        let information = [
+            Message::Quiet,
+            Message::SavedTo {
+                name: "a.pdf".to_owned(),
+                bytes: 10,
+            },
+            Message::StartedANewDocument,
+            Message::Copied(3),
+            Message::Opening("a.pdf".to_owned()),
+        ];
+        for message in &information {
+            assert_eq!(message.tone(), Tone::Information, "{message:?}");
+        }
     }
 
     #[test]

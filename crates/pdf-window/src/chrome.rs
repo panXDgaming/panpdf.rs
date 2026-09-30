@@ -3,15 +3,13 @@ use std::path::Path;
 use eframe::egui;
 
 use pdf_app::Editor;
-use pdf_app::wording::{Command, Lang, Message};
+use pdf_app::wording::{Command, Lang, Message, Tone};
 use pdf_bytes::{ByteStore, SourceId};
 
 use crate::app::name_of;
 use crate::icons::Icon;
 use crate::room;
-use crate::window_state::{
-    LeaveChoice, Leaving, Opened, Opening, Pointing, Tool, Window, set_dark,
-};
+use crate::window_state::{LeaveChoice, Leaving, Opened, Opening, Pointing, Tool, Window};
 
 const MM_PER_POINT: f64 = 25.4 / 72.0;
 
@@ -42,333 +40,6 @@ pub(crate) fn open_bytes(source: ByteStore, credential: &[u8]) -> Opened {
 }
 
 impl Window {
-    fn file_menu(&mut self, ui: &mut egui::Ui, (idle, working): (bool, bool)) {
-        let lang = self.lang;
-        let say = |command| Message::Command(command).say(lang);
-        let home = self.has_document() && !self.home;
-        if ui
-            .add_enabled(home, egui::Button::new(say(Command::Home)))
-            .clicked()
-        {
-            self.go_home();
-            ui.close();
-        }
-        ui.separator();
-        ui.add_enabled_ui(idle, |ui| {
-            ui.menu_button(say(Command::NewDocument), |ui| {
-                if let Some(size) = self.page_size_menu(ui) {
-                    self.new_document(size);
-                    ui.close();
-                }
-            });
-        });
-        if ui
-            .add_enabled(idle, egui::Button::new(say(Command::Open)))
-            .clicked()
-        {
-            self.asking_to_open = true;
-            ui.close();
-        }
-        ui.add_enabled_ui(self.library.len() > 1, |ui| {
-            ui.menu_button(say(Command::Documents), |ui| {
-                for path in self.library.clone() {
-                    let open = path == self.opened;
-                    let button = egui::Button::selectable(open, name_of(&path));
-                    if ui.add_enabled(idle || open, button).clicked() {
-                        self.open(&path);
-                        ui.close();
-                    }
-                }
-            });
-        });
-        ui.separator();
-        let save = egui::Button::new(say(Command::Save)).shortcut_text("Ctrl+S");
-        if ui.add_enabled(working, save).clicked() {
-            self.save();
-            ui.close();
-        }
-        let save_as = egui::Button::new(say(Command::SaveAs)).shortcut_text("Ctrl+Shift+S");
-        if ui.add_enabled(working, save_as).clicked() {
-            self.save_a_copy_as();
-            ui.close();
-        }
-        let split = egui::Button::new(say(Command::SplitDocument));
-        if ui.add_enabled(working, split).clicked() {
-            self.open_the_split_panel();
-            ui.close();
-        }
-        ui.separator();
-        let pictures = egui::Button::new(say(Command::PagesAsPictures));
-        if ui.add_enabled(working, pictures).clicked() {
-            self.open_the_export_panel();
-            ui.close();
-        }
-        if ui.button(say(Command::PdfFromPictures)).clicked() {
-            self.choose_pictures(None);
-            ui.close();
-        }
-        ui.separator();
-        let print = egui::Button::new(say(Command::Print)).shortcut_text("Ctrl+P");
-        if ui.add_enabled(working, print).clicked() {
-            self.open_the_print_dialog();
-            ui.close();
-        }
-        ui.separator();
-        let properties =
-            egui::Button::new(pdf_app::wording::Fact::Properties.say(lang)).shortcut_text("Ctrl+D");
-        if ui.add_enabled(working, properties).clicked() {
-            self.open_the_properties();
-            ui.close();
-        }
-    }
-
-    pub(crate) fn menu_bar(&mut self, ui: &mut egui::Ui) {
-        let lang = self.lang;
-        let say = |command| Message::Command(command).say(lang);
-        let idle = !self.editor.is_busy() && self.loading.is_none();
-        let working = idle && self.has_document() && !self.home;
-        egui::Panel::top("menu").show(ui, |ui| {
-            egui::MenuBar::new().ui(ui, |ui| {
-                ui.menu_button(say(Command::File), |ui| {
-                    self.file_menu(ui, (idle, working));
-                });
-                ui.menu_button(say(Command::Edit), |ui| {
-                    let undo = egui::Button::new(say(Command::Undo)).shortcut_text("Ctrl+Z");
-                    if ui
-                        .add_enabled(working && self.editor.can_undo(), undo)
-                        .clicked()
-                    {
-                        self.walk_history(true);
-                        ui.close();
-                    }
-                    let redo = egui::Button::new(say(Command::Redo)).shortcut_text("Ctrl+Y");
-                    if ui
-                        .add_enabled(working && self.editor.can_redo(), redo)
-                        .clicked()
-                    {
-                        self.walk_history(false);
-                        ui.close();
-                    }
-                    ui.separator();
-                    let copy = egui::Button::new(say(Command::Copy)).shortcut_text("Ctrl+C");
-                    if ui.add_enabled(working && self.selected(), copy).clicked() {
-                        let ctx = ui.ctx().clone();
-                        let in_text = self.pointing.editing();
-                        self.copy(&ctx, in_text);
-                        ui.close();
-                    }
-                    let cut = egui::Button::new(say(Command::Cut)).shortcut_text("Ctrl+X");
-                    if ui.add_enabled(working && self.selected(), cut).clicked() {
-                        let ctx = ui.ctx().clone();
-                        let in_text = self.pointing.editing();
-                        self.cut(&ctx, in_text);
-                        ui.close();
-                    }
-                    let holding = self.clipboard.is_some();
-                    let paste = egui::Button::new(say(Command::Paste)).shortcut_text("Ctrl+V");
-                    if ui.add_enabled(working && holding, paste).clicked() {
-                        let ctx = ui.ctx().clone();
-                        self.paste_the_clipboard(&ctx, false);
-                        ui.close();
-                    }
-                    let in_place =
-                        egui::Button::new(say(Command::PasteInPlace)).shortcut_text("Ctrl+Shift+V");
-                    if ui.add_enabled(working && holding, in_place).clicked() {
-                        let ctx = ui.ctx().clone();
-                        self.paste_the_clipboard(&ctx, true);
-                        ui.close();
-                    }
-                    let delete = egui::Button::new(say(Command::Delete)).shortcut_text("Del");
-                    if ui.add_enabled(working && self.selected(), delete).clicked() {
-                        self.delete();
-                        ui.close();
-                    }
-                    ui.separator();
-                    let ordering = working && self.can_order();
-                    for (command, order) in [
-                        (Command::BringToFront, pdf_edit::Stacking::ToFront),
-                        (Command::BringForward, pdf_edit::Stacking::Forward),
-                        (Command::SendBackward, pdf_edit::Stacking::Backward),
-                        (Command::SendToBack, pdf_edit::Stacking::ToBack),
-                    ] {
-                        if ui
-                            .add_enabled(ordering, egui::Button::new(say(command)))
-                            .clicked()
-                        {
-                            self.put_in_order(order);
-                            ui.close();
-                        }
-                    }
-                    ui.separator();
-                    let find = egui::Button::new(say(Command::Find)).shortcut_text("Ctrl+F");
-                    if ui.add_enabled(working, find).clicked() {
-                        self.open_the_find_bar();
-                        ui.close();
-                    }
-                    if self.editor.editing_restricted() {
-                        ui.separator();
-                        let allow = egui::Button::new(say(Command::AllowEditing));
-                        if ui.add_enabled(working, allow).clicked() {
-                            self.restriction_answered = false;
-                            ui.close();
-                        }
-                    }
-                });
-                ui.menu_button(say(Command::Insert), |ui| self.insert_menu(ui, working));
-                ui.menu_button(say(Command::Page), |ui| self.page_menu(ui, working));
-                ui.menu_button(say(Command::Tools), |ui| self.tools_menu(ui, working));
-                ui.menu_button(say(Command::View), |ui| self.view_menu(ui, working));
-                #[cfg(not(target_arch = "wasm32"))]
-                ui.menu_button(say(Command::Help), |ui| self.help_menu(ui));
-            });
-        });
-    }
-
-    fn insert_menu(&mut self, ui: &mut egui::Ui, working: bool) {
-        let lang = self.lang;
-        let say = |command| Message::Command(command).say(lang);
-        ui.add_enabled_ui(working, |ui| {
-            if ui.button(say(Command::InsertText)).clicked() {
-                self.pictures.clear();
-                self.tool = Tool::Text;
-                ui.close();
-            }
-            if ui.button(say(Command::InsertPictures)).clicked() {
-                self.choosing_for = crate::page_actions::Choosing::Picture;
-                self.asking_to_open = true;
-                ui.close();
-            }
-            for (command, tool) in [
-                (Command::Shape, Tool::Shape),
-                (Command::Pen, Tool::Pen),
-                (Command::Highlighter, Tool::Highlighter),
-            ] {
-                if ui.button(say(command)).clicked() {
-                    self.take_up(tool);
-                    ui.close();
-                }
-            }
-            if ui.button(say(Command::Link)).clicked() {
-                self.take_up_the_link_tool();
-                ui.close();
-            }
-            if ui.button(say(Command::InsertField)).clicked() {
-                self.take_up_the_form_tool();
-                ui.close();
-            }
-            ui.separator();
-            self.pages_in_menu(ui);
-        });
-    }
-
-    fn tools_menu(&mut self, ui: &mut egui::Ui, working: bool) {
-        let lang = self.lang;
-        let say = |command| Message::Command(command).say(lang);
-        ui.add_enabled_ui(working, |ui| {
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                if ui.button(say(Command::AiAssistant)).clicked() {
-                    let now = ui.input(|input| input.time);
-                    self.open_ai_panel(now);
-                    ui.close();
-                }
-                if ui.button(say(Command::ConnectAgents)).clicked() {
-                    self.open_the_agents_window();
-                    ui.close();
-                }
-                ui.separator();
-            }
-            if ui.button(say(Command::RecognizeText)).clicked() {
-                self.open_the_ocr_panel();
-                ui.close();
-            }
-            ui.separator();
-            for (command, kind) in [
-                (
-                    Command::StampPageNumbers,
-                    crate::stamp_tool::StampKind::PageNumbers,
-                ),
-                (
-                    Command::StampHeaderFooter,
-                    crate::stamp_tool::StampKind::HeaderFooter,
-                ),
-                (
-                    Command::StampWatermark,
-                    crate::stamp_tool::StampKind::Watermark,
-                ),
-            ] {
-                if ui.button(say(command)).clicked() {
-                    self.open_the_stamp_panel(kind);
-                    ui.close();
-                }
-            }
-        });
-    }
-
-    fn view_menu(&mut self, ui: &mut egui::Ui, working: bool) {
-        let lang = self.lang;
-        let say = |command| Message::Command(command).say(lang);
-        let closer = egui::Button::new(say(Command::ZoomIn)).shortcut_text("Ctrl++");
-        if ui.add_enabled(working, closer).clicked() {
-            self.zoom_by(true, None);
-        }
-        let further = egui::Button::new(say(Command::ZoomOut)).shortcut_text("Ctrl+-");
-        if ui.add_enabled(working, further).clicked() {
-            self.zoom_by(false, None);
-        }
-        ui.separator();
-        let mut pages = !self.pages_folded;
-        if ui.checkbox(&mut pages, say(Command::Pages)).changed() {
-            let now = ui.input(|input| input.time);
-            self.fold_the_pages(!pages, now);
-        }
-        let _ = ui.checkbox(&mut self.show_contents, say(Command::Contents));
-        ui.menu_button(say(Command::Frames), |ui| {
-            let all = egui::Button::new(say(Command::ShowFrames))
-                .selected(self.show_frames)
-                .shortcut_text("F2");
-            if ui.add(all).clicked() {
-                self.show_frames = !self.show_frames;
-            }
-            ui.separator();
-            ui.add_enabled_ui(self.show_frames, |ui| {
-                let _ = ui.checkbox(&mut self.framed.text, say(Command::FramesOfText));
-                let _ = ui.checkbox(&mut self.framed.pictures, say(Command::FramesOfPictures));
-                let _ = ui.checkbox(&mut self.framed.drawings, say(Command::FramesOfDrawings));
-            });
-        });
-        if ui
-            .checkbox(&mut self.dark, say(Command::DarkMode))
-            .changed()
-        {
-            set_dark(ui.ctx(), self.dark);
-        }
-        let _ = ui.checkbox(&mut self.show_speed, say(Command::ShowDrawingSpeed));
-        ui.menu_button(say(Command::Language), |ui| {
-            for (language, named) in language_rows() {
-                let _ = ui.radio_value(&mut self.lang, language, named);
-            }
-        });
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    fn help_menu(&mut self, ui: &mut egui::Ui) {
-        let lang = self.lang;
-        let say = |command| Message::Command(command).say(lang);
-        if ui.button(say(Command::ReportAProblem)).clicked() {
-            self.open_out(&crate::reporting::report_link());
-            ui.close();
-        }
-        let folder = crate::reporting::log_folder();
-        let show = egui::Button::new(say(Command::ShowTheLog));
-        if ui.add_enabled(folder.is_some(), show).clicked() {
-            if let Some(folder) = folder {
-                self.open_out(&folder.to_string_lossy());
-            }
-            ui.close();
-        }
-    }
-
     pub(crate) fn page_size_menu(&self, ui: &mut egui::Ui) -> Option<[f64; 2]> {
         let say = |command| Message::Command(command).say(self.lang);
         let turned = |[width, height]: [f64; 2]| {
@@ -411,7 +82,33 @@ impl Window {
             Pointing::Text { caret, .. } if caret.at != caret.anchor
         ) || matches!(self.pointing, Pointing::Block { .. })
             || (self.tool == Tool::Form && self.chosen_fields.is_some())
+            || (self.tool == Tool::Link
+                && self
+                    .chosen_links
+                    .as_ref()
+                    .is_some_and(|chosen| !chosen.links.is_empty()))
             || self.pointing.object_on(self.focus).is_some()
+    }
+
+    pub(crate) fn delete_what_is_chosen(&mut self) {
+        if self.remove_the_chosen_fields() {
+            return;
+        }
+        if self.tool == Tool::Link && self.remove_the_chosen_link() {
+            return;
+        }
+        self.delete();
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn toggle_the_assistant(&mut self, ctx: &egui::Context) {
+        let now = ctx.input(|input| input.time);
+        if self.ai.open {
+            self.ai.open = false;
+            self.ai_flow = Some(room::Flow::new(self.ai.width, 0.0, now));
+        } else {
+            self.open_ai_panel(now);
+        }
     }
 
     pub(crate) fn toolbar(&mut self, ui: &mut egui::Ui) {
@@ -421,13 +118,11 @@ impl Window {
                 let room = ui.available_width();
                 let idle = !self.editor.is_busy() && self.loading.is_none();
                 let lang = self.lang;
-                let slots = self.bar_slots(ui, idle, lang);
+                let slots = self.bar_slots(idle);
 
                 let bar = room::Bar {
                     buttons: slots.iter().filter(|slot| slot.is_button()).count(),
                     rules: slots.iter().filter(|slot| slot.is_rule()).count(),
-                    choices: self.toolbar_choices,
-                    readouts: slots.iter().map(Slot::readout_width).sum(),
                     slack: self.toolbar_slack,
                 };
                 let labels = room::labels_fit(room, &bar, !self.toolbar_compact);
@@ -436,7 +131,7 @@ impl Window {
                 let mut pieces: Vec<room::Piece> =
                     slots.iter().map(|slot| slot.piece(labels)).collect();
                 pieces.push(room::Piece {
-                    width: self.toolbar_choices + room::EDGE + self.toolbar_slack,
+                    width: room::EDGE + self.toolbar_slack,
                     rank: 0,
                 });
                 let cut = room::shed_above(room, &pieces, room::OVERFLOW_WIDTH);
@@ -444,7 +139,6 @@ impl Window {
                 let start = ui.cursor().min.x;
                 ui.add_space(4.0);
                 let mut pressed = None;
-                let mut choices_width = 0.0;
                 let mut drawn = 0.0;
                 let mut anything_yet = false;
                 for slot in slots.iter().filter(|slot| slot.side == Side::Left) {
@@ -454,13 +148,6 @@ impl Window {
                         pressed = Some(command);
                     }
                 }
-                if self.tool_has_choices() {
-                    toolbar_separator(ui);
-                    let before = ui.cursor().min.x;
-                    self.tool_choices(ui);
-                    choices_width = ui.cursor().min.x - before;
-                }
-                self.toolbar_choices = choices_width;
 
                 let left_end = ui.cursor().min.x;
                 let mut right_width = 0.0;
@@ -481,7 +168,7 @@ impl Window {
                     }
                     right_width = ui.min_rect().width();
                 });
-                let measured = (left_end - start - choices_width) + right_width;
+                let measured = (left_end - start) + right_width;
                 self.toolbar_slack = (measured - drawn).clamp(0.0, 80.0);
                 if let Some(command) = pressed {
                     let ctx = ui.ctx().clone();
@@ -496,7 +183,35 @@ impl Window {
         });
     }
 
-    fn bar_slots(&self, ui: &egui::Ui, idle: bool, lang: Lang) -> Vec<Slot> {
+    pub(crate) fn tool_options(&mut self, ui: &mut egui::Ui) {
+        let Some(command) = TOOLS
+            .iter()
+            .find(|(_, _, tool)| *tool == self.tool)
+            .map(|(_, command, _)| *command)
+            .filter(|_| self.tool_has_choices())
+        else {
+            return;
+        };
+        let name = Message::Command(command).say(self.lang);
+        egui::Panel::top("tool options").show(ui, |ui| {
+            egui::ScrollArea::horizontal()
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.add_space(4.0);
+                        ui.label(
+                            egui::RichText::new(name)
+                                .size(11.0)
+                                .color(ui.visuals().weak_text_color()),
+                        );
+                        crate::format::rule(ui);
+                        self.tool_choices(ui);
+                    });
+                });
+        });
+    }
+
+    fn bar_slots(&self, idle: bool) -> Vec<Slot> {
         let button = |icon, command, enabled, on, rank, side| Slot {
             side,
             rank,
@@ -513,22 +228,6 @@ impl Window {
             what: What::Rule,
         };
         let mut slots = vec![
-            button(
-                Icon::Home,
-                Command::Home,
-                idle,
-                false,
-                HOME_RANK,
-                Side::Left,
-            ),
-            button(
-                Icon::NewDocument,
-                Command::NewDocument,
-                idle,
-                false,
-                HOME_RANK,
-                Side::Left,
-            ),
             button(
                 Icon::Open,
                 Command::Open,
@@ -582,19 +281,19 @@ impl Window {
             DELETE_RANK,
             Side::Left,
         ));
-        slots.extend(self.view_slots(ui, lang));
+        slots.extend(self.view_slots());
         slots
     }
 
-    fn view_slots(&self, ui: &egui::Ui, lang: Lang) -> Vec<Slot> {
-        let button = |icon, command, enabled, rank| Slot {
+    fn view_slots(&self) -> Vec<Slot> {
+        let button = |icon, command, enabled, on, rank| Slot {
             side: Side::Right,
             rank,
             what: What::Button {
                 icon,
                 command,
                 enabled,
-                on: false,
+                on,
             },
         };
         let rule = |rank| Slot {
@@ -602,46 +301,46 @@ impl Window {
             rank,
             what: What::Rule,
         };
-        let readout = |text: String, rank| Slot {
-            side: Side::Right,
-            rank,
-            what: What::Readout {
-                width: text_width(ui, &text),
-                text,
-            },
-        };
         let mut slots = Vec::new();
-        slots.push(button(Icon::Theme, Command::Theme, true, THEME_RANK));
-        slots.push(rule(THEME_RANK));
-        slots.push(button(Icon::ZoomIn, Command::ZoomIn, true, ZOOM_RANK));
-        #[expect(
-            clippy::cast_possible_truncation,
-            clippy::cast_sign_loss,
-            reason = "a zoom is between 25% and 400%"
-        )]
-        let percent = (self.zoom * 100.0).round() as u32;
-        slots.push(readout(Message::ZoomPercent(percent).say(lang), ZOOM_RANK));
-        slots.push(button(Icon::ZoomOut, Command::ZoomOut, true, ZOOM_RANK));
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            slots.push(button(
+                Icon::Assistant,
+                Command::Assistant,
+                true,
+                self.ai.open,
+                ASSISTANT_RANK,
+            ));
+            slots.push(rule(ASSISTANT_RANK));
+        }
+        slots.push(button(
+            Icon::ZoomIn,
+            Command::ZoomIn,
+            true,
+            false,
+            ZOOM_RANK,
+        ));
+        slots.push(button(
+            Icon::ZoomOut,
+            Command::ZoomOut,
+            true,
+            false,
+            ZOOM_RANK,
+        ));
         slots.push(rule(PAGING_RANK));
         let pages = self.editor.page_count();
         slots.push(button(
             Icon::Next,
             Command::NextPage,
             self.focus + 1 < pages,
-            PAGING_RANK,
-        ));
-        slots.push(readout(
-            Message::PageOf {
-                page: self.focus + 1,
-                count: pages,
-            }
-            .say(lang),
+            false,
             PAGING_RANK,
         ));
         slots.push(button(
             Icon::Previous,
             Command::PreviousPage,
             self.focus > 0,
+            false,
             PAGING_RANK,
         ));
         slots
@@ -666,11 +365,6 @@ impl Window {
                 }
                 None
             }
-            What::Readout { text, .. } => {
-                *anything_yet = true;
-                ui.label(text);
-                None
-            }
             What::Button {
                 icon,
                 command,
@@ -688,6 +382,7 @@ impl Window {
         let name = Message::Command(Command::MoreForPage).say(lang);
         let opened = crate::format::icon_button(ui, Icon::More, &name, false, true);
         let mut pressed = None;
+        let ctx = ui.ctx().clone();
         egui::Popup::menu(&opened).show(|ui| {
             ui.set_min_width(180.0);
             for slot in slots {
@@ -700,8 +395,8 @@ impl Window {
                 else {
                     continue;
                 };
-                let label = Message::Command(command).say(lang);
-                if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
+                let button = crate::menus::menu_item(&ctx, lang, command);
+                if ui.add_enabled(enabled, button).clicked() {
                     pressed = Some(command);
                     ui.close();
                 }
@@ -712,8 +407,6 @@ impl Window {
 
     fn run_from_the_bar(&mut self, ctx: &egui::Context, command: Command) {
         match command {
-            Command::Home => self.go_home(),
-            Command::NewDocument => self.new_document(A4),
             Command::Open => self.asking_to_open = true,
             Command::Save => {
                 self.save();
@@ -724,11 +417,7 @@ impl Window {
             Command::Redo => {
                 self.walk_history(false);
             }
-            Command::Delete => {
-                if !self.remove_the_chosen_fields() {
-                    self.delete();
-                }
-            }
+            Command::Delete => self.delete_what_is_chosen(),
             Command::Select => {
                 self.tool = Tool::Select;
                 self.pictures.clear();
@@ -747,16 +436,16 @@ impl Window {
                 self.choosing_for = crate::page_actions::Choosing::Picture;
                 self.asking_to_open = true;
             }
-            Command::Theme => {
-                self.dark = !self.dark;
-                set_dark(ctx, self.dark);
-            }
+            #[cfg(not(target_arch = "wasm32"))]
+            Command::Assistant => self.toggle_the_assistant(ctx),
             Command::ZoomIn => self.zoom_by(true, None),
             Command::ZoomOut => self.zoom_by(false, None),
             Command::NextPage => self.goto(self.focus + 1),
             Command::PreviousPage => self.goto(self.focus.saturating_sub(1)),
             _ => {}
         }
+        #[cfg(target_arch = "wasm32")]
+        let _ = ctx;
     }
 
     fn let_go_of_text_the_tool_may_not_hold(&mut self) {
@@ -799,6 +488,18 @@ impl Window {
         }
     }
 
+    fn hover_words(&self, ctx: &egui::Context, command: Command) -> String {
+        let named = match command {
+            Command::Assistant => Command::AiAssistant,
+            other => other,
+        };
+        let name = Message::Command(named).say(self.lang);
+        match crate::shortcuts::hint(ctx, command) {
+            Some(keys) => format!("{name} ({keys})"),
+            None => name,
+        }
+    }
+
     fn tool_button(
         &self,
         ui: &mut egui::Ui,
@@ -807,11 +508,11 @@ impl Window {
         enabled: bool,
         on: bool,
     ) -> bool {
-        let name = Message::Command(command).say(self.lang);
+        let name = Message::Command(caption_of(command)).say(self.lang);
         let width = room::tool_width(!self.toolbar_compact);
         let size = egui::vec2(width, room::TOOL_HEIGHT);
         let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
-        let response = response.on_hover_text(&name);
+        let response = response.on_hover_text(self.hover_words(ui.ctx(), command));
         let visuals = ui.visuals();
         let colour = if !enabled {
             visuals.weak_text_color()
@@ -895,6 +596,37 @@ impl Window {
         });
     }
 
+    fn name_of_the_document(&self) -> String {
+        if self.untitled {
+            if self.destination.as_os_str().is_empty() {
+                pdf_app::wording::Home::Untitled.say(self.lang)
+            } else {
+                name_of(&self.destination)
+            }
+        } else {
+            name_of(&self.opened)
+        }
+    }
+
+    pub(crate) fn window_title_now(&self) -> String {
+        if self.home || !self.has_document() {
+            return Message::ProgramName.say(self.lang);
+        }
+        Message::WindowTitle {
+            name: self.name_of_the_document(),
+            unsaved: self.unsaved(),
+        }
+        .say(self.lang)
+    }
+
+    pub(crate) fn keep_the_window_title(&mut self, ctx: &egui::Context) {
+        let title = self.window_title_now();
+        if title != self.system_title {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+            self.system_title = title;
+        }
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn title_for_the_chat(&self, path: &std::path::Path) -> String {
         path.file_name().map_or_else(
@@ -919,11 +651,6 @@ impl Window {
         } else {
             crate::save_file::unused_copy(&path)
         };
-        self.title = if self.untitled {
-            pdf_app::wording::Home::Untitled.say(self.lang)
-        } else {
-            path.display().to_string()
-        };
         #[cfg(not(target_arch = "wasm32"))]
         self.ai
             .document_arrived(self.title_for_the_chat(&path), place_of(&path));
@@ -934,6 +661,7 @@ impl Window {
         self.point_at(Pointing::Nothing);
         self.drag = None;
         self.landing = None;
+        self.let_go_of_what_belonged_to_the_last_document();
         for (id, held, slot) in self.tiles.clear() {
             self.retire(id, held, slot);
         }
@@ -968,14 +696,28 @@ impl Window {
         let _ = returned;
     }
 
-    pub(crate) fn read_the_new_document_key(&mut self, ctx: &egui::Context) {
-        if self.leaving.is_none()
-            && self.loading.is_none()
-            && self.chooser.is_none()
-            && ctx.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::N))
-        {
-            self.new_document(A4);
-        }
+    fn let_go_of_what_belonged_to_the_last_document(&mut self) {
+        self.filling = None;
+        self.save_after_the_field = false;
+        self.saving_then_leaving = None;
+        self.text_draft = None;
+        self.stamp_draft = None;
+        self.ocr_draft = None;
+        self.link_draft = None;
+        self.field_draft = None;
+        self.field_draft_origin = None;
+        self.naming_draft = None;
+        self.properties = None;
+        self.print_draft = None;
+        self.splitting = None;
+        self.exporting = None;
+        self.chosen_fields = None;
+        self.chosen_links = None;
+        self.chosen_bookmark = None;
+        self.renaming = None;
+        self.pictures.clear();
+        self.ink = None;
+        self.search_the_document_again();
     }
 
     pub(crate) fn let_the_document_go(&mut self) {
@@ -994,7 +736,6 @@ impl Window {
             Ok(editor) => {
                 self.take_the_document(editor, std::path::PathBuf::new(), 0);
                 self.untitled = false;
-                self.title = String::new();
                 self.home = true;
                 self.editor
                     .say(Message::Home(pdf_app::wording::Home::DocumentLetGo));
@@ -1065,9 +806,20 @@ impl Window {
         }
     }
 
+    pub(crate) fn field_text_waits(&self) -> bool {
+        self.filling
+            .as_ref()
+            .is_some_and(|filling| filling.text != filling.field.field.value.shown())
+    }
+
     pub(crate) fn save(&mut self) -> bool {
         if self.input.pending() || self.input.draft().is_some() {
             self.editor.say(Message::ResolveDraftBeforeSaving);
+            return false;
+        }
+        if self.field_text_waits() {
+            self.finish_the_field();
+            self.save_after_the_field = self.filling.is_none() && self.running.is_some();
             return false;
         }
         if self.untitled && self.destination.as_os_str().is_empty() {
@@ -1086,7 +838,6 @@ impl Window {
                     self.saved_epoch = self.editor.epoch();
                     self.protection_changed = false;
                     if self.untitled {
-                        self.title = self.destination.display().to_string();
                         let saved = self.destination.clone();
                         self.remember_file(&saved);
                     }
@@ -1117,7 +868,7 @@ impl Window {
                         ),
                     );
                     let said = Message::SavedTo {
-                        name: self.destination.display().to_string(),
+                        name: name_of(&self.destination),
                         bytes: export.bytes.len() as u64,
                     };
                     self.editor.say(said);
@@ -1152,6 +903,7 @@ impl Window {
             || self.editor.epoch() != self.saved_epoch
             || self.input.pending()
             || self.input.draft().is_some()
+            || self.field_text_waits()
     }
 
     pub(crate) fn guard_close(&mut self, ctx: &egui::Context) {
@@ -1261,45 +1013,98 @@ impl Window {
         match choice {
             LeaveChoice::Cancel => self.leaving = None,
             LeaveChoice::Save if !self.save() => {
-                if self.chooser.is_some() {
-                    self.leaving = None;
+                if self.chooser.is_some() || self.save_after_the_field {
+                    self.saving_then_leaving = self.leaving.take();
                 }
             }
             LeaveChoice::Save | LeaveChoice::Discard => {
                 if matches!(choice, LeaveChoice::Discard) {
                     self.input.abandon();
+                    self.filling = None;
                 }
-                match self.leaving.take() {
-                    Some(Leaving::Open(path, page)) => self.open_now(&path, page),
-                    Some(Leaving::New(size)) => self.start_a_new_document(size),
-                    Some(Leaving::Close) => {
-                        self.close_confirmed = true;
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                    }
-                    Some(Leaving::LetGo) => self.drop_the_document(),
-                    None => {}
-                }
+                let leaving = self.leaving.take();
+                self.carry_on_leaving(leaving, ctx);
             }
         }
     }
 
-    pub(crate) fn status_bar(&self, ui: &mut egui::Ui) {
-        let status = self.editor.status().say(self.lang);
+    fn carry_on_leaving(&mut self, leaving: Option<Leaving>, ctx: &egui::Context) {
+        match leaving {
+            Some(Leaving::Open(path, page)) => self.open_now(&path, page),
+            Some(Leaving::New(size)) => self.start_a_new_document(size),
+            Some(Leaving::Close) => {
+                self.close_confirmed = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            Some(Leaving::LetGo) => self.drop_the_document(),
+            None => {}
+        }
+    }
+
+    pub(crate) fn carry_on_after_saving(&mut self, ctx: &egui::Context) {
+        let Some(leaving) = self.saving_then_leaving.take() else {
+            return;
+        };
+        if !self.unsaved() {
+            self.carry_on_leaving(Some(leaving), ctx);
+        }
+    }
+
+    pub(crate) fn status_bar(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        let now = ctx.input(|input| input.time);
+        let said = self.editor.status().clone();
+        self.status_line.watch(&said, now);
+        let strength = self.status_line.strength(now);
+        if let Some(wait) = self.status_line.changes_after(now) {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(wait));
+        }
+        let lang = self.lang;
+        let status = said.say(lang);
+        let trouble = said.tone() == Tone::Trouble;
         let hint = self.tool_hint();
+        let with_document = self.has_document() && !self.home;
+        let position = with_document.then(|| {
+            #[expect(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "a zoom is between 25% and 400%"
+            )]
+            let percent = (self.zoom * 100.0).round() as u32;
+            Message::PageAndZoom {
+                page: self.focus + 1,
+                count: self.editor.page_count(),
+                percent,
+            }
+            .say(lang)
+        });
+        let unsaved = with_document && self.unsaved();
+        let unsaved_words = Message::UnsavedChanges.say(lang);
         egui::Panel::bottom("status").show(ui, |ui| {
             ui.horizontal(|ui| {
-                if let Some(hint) = hint {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(egui::RichText::new(hint).color(ui.visuals().weak_text_color()));
-                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                            ui.add(egui::Label::new(&status).truncate())
-                                .on_hover_text(&status);
-                        });
+                ui.set_min_height(ui.spacing().interact_size.y);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let weak = ui.visuals().weak_text_color();
+                    if let Some(position) = position {
+                        ui.label(egui::RichText::new(position).size(12.0).color(weak));
+                    }
+                    if unsaved {
+                        unsaved_dot(ui).on_hover_text(&unsaved_words);
+                    }
+                    if let Some(hint) = hint {
+                        ui.label(egui::RichText::new(hint).size(12.0).color(weak));
+                    }
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        let colour = if trouble {
+                            ui.visuals().warn_fg_color
+                        } else {
+                            weak.gamma_multiply(strength)
+                        };
+                        let words = egui::RichText::new(&status).size(12.0).color(colour);
+                        ui.add(egui::Label::new(words).truncate())
+                            .on_hover_text(&status);
                     });
-                } else {
-                    ui.add(egui::Label::new(&status).truncate())
-                        .on_hover_text(&status);
-                }
+                });
             });
         });
     }
@@ -1386,19 +1191,33 @@ pub(crate) fn leaving_offer(holding: StillHolding) -> LeavingOffer {
     }
 }
 
+const fn caption_of(command: Command) -> Command {
+    match command {
+        Command::PreviousPage => Command::Previous,
+        Command::NextPage => Command::Next,
+        other => other,
+    }
+}
+
 fn toolbar_separator(ui: &mut egui::Ui) {
     ui.add_space(4.0);
     ui.separator();
     ui.add_space(4.0);
 }
 
-const THEME_RANK: u8 = 7;
-const HOME_RANK: u8 = 6;
 const OPEN_RANK: u8 = 5;
 const ZOOM_RANK: u8 = 5;
 const SAVE_RANK: u8 = 4;
 const PAGING_RANK: u8 = 4;
 const DELETE_RANK: u8 = 3;
+#[cfg_attr(
+    target_arch = "wasm32",
+    expect(
+        dead_code,
+        reason = "the assistant button is not built for the browser"
+    )
+)]
+const ASSISTANT_RANK: u8 = 3;
 const HISTORY_RANK: u8 = 2;
 
 const TOOLS: [(Icon, Command, Tool); 8] = [
@@ -1427,10 +1246,6 @@ enum What {
         on: bool,
     },
     Rule,
-    Readout {
-        text: String,
-        width: f32,
-    },
 }
 
 #[derive(Clone, Debug)]
@@ -1449,18 +1264,10 @@ impl Slot {
         matches!(self.what, What::Rule)
     }
 
-    fn readout_width(&self) -> f32 {
-        match self.what {
-            What::Readout { width, .. } => width,
-            _ => 0.0,
-        }
-    }
-
     fn piece(&self, labels: bool) -> room::Piece {
         let width = match self.what {
             What::Button { .. } => room::tool_width(labels) + room::GAP,
             What::Rule => room::RULE_WIDTH,
-            What::Readout { width, .. } => width + room::GAP,
         };
         room::Piece {
             width,
@@ -1469,15 +1276,14 @@ impl Slot {
     }
 }
 
-fn text_width(ui: &egui::Ui, text: &str) -> f32 {
-    let font = egui::TextStyle::Body.resolve(ui.style());
+fn unsaved_dot(ui: &mut egui::Ui) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
     ui.painter()
-        .layout_no_wrap(text.to_owned(), font, egui::Color32::PLACEHOLDER)
-        .size()
-        .x
+        .circle_filled(rect.center(), 3.5, ui.visuals().warn_fg_color);
+    response
 }
 
-fn language_rows() -> Vec<(Lang, &'static str)> {
+pub(crate) fn language_rows() -> Vec<(Lang, &'static str)> {
     Lang::ALL
         .iter()
         .map(|language| (*language, language.endonym()))

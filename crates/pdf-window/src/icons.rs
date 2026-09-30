@@ -24,8 +24,6 @@ pub(crate) enum Icon {
     ZoomIn,
     ZoomOut,
     NewDocument,
-    Theme,
-    Home,
     Document,
     Folder,
     Bold,
@@ -96,6 +94,14 @@ pub(crate) enum Icon {
         )
     )]
     Close,
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(
+            dead_code,
+            reason = "the assistant button is not built for the browser"
+        )
+    )]
+    Assistant,
 }
 
 const WEIGHT: f32 = 0.085;
@@ -111,6 +117,7 @@ const CHAIN: [u8; 3] = [14, 116, 196];
 const TAKE_AWAY: [u8; 3] = [220, 38, 38];
 const SHAPE_FILL: [u8; 3] = [249, 115, 22];
 const STACK: [u8; 3] = [124, 58, 237];
+const SPARK: [u8; 3] = [13, 148, 136];
 
 const HEAVIER: f32 = 1.3;
 const BOLD_WEIGHT: f32 = 1.7;
@@ -163,8 +170,6 @@ impl Icon {
             Self::ZoomIn => magnifier(&pen, Some(true)),
             Self::ZoomOut => magnifier(&pen, Some(false)),
             Self::NewDocument => new_document(&pen),
-            Self::Theme => theme(&pen),
-            Self::Home => home(&pen),
             Self::Document => document(&pen),
             Self::Folder => folder(&pen),
             Self::Bold => bold(&pen),
@@ -240,6 +245,7 @@ impl Icon {
                 pen.line(&[(0.22, 0.42), (0.5, 0.14), (0.78, 0.42)]);
             }
             Self::Stop => pen.block((0.24, 0.24), (0.76, 0.76), 0.08),
+            Self::Assistant => assistant(&pen),
         }
     }
 }
@@ -617,12 +623,6 @@ fn new_document(pen: &Pen<'_>) {
     pen.line(&[(0.78, 0.62), (0.78, 0.94)]);
 }
 
-fn home(pen: &Pen<'_>) {
-    pen.line(&[(0.06, 0.50), (0.5, 0.10), (0.94, 0.50)]);
-    pen.line(&[(0.20, 0.38), (0.20, 0.92), (0.80, 0.92), (0.80, 0.38)]);
-    pen.line(&[(0.40, 0.92), (0.40, 0.64), (0.60, 0.64), (0.60, 0.92)]);
-}
-
 fn document(pen: &Pen<'_>) {
     pen.line(&[
         (0.18, 0.06),
@@ -651,15 +651,39 @@ fn folder(pen: &Pen<'_>) {
     pen.line(&[(0.06, 0.42), (0.94, 0.42)]);
 }
 
-fn theme(pen: &Pen<'_>) {
-    pen.ring((0.5, 0.5), 0.38);
-    pen.fill(&[
-        (0.5, 0.12),
-        (0.77, 0.23),
-        (0.88, 0.5),
-        (0.77, 0.77),
-        (0.5, 0.88),
-    ]);
+fn assistant(pen: &Pen<'_>) {
+    sparkle(&pen.in_accent(SPARK), (0.42, 0.58), 0.42);
+    sparkle(pen, (0.80, 0.20), 0.17);
+}
+
+fn sparkle(pen: &Pen<'_>, centre: (f32, f32), reach: f32) {
+    const SIDE_STEPS: u8 = 8;
+    const PINCH: f32 = 0.08;
+    let tip = |quarter: u8| {
+        let angle = std::f32::consts::FRAC_PI_2 * f32::from(quarter);
+        (
+            centre.0 + reach * angle.sin(),
+            centre.1 - reach * angle.cos(),
+        )
+    };
+    let mut outline = Vec::new();
+    for quarter in 0..4_u8 {
+        let (from, to) = (tip(quarter), tip((quarter + 1) % 4));
+        let control = (
+            centre.0 + (from.0 + to.0 - 2.0 * centre.0) * PINCH,
+            centre.1 + (from.1 + to.1 - 2.0 * centre.1) * PINCH,
+        );
+        for step in 0..SIDE_STEPS {
+            let along = f32::from(step) / f32::from(SIDE_STEPS);
+            let behind = 1.0 - along;
+            outline.push((
+                behind * behind * from.0 + 2.0 * behind * along * control.0 + along * along * to.0,
+                behind * behind * from.1 + 2.0 * behind * along * control.1 + along * along * to.1,
+            ));
+        }
+    }
+    outline.push(tip(0));
+    pen.line(&outline);
 }
 
 fn bold(pen: &Pen<'_>) {
@@ -1006,8 +1030,6 @@ mod tests {
             Icon::ZoomIn,
             Icon::ZoomOut,
             Icon::NewDocument,
-            Icon::Theme,
-            Icon::Home,
             Icon::Document,
             Icon::Folder,
             Icon::Pen,
@@ -1052,12 +1074,13 @@ mod tests {
             Icon::AskAgain,
             Icon::Send,
             Icon::Stop,
+            Icon::Assistant,
         ];
         for (step, icon) in every.iter().enumerate() {
             for other in &every[step + 1..] {
                 assert_ne!(icon, other, "two of the same icon");
             }
         }
-        assert_eq!(every.len(), 62);
+        assert_eq!(every.len(), 61);
     }
 }
