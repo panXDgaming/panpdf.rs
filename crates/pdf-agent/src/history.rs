@@ -224,6 +224,7 @@ fn call_in(value: &Json) -> Option<ToolCall> {
         id: value.get("id")?.as_str()?.to_owned(),
         name: value.get("name")?.as_str()?.to_owned(),
         arguments: value.get("arguments").cloned().unwrap_or(Json::Null),
+        problem: None,
     })
 }
 

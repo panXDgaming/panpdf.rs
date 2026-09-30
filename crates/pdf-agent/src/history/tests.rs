@@ -29,6 +29,7 @@ fn a_chat() -> Chat {
                     id: "call_1".to_owned(),
                     name: "read_text".to_owned(),
                     arguments: Json::object([("first", Json::count(2))]),
+                    problem: None,
                 }],
                 raw: Some(Raw {
                     provider: Provider::Gemini,

@@ -191,6 +191,14 @@ impl Tools {
         self.results.push(result);
     }
 
+    fn answer_a_call_that_could_not_be_read(&mut self, call: &ToolCall) -> bool {
+        let Some(problem) = &call.problem else {
+            return false;
+        };
+        self.answer(ToolResult::failed(&call.id, problem));
+        true
+    }
+
     fn allowed_just_now(&self, call: &ToolCall) -> bool {
         self.allowed_now.as_deref() == Some(call.id.as_str())
     }
@@ -246,6 +254,9 @@ impl Window {
         while let Some(call) = self.ai.tools.queue.front().cloned() {
             if self.ai.tools.sent.is_some() {
                 return;
+            }
+            if self.ai.tools.answer_a_call_that_could_not_be_read(&call) {
+                continue;
             }
             let decision = if self.ai.tools.allowed_just_now(&call) {
                 Decision::Run

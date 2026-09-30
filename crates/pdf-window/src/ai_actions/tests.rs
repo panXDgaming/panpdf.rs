@@ -13,6 +13,7 @@ fn call(id: &str, name: &str) -> ToolCall {
         id: id.to_owned(),
         name: name.to_owned(),
         arguments: Json::Null,
+        problem: None,
     }
 }
 
@@ -370,6 +371,7 @@ fn what_is_being_done_is_said() {
         name: "read_text".to_owned(),
         arguments: Json::parse(r#"{"document":"doc-1","first_page":2,"last_page":2}"#)
             .expect("JSON"),
+        problem: None,
     }]);
     let Some(Doing::Tool(name, request)) = tools.doing() else {
         panic!("a tool");
@@ -382,4 +384,23 @@ fn what_is_being_done_is_said() {
     let mut asking = asked_a_question();
     asking.queue.clear();
     assert!(matches!(asking.doing(), Some(Doing::Asking)));
+}
+
+#[test]
+fn a_call_that_could_not_be_read_is_answered_as_failed_and_the_rest_go_on() {
+    let mut tools = Tools::default();
+    let broken = ToolCall::unreadable("call_1", "write_pages", "it was cut off");
+    let fine = call("call_2", "read_text");
+    tools.take(&[broken.clone(), fine.clone()]);
+    assert!(tools.answer_a_call_that_could_not_be_read(&broken));
+    assert_eq!(
+        tools.results,
+        vec![ToolResult::failed("call_1", "it was cut off")]
+    );
+    assert!(!tools.answer_a_call_that_could_not_be_read(&fine));
+    assert_eq!(
+        tools.queue.front().map(|call| call.id.as_str()),
+        Some("call_2")
+    );
+    assert_eq!(tools.results.len(), 1);
 }
