@@ -3,10 +3,7 @@ use std::sync::Arc;
 use convert_structure::bytes_tool::{FontFile, Fonts, Input, Settings};
 
 fn package() -> Vec<FontFile> {
-    let dir = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../../fonts/packaged"
-    );
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../fonts/packaged");
     let mut paths: Vec<_> = std::fs::read_dir(dir)
         .expect("the engine's font package")
         .filter_map(|e| e.ok().map(|e| e.path()))

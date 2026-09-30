@@ -433,10 +433,7 @@ mod tests {
     use super::*;
 
     fn package() -> FontBook {
-        let dir = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../../fonts/packaged"
-        );
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../fonts/packaged");
         let provider = pdf_font::system_fonts::SystemFontProvider::discover_in(&[dir.into()]);
         FontBook::new(Some(Arc::new(provider)))
     }

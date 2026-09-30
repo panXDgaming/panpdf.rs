@@ -58,6 +58,7 @@ end of this file, and no other is allowed.
 | `pdf-compose` | A written document as Markdown states it: the model a page layout is derived from, with no paint, no file and no dependency |
 | `pdf-heap` | Asking the allocator to hand freed memory back to the operating system. The only crate where `unsafe` is allowed, by the design record: four C calls, no dependency, its own lint table so the workspace rule stays `forbid` |
 | `pdf-print` | Printing: which pages, on what paper, how large and how many to a sheet; each sheet drawn as it prints; and the job given to the system's print service -- CUPS over IPP, or Windows's spooler |
+| `pdf-convert` | The one door to the converters of `convert/`: which tools there are, what each takes and makes and every setting and choice it has, as types that need no dependency; and, behind its `run` feature, running one over files with progress, a way to cancel, a worker thread, and the fonts and random bytes the tools ask of their host |
 | `pdf-app` | Editor logic and the window: the product's one front end |
 | `pdf-agent` | The engine offered to AI agents over the Model Context Protocol (`panpdf-mcp`): the second front end, with no window |
 
@@ -157,7 +158,37 @@ exports for a browser bundle, which only a `wasm32` build compiles and which
 is never linked into the window; and clippy holds them to `all` rather than
 `pedantic`. And because every tool names the same exports, no two of them may
 be linked into one `wasm32` program, so nothing that the browser target builds
-may depend on them.
+may depend on them except through a feature and a target it does not turn on
+(`pdf-convert`, below).
+
+`pdf-convert` (2026-09-30) is the one door the window and the AI agent go
+through to reach them, so neither has to learn four ways of calling a tool.
+Its first half, `pdf_convert::catalogue`, is always built and depends on
+nothing, so the browser target can read it: `Tool` names the 22 tools in the
+order the website lists them, `Setting` and `Choice` are enums rather than
+strings -- every setting a tool has and every value it offers, with its engine
+key, its kind, its range and default, and the rule for when it is shown -- so
+that the window's wording, which must be exhaustive, names every one of them at
+compile time. Defaults are the website's where it has one (JPG to PDF starts as
+"same as the picture", though the tool's own default is A4). `Values` is a typed
+map from a setting to what was set, never the `key=value` text the tools parse,
+which trims a password and cannot carry a newline.
+
+Its second half, `pdf_convert::run`, is behind the `run` feature, off by
+default, and is compiled only for targets other than `wasm32`: every tool
+exports the same names for a browser bundle, so no two may be linked into one
+`wasm32` program. It turns the four ways the tools are called -- a page at a
+time, a job stepped to its end, a list of documents, one blocking function --
+into `run`, which reports `Progress`, checks a cancel flag between steps, and
+answers with an `Outcome` or a `Failure` (cancelled, needs a password, bad
+input, refused, panicked); a tool's error text is sorted into those by what it
+says. `start` runs it on a thread of its own, with a stack large enough for deep
+layout, and turns a panic into a `Failure`. The fonts are the host's, handed in
+once through `Context`: three tools would otherwise keep their first answer for
+the life of the process and two would draw no text. Before every job the
+generator `pdf-security` writes encrypted files with is seeded on the worker,
+from the system when it will give bytes and from the hasher's own random keys
+when it will not, so protecting a file works on Windows as it does elsewhere.
 
 Cycles are architecture failures.
 Rendering does not write PDFs. Semantics does not mutate atoms. The writer does
@@ -282,6 +313,7 @@ change here; an edge added needs a reason above.
 | `pdf-compose` | nothing |
 | `pdf-heap` | nothing |
 | `pdf-print` | `pdf-bytes`, `pdf-content`, `pdf-render`, `pdf-session`, `pdf-syntax` |
+| `pdf-convert` | every crate in `convert/` and `pdf-content`, only through its `run` feature; `convert-raster`, `pdf-bytes` and `pdf-session` in its tests only |
 | `pdf-app` | `pdf-agent`, `pdf-bytes`, `pdf-cli`, `pdf-content`, `pdf-edit`, `pdf-heap`, `pdf-ocr`, `pdf-paint`, `pdf-print`, `pdf-render`, `pdf-semantics`, `pdf-session`, `pdf-syntax` |
 | `pdf-window` | `pdf-agent`, `pdf-app`, `pdf-bytes`, `pdf-cli`, `pdf-content`, `pdf-edit`, `pdf-heap`, `pdf-ocr`, `pdf-paint`, `pdf-print`, `pdf-render`, `pdf-semantics`, `pdf-session`, `pdf-syntax` |
 | `pdf-desktop` | `pdf-app`, `pdf-bytes`, `pdf-cli`, `pdf-edit`, `pdf-semantics`, `pdf-session`, `pdf-window` |
@@ -290,4 +322,5 @@ change here; an edge added needs a reason above.
 A crate in `convert/` may depend on the engine crates `pdf-bytes`,
 `pdf-syntax`, `pdf-security`, `pdf-font`, `pdf-content`, `pdf-paint`,
 `pdf-render`, `pdf-semantics`, `pdf-edit`, `pdf-session` and `pdf-ocr`, and on
-other crates in `convert/`. No crate in `crates/` depends on one of them.
+other crates in `convert/`. Only `pdf-convert` in `crates/` depends on one of
+them, and only through its `run` feature.

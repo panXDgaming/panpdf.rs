@@ -9,6 +9,7 @@ members = [
     "crates/pdf-compose",
     "crates/pdf-desktop",
     "crates/pdf-content",
+    "crates/pdf-convert",
     "crates/pdf-edit",
     "crates/pdf-font",
     "crates/pdf-heap",

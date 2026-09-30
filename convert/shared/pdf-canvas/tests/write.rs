@@ -85,10 +85,7 @@ fn writes_text_that_reads_back() {
 fn a_calibri_paragraph_falls_back_by_script_and_wraps() {
     use convert_pdf_canvas::{FontBook, Span, layout};
     use std::sync::Arc;
-    let package = format!(
-        "{}/../../../fonts/packaged",
-        env!("CARGO_MANIFEST_DIR")
-    );
+    let package = format!("{}/../../../fonts/packaged", env!("CARGO_MANIFEST_DIR"));
     let provider = pdf_font::system_fonts::SystemFontProvider::discover_in(&[package.into()]);
     let mut book = FontBook::new(Some(Arc::new(provider)));
     let mut canvas = Canvas::new();
@@ -122,10 +119,7 @@ fn a_calibri_paragraph_falls_back_by_script_and_wraps() {
 fn lao_prefers_document_faces() {
     use convert_pdf_canvas::FontBook;
     use std::sync::Arc;
-    let package = format!(
-        "{}/../../../fonts/packaged",
-        env!("CARGO_MANIFEST_DIR")
-    );
+    let package = format!("{}/../../../fonts/packaged", env!("CARGO_MANIFEST_DIR"));
     let provider = pdf_font::system_fonts::SystemFontProvider::discover_in(&[package.into()]);
     let mut book = FontBook::new(Some(Arc::new(provider)));
     let mut canvas = Canvas::new();

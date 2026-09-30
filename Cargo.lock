@@ -2314,6 +2314,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "pdf-convert"
+version = "0.1.0"
+dependencies = [
+ "compare-pdf",
+ "compress-pdf",
+ "convert-files",
+ "convert-pdfdoc",
+ "convert-pdftool",
+ "convert-raster",
+ "convert-structure",
+ "excel-to-pdf",
+ "html-to-pdf",
+ "image-to-pdf",
+ "ocr-pdf",
+ "pdf-bytes",
+ "pdf-content",
+ "pdf-session",
+ "pdf-to-excel",
+ "pdf-to-html",
+ "pdf-to-image",
+ "pdf-to-markdown",
+ "pdf-to-pdfa",
+ "pdf-to-powerpoint",
+ "pdf-to-text",
+ "pdf-to-word",
+ "powerpoint-to-pdf",
+ "protect-pdf",
+ "redact-pdf",
+ "repair-pdf",
+ "scan-to-pdf",
+ "sign-pdf",
+ "unlock-pdf",
+ "word-to-pdf",
+]
+
+[[package]]
 name = "pdf-desktop"
 version = "0.1.0"
 dependencies = [

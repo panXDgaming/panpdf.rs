@@ -144,10 +144,7 @@ mod tests {
 
     #[test]
     fn bold_and_italic_answer_by_their_own_faces() {
-        let packaged = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../../fonts/packaged"
-        );
+        let packaged = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../fonts/packaged");
         let mut fonts = HeldFonts::new();
         for stem in [
             "LiberationSans-Regular",

@@ -3,10 +3,7 @@ use std::sync::Arc;
 use convert_pdf_canvas::{Canvas, Direction, FontBook, Line, Span, layout, layout_directed};
 
 fn book() -> FontBook {
-    let package = format!(
-        "{}/../../../fonts/packaged",
-        env!("CARGO_MANIFEST_DIR")
-    );
+    let package = format!("{}/../../../fonts/packaged", env!("CARGO_MANIFEST_DIR"));
     let provider = pdf_font::system_fonts::SystemFontProvider::discover_in(&[package.into()]);
     FontBook::new(Some(Arc::new(provider)))
 }
