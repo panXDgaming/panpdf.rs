@@ -287,3 +287,96 @@ fn a_heading_keeps_with_what_it_heads() {
     let control = composed(&format!("{filler}## Results\n\nMore.\n"), classic);
     assert_eq!(page_of(&control, "Results"), 0);
 }
+
+fn the_pages_of_a_blank_document() -> Vec<pdf_content::PageGeometry> {
+    let bytes = pdf_session::blank_document([595.0, 842.0]).expect("a blank page");
+    let source = pdf_bytes::ByteStore::new(pdf_bytes::SourceId::new(0), bytes);
+    pdf_session::Session::new(source, b"")
+        .page_geometries()
+        .expect("the page is measured")
+}
+
+#[test]
+fn a_composed_document_becomes_commands_that_place_its_new_pages_as_they_will_be_numbered() {
+    use pdf_edit::Command;
+
+    let slate = theme::named("slate").expect("slate");
+    let out = composed(&"A paragraph of words.\n\n".repeat(80), slate);
+    let pages = the_pages_of_a_blank_document();
+    let commands = super::placing::as_commands(&out.marks, &|page| pages.get(page).copied())
+        .expect("every mark has a page to go on");
+    assert_eq!(commands.len(), out.marks.len(), "one command to a mark");
+
+    let added: Vec<usize> = commands
+        .iter()
+        .filter_map(|command| match command {
+            Command::AddBlankPage { beside, .. } => Some(*beside),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(added.len(), out.pages - 1);
+    assert_eq!(
+        added,
+        (0..out.pages - 1).collect::<Vec<_>>(),
+        "one after the other"
+    );
+
+    let first = out
+        .marks
+        .iter()
+        .zip(&commands)
+        .find_map(|(mark, command)| match (mark, command) {
+            (
+                Mark::Text { area, page: 0, .. },
+                Command::PlaceNewText {
+                    frame,
+                    page_index: 0,
+                    ..
+                },
+            ) => Some((*area, *frame)),
+            _ => None,
+        })
+        .expect("a piece of text on the first page");
+    let (area, frame) = first;
+    assert!((frame[0] - area[0]).abs() < 1e-9 && (frame[2] - area[2]).abs() < 1e-9);
+    assert!(
+        (frame[1] - (842.0 - area[3])).abs() < 1e-9 && (frame[3] - (842.0 - area[1])).abs() < 1e-9,
+        "the top of the page shown is the top of the page, y counted upward: {area:?} {frame:?}"
+    );
+
+    let on_a_new_page = out
+        .marks
+        .iter()
+        .zip(&commands)
+        .find_map(|(mark, command)| match (mark, command) {
+            (
+                Mark::Text { area, page, .. },
+                Command::PlaceNewText {
+                    frame, page_index, ..
+                },
+            ) if *page > 0 && page == page_index => Some((*area, *frame)),
+            _ => None,
+        })
+        .expect("a piece of text on a page that is new");
+    assert!(
+        (on_a_new_page.1[1] - (842.0 - on_a_new_page.0[3])).abs() < 1e-9,
+        "a page that is not there yet is placed as a blank page of the same size"
+    );
+}
+
+#[test]
+fn a_mark_on_a_page_that_is_not_there_is_refused_in_words() {
+    let marks = vec![Mark::Shape {
+        page: 4,
+        steps: vec![
+            super::PenStep::Move((1.0, 1.0)),
+            super::PenStep::Line((2.0, 2.0)),
+        ],
+        stroke: Some(([0.0, 0.0, 0.0], 1.0)),
+        fill: None,
+    }];
+    let pages = the_pages_of_a_blank_document();
+    let refused = super::placing::as_commands(&marks, &|page| pages.get(page).copied())
+        .expect_err("page 5 does not exist");
+    assert!(refused.contains("page 5"), "{refused}");
+}

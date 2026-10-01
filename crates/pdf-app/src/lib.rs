@@ -6,6 +6,7 @@ pub mod ai_key;
 pub mod ai_layout;
 pub mod ai_permission;
 pub mod ai_recall;
+pub mod ai_run;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod ai_status;
 pub mod arrange;

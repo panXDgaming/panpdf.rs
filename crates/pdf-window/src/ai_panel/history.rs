@@ -2,13 +2,15 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use eframe::egui;
-use pdf_agent::history::{Chat, name_for, newest_first, title_of, write};
+use pdf_agent::history::{Chat, is_a_chat_id, name_for, newest_first, title_of, write_turns};
 
 use pdf_app::wording::{Lang, Message};
 
 use super::AiState;
 
 const MOST_KEPT: usize = 200;
+
+const SECONDS_BEFORE_TRYING_AGAIN: u64 = 10;
 
 fn folder() -> Option<PathBuf> {
     if cfg!(test) {
@@ -33,15 +35,70 @@ fn taken(folder: &std::path::Path) -> BTreeSet<String> {
         .collect()
 }
 
+#[cfg(unix)]
+fn make_the_folder(folder: &std::path::Path) -> std::io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(folder)
+}
+
+#[cfg(not(unix))]
+fn make_the_folder(folder: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(folder)
+}
+
+#[cfg(unix)]
+fn open_for_writing(path: &std::path::Path) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+}
+
+#[cfg(not(unix))]
+fn open_for_writing(path: &std::path::Path) -> std::io::Result<std::fs::File> {
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+}
+
+fn write_privately(file: &std::path::Path, beside: &std::path::Path, text: &str) -> bool {
+    use std::io::Write;
+    let _ = std::fs::remove_file(beside);
+    let Ok(mut made) = open_for_writing(beside) else {
+        return false;
+    };
+    if made.write_all(text.as_bytes()).is_err() {
+        drop(made);
+        let _ = std::fs::remove_file(beside);
+        return false;
+    }
+    drop(made);
+    if std::fs::rename(beside, file).is_err() {
+        let _ = std::fs::remove_file(beside);
+        return false;
+    }
+    true
+}
+
 impl AiState {
-    pub(super) fn save_the_chat(&mut self) {
+    pub(crate) fn save_the_chat(&mut self) {
         if self.turns.len() == self.saved_turns || self.turns.is_empty() {
+            return;
+        }
+        if now() < self.save_again_at {
             return;
         }
         let Some(folder) = folder() else {
             return;
         };
-        if std::fs::create_dir_all(&folder).is_err() {
+        if make_the_folder(&folder).is_err() {
+            self.save_again_at = now() + SECONDS_BEFORE_TRYING_AGAIN;
             return;
         }
         if self.chat_id.is_empty() {
@@ -54,18 +111,18 @@ impl AiState {
             model: self.model.clone(),
             documents: self.documents.clone(),
             places: self.places.clone(),
-            turns: self.turns.clone(),
+            turns: Vec::new(),
         };
+        let text = write_turns(&chat, &self.turns);
         let file = folder.join(&self.chat_id);
         let beside = folder.join(format!("{}.writing", self.chat_id));
-        if std::fs::write(&beside, write(&chat)).is_ok() && std::fs::rename(&beside, &file).is_ok()
-        {
+        if write_privately(&file, &beside, &text) {
             self.saved_turns = self.turns.len();
             self.history = None;
+            trim(&folder, &self.chat_id);
         } else {
-            let _ = std::fs::remove_file(&beside);
+            self.save_again_at = now() + SECONDS_BEFORE_TRYING_AGAIN;
         }
-        trim(&folder);
     }
 
     pub(super) fn the_chats(&mut self) -> &[Chat] {
@@ -78,7 +135,10 @@ impl AiState {
                     .flatten()
                     .map(|entry| entry.path())
                     .filter(|path| path.extension().is_none())
-                    .filter_map(|path| std::fs::read_to_string(path).ok());
+                    .filter_map(|path| {
+                        let name = path.file_name()?.to_str()?.to_owned();
+                        Some((name, std::fs::read_to_string(path).ok()?))
+                    });
                 newest_first(texts)
             });
             self.history = Some(chats);
@@ -98,10 +158,13 @@ impl AiState {
     pub(super) fn take_up(&mut self, chat: &Chat) {
         self.cancel();
         self.tools.clear();
+        self.tools.plan = pdf_agent::context::plan_in(&chat.turns);
         self.notes.clear();
         self.pending.clear();
+        self.drawn.clear();
+        self.model_calls = 0;
+        self.summarising = false;
         self.partial = None;
-        self.asked = None;
         self.notice = None;
         self.context.clear();
         self.rewound = None;
@@ -114,12 +177,14 @@ impl AiState {
     }
 
     pub(super) fn forget_a_chat(&mut self, id: &str) {
+        if !is_a_chat_id(id) {
+            return;
+        }
         if let Some(folder) = folder() {
             let _ = std::fs::remove_file(folder.join(id));
         }
         if self.chat_id == id {
-            self.chat_id.clear();
-            self.saved_turns = 0;
+            self.new_chat();
         }
         self.history = None;
     }
@@ -206,21 +271,32 @@ impl AiState {
     }
 }
 
-fn trim(folder: &std::path::Path) {
+fn trim(folder: &std::path::Path, keep: &str) {
     let Ok(listing) = std::fs::read_dir(folder) else {
         return;
     };
-    let mut names: Vec<PathBuf> = listing
+    let mut chats: Vec<(std::time::SystemTime, PathBuf)> = listing
         .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().is_none())
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| is_a_chat_id(name) && name != keep)
+        })
+        .map(|entry| {
+            let changed = entry
+                .metadata()
+                .and_then(|facts| facts.modified())
+                .unwrap_or(std::time::UNIX_EPOCH);
+            (changed, entry.path())
+        })
         .collect();
-    if names.len() <= MOST_KEPT {
+    if chats.len() < MOST_KEPT {
         return;
     }
-    names.sort();
-    let over = names.len() - MOST_KEPT;
-    for path in names.into_iter().take(over) {
+    chats.sort();
+    let over = chats.len() + 1 - MOST_KEPT;
+    for (_, path) in chats.into_iter().take(over) {
         let _ = std::fs::remove_file(path);
     }
 }

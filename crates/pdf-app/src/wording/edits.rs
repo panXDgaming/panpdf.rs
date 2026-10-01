@@ -176,6 +176,10 @@ pub enum Done {
         count: usize,
         at: usize,
     },
+    Wrote {
+        pieces: usize,
+        pages: usize,
+    },
     Undone,
     Redone,
     NothingToUndo,
@@ -571,6 +575,11 @@ impl Done {
             Self::AddedPage { page } => format!("Added a blank page as page {page}"),
             Self::RemovedPages { count } => format!("Deleted {}", count_pages(*count)),
             Self::Described => "Document properties saved".to_owned(),
+            Self::Wrote { pieces, pages } => format!(
+                "Wrote {} of text over {}",
+                count(*pieces, "piece"),
+                count_pages(*pages)
+            ),
             Self::RotatedPages { count } => format!("Turned {}", count_pages(*count)),
             Self::Stamped { count } => format!("Stamped {}", count_pages(*count)),
             Self::Recognized {
@@ -1046,6 +1055,13 @@ mod tests {
         let one = Done::MovedGroup { pieces: 1 };
         assert!(one.say(Lang::English).ends_with("1 piece"), "{one}");
         assert!(refusals[0].say(Lang::English).contains("right"));
+    }
+
+    #[test]
+    fn a_document_written_is_said_with_its_pieces_and_pages() {
+        let said = |pieces: usize, pages: usize| Done::Wrote { pieces, pages }.say(Lang::English);
+        assert_eq!(said(12, 3), "Wrote 12 pieces of text over 3 pages");
+        assert_eq!(said(1, 1), "Wrote 1 piece of text over 1 page");
     }
 
     #[test]

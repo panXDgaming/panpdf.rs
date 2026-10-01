@@ -1,6 +1,7 @@
 pub mod chart;
 pub mod expr;
 pub mod math;
+pub mod placing;
 pub mod shapes;
 pub mod theme;
 

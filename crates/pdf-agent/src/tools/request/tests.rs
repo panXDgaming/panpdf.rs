@@ -1,4 +1,4 @@
-use super::{HANDLE, Request, parse};
+use super::{HANDLE, PlanStep, Request, StepState, parse};
 use crate::json::Json;
 use crate::tools::offered_to_a_window;
 
@@ -135,6 +135,26 @@ fn examples() -> Vec<(&'static str, &'static str, Request)> {
                 ],
             },
         ),
+        (
+            "update_plan",
+            r#"{"steps":[{"text":" Read the contract ","status":"done"},{"text":"Mark the dates","status":"in_progress"},{"text":"Summarise","status":"pending"}]}"#,
+            Request::UpdatePlan {
+                steps: vec![
+                    PlanStep {
+                        text: "Read the contract".to_owned(),
+                        state: StepState::Done,
+                    },
+                    PlanStep {
+                        text: "Mark the dates".to_owned(),
+                        state: StepState::InProgress,
+                    },
+                    PlanStep {
+                        text: "Summarise".to_owned(),
+                        state: StepState::Pending,
+                    },
+                ],
+            },
+        ),
     ]
 }
 
@@ -189,7 +209,7 @@ fn what_is_offered_is_what_can_be_read() {
         .into_iter()
         .map(|tool| tool.name)
         .collect();
-    assert_eq!(offered.len(), 18);
+    assert_eq!(offered.len(), 19);
     for name in &offered {
         let read = parse(name, &args(r#"{"document":"doc-1"}"#));
         assert_ne!(
@@ -360,4 +380,214 @@ fn a_request_says_whether_it_only_reads() {
         );
     }
     assert!(!Request::Undo.only_reads());
+}
+
+fn writing(extra: &str) -> Result<Request, String> {
+    parse(
+        "write_pages",
+        &args(&format!(
+            r##"{{"document":"doc-1","markdown":"# Hi","font":"Noto Sans"{extra}}}"##
+        )),
+    )
+}
+
+#[test]
+fn a_write_that_names_a_page_or_a_size_wrongly_is_refused_not_quietly_changed() {
+    let Ok(Request::WritePages {
+        from_page,
+        size,
+        margin,
+        ..
+    }) = writing("")
+    else {
+        panic!("a plain write reads");
+    };
+    assert_eq!(
+        (from_page, size.to_bits(), margin.to_bits()),
+        (0, 11.0_f64.to_bits(), 56.0_f64.to_bits())
+    );
+    for (extra, why) in [
+        (
+            r#","from_page":0"#,
+            "`from_page` is needed, as a page number from 1",
+        ),
+        (
+            r#","from_page":"2""#,
+            "`from_page` is needed, as a page number from 1",
+        ),
+        (
+            r#","from_page":-1"#,
+            "`from_page` is needed, as a page number from 1",
+        ),
+        (r#","size":2"#, "`size` is a number from 4 to 96, in points"),
+        (
+            r#","size":"big""#,
+            "`size` is a number from 4 to 96, in points",
+        ),
+        (
+            r#","margin":400"#,
+            "`margin` is a number from 0 to 300, in points",
+        ),
+    ] {
+        assert_eq!(writing(extra), Err(why.to_owned()), "{extra}");
+    }
+    let Ok(Request::WritePages {
+        from_page, size, ..
+    }) = writing(r#","from_page":3,"size":14"#)
+    else {
+        panic!("a write that names a page reads");
+    };
+    assert_eq!((from_page, size.to_bits()), (2, 14.0_f64.to_bits()));
+}
+
+#[test]
+fn an_argument_the_model_sent_as_null_is_an_argument_it_left_out() {
+    assert_eq!(
+        parse(
+            "read_text",
+            &args(r#"{"document":"doc-1","first_page":3,"last_page":null}"#)
+        ),
+        Ok(Request::ReadText {
+            first: Some(2),
+            last: None
+        })
+    );
+    assert_eq!(
+        parse(
+            "find_text",
+            &args(r#"{"document":"doc-1","text":"x","first_page":null,"last_page":null}"#)
+        ),
+        Ok(Request::FindText {
+            text: "x".to_owned(),
+            match_case: false,
+            first: None,
+            last: None
+        })
+    );
+    assert_eq!(
+        parse(
+            "insert_pages",
+            &args(r#"{"document":"doc-1","from":"/tmp/a.pdf","after_page":1,"pages":null}"#)
+        ),
+        Ok(Request::InsertPages {
+            from: std::path::PathBuf::from("/tmp/a.pdf"),
+            pages: None,
+            after: 1,
+            password: None
+        })
+    );
+    assert_eq!(
+        parse("read_text", &args(r#"{"document":"doc-1","first_page":0}"#)),
+        Err("`first_page` is needed, as a page number from 1".to_owned()),
+        "a wrong number is still wrong: only null means left out"
+    );
+}
+
+#[test]
+fn a_page_size_is_both_sides_or_neither() {
+    assert!(
+        parse(
+            "add_blank_page",
+            &args(r#"{"document":"doc-1","after_page":1,"width":300}"#)
+        )
+        .expect_err("refused")
+        .contains("both `width` and `height`")
+    );
+    assert_eq!(
+        parse(
+            "add_blank_page",
+            &args(r#"{"document":"doc-1","after_page":1,"width":null,"height":null}"#)
+        ),
+        Ok(Request::AddBlankPage {
+            after: 1,
+            size: None
+        })
+    );
+    assert_eq!(
+        parse(
+            "add_text",
+            &args(
+                r#"{"document":"doc-1","page":1,"left":1,"top":1,"width":50,"text":"x","size":0,"font":"Noto Sans"}"#
+            )
+        ),
+        Err("`size` is a number above 0, in points".to_owned())
+    );
+}
+
+#[test]
+fn a_plan_has_one_to_twenty_steps_each_with_words_and_a_state() {
+    let plan = |steps: &str| parse("update_plan", &args(&format!(r#"{{"steps":{steps}}}"#)));
+    let step = |text: &str| format!(r#"{{"text":"{text}","status":"pending"}}"#);
+    let many = |count: usize| {
+        format!(
+            "[{}]",
+            (0..count)
+                .map(|at| step(&format!("step {at}")))
+                .collect::<Vec<_>>()
+                .join(",")
+        )
+    };
+    assert!(plan(&many(1)).is_ok());
+    assert!(plan(&many(20)).is_ok());
+    assert!(
+        plan(&many(21))
+            .expect_err("too long")
+            .contains("at most 20")
+    );
+    assert!(plan("[]").expect_err("empty").contains("is empty"));
+    assert!(
+        parse("update_plan", &args("{}"))
+            .expect_err("missing")
+            .starts_with("`steps` is needed")
+    );
+    assert!(
+        plan(r#"[{"text":"  ","status":"done"}]"#)
+            .expect_err("no words")
+            .contains("`text`")
+    );
+    assert!(
+        plan(r#"[{"text":"x","status":"doing"}]"#)
+            .expect_err("no such state")
+            .contains("pending, in_progress or done")
+    );
+    let Ok(Request::UpdatePlan { steps }) = plan(&format!(
+        r#"[{{"text":"{}","status":"done"}}]"#,
+        "word ".repeat(100)
+    )) else {
+        panic!("a long step reads");
+    };
+    assert_eq!(steps[0].text.chars().count(), 121, "cut short with a mark");
+    assert!(steps[0].text.ends_with('\u{2026}'));
+}
+
+#[test]
+fn only_a_write_over_and_taking_pages_out_are_destructive_calls() {
+    let write = |extra: &str| writing(extra).expect("a write reads");
+    assert!(!write("").is_destructive());
+    assert!(!write(r#","replace":false"#).is_destructive());
+    assert!(write(r#","replace":true"#).is_destructive());
+    assert!(Request::DeletePages(vec![0]).is_destructive());
+    assert!(!Request::Undo.is_destructive());
+    assert!(
+        !Request::UpdatePlan { steps: Vec::new() }.is_destructive(),
+        "a plan changes nothing"
+    );
+}
+
+#[test]
+fn a_call_made_with_page_numbers_says_so() {
+    let says = |name: &str, arguments: &str| {
+        parse(name, &args(arguments))
+            .expect("it reads")
+            .counts_pages()
+    };
+    assert!(says("delete_pages", r#"{"document":"doc-1","pages":[2]}"#));
+    assert!(says("render_page", r#"{"document":"doc-1","page":2}"#));
+    assert!(says("read_text", r#"{"document":"doc-1","first_page":2}"#));
+    assert!(!says("read_text", r#"{"document":"doc-1"}"#));
+    assert!(!says(
+        "replace_text",
+        r#"{"document":"doc-1","block":"p1-b1","text":"x"}"#
+    ));
+    assert!(!says("undo", r#"{"document":"doc-1"}"#));
 }

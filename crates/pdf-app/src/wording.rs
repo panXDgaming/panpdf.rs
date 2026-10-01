@@ -653,7 +653,6 @@ pub enum Message {
     AiEffortLowMeans,
     AiEffortMediumMeans,
     AiEffortHighMeans,
-    AiTestConnection,
     AiCancel,
     AiDisconnect,
     AiConnected,
@@ -662,9 +661,7 @@ pub enum Message {
     AiCheckingConnection,
     AiNotConnectedYet,
     AiThisDocumentsChat,
-    AiEdit,
     AiEditMeans,
-    AiAskAgain,
     AiAskAgainMeans,
     AiWentBack,
     AiWentBackDocumentStays,
@@ -680,17 +677,12 @@ pub enum Message {
     AiSkipQuestion,
     AiWritingTheAnswer,
     AiWaitingForModel(String),
-    AiWritingPieces {
-        written: usize,
-        pieces: usize,
-    },
     AiAskHint,
     AiIncludeContext {
         characters: usize,
     },
     AiSend,
     AiResponse,
-    AiCopyResponse,
     AiPrivacy,
     AiWorkerStopped,
     AiNothingAskedYet,
@@ -715,9 +707,28 @@ pub enum Message {
     AiAllowForThisChat,
     AiRefuse,
     AiChangedTheDocument {
-        page: usize,
+        pages: Vec<usize>,
     },
-    AiTooManyRounds,
+    AiStepsUsedUp,
+    AiConversationTooLarge,
+    AiContinue,
+    AiGoOn,
+    AiRetry,
+    AiPlan {
+        done: usize,
+        total: usize,
+    },
+    AiAllowAll {
+        count: usize,
+    },
+    AiRunMadeChanges {
+        steps: usize,
+    },
+    AiUndoRun,
+    AiUndoRunPersonEdited,
+    AiRunTakenBack {
+        steps: usize,
+    },
     AiEffort,
     AiEffortOff,
     AiEffortNone,
@@ -1953,7 +1964,6 @@ impl Message {
             Self::AiKeptKeyUnreadable => "The key kept on this machine could not be read. \
                  Give it again."
                 .to_owned(),
-            Self::AiTestConnection => "Test connection".to_owned(),
             Self::AiCancel => "Stop asking".to_owned(),
             Self::AiDisconnect => "Disconnect".to_owned(),
             Self::AiConnected => "Connected".to_owned(),
@@ -1962,9 +1972,7 @@ impl Message {
             Self::AiCheckingConnection => "Checking the connection\u{2026}".to_owned(),
             Self::AiNotConnectedYet => "Not connected \u{2014} open the settings".to_owned(),
             Self::AiThisDocumentsChat => "This document's chat, carried on from last time".to_owned(),
-            Self::AiEdit => "Edit".to_owned(),
             Self::AiEditMeans => "Go back to this question to change it and ask again".to_owned(),
-            Self::AiAskAgain => "Ask again".to_owned(),
             Self::AiAskAgainMeans => "Ask for this answer again".to_owned(),
             Self::AiWentBack => "Went back to an earlier question.".to_owned(),
             Self::AiWentBackDocumentStays => {
@@ -1982,16 +1990,12 @@ impl Message {
             Self::AiSkipQuestion => "Skip".to_owned(),
             Self::AiWritingTheAnswer => "Writing the answer\u{2026}".to_owned(),
             Self::AiWaitingForModel(model) => format!("Waiting for {model}\u{2026}"),
-            Self::AiWritingPieces { written, pieces } => {
-                format!("Writing the document \u{2014} {written} of {pieces}")
-            }
             Self::AiAskHint => "Ask a question\u{2026}".to_owned(),
             Self::AiIncludeContext { characters } => {
                 format!("Include the text of the page on screen (up to {characters} characters)")
             }
             Self::AiSend => "Send".to_owned(),
             Self::AiResponse => "Response".to_owned(),
-            Self::AiCopyResponse => "Copy response".to_owned(),
             Self::AiPrivacy => {
                 "Finding models asks for the list and nothing else. The key stays in \
                  memory and is never written to disc. In Chat only, what leaves this \
@@ -2035,14 +2039,43 @@ impl Message {
             Self::AiAllowOnce => "Allow once".to_owned(),
             Self::AiAllowForThisChat => "Allow for this chat".to_owned(),
             Self::AiRefuse => "Refuse".to_owned(),
-            Self::AiChangedTheDocument { page } => {
-                format!("The assistant changed page {page}. Undo takes it back.")
-            }
-            Self::AiTooManyRounds => {
-                "The assistant asked for too many actions for one question and was stopped. \
-                 Ask again, in smaller steps."
+            Self::AiChangedTheDocument { pages } => format!(
+                "The assistant changed {}. Undo takes it back.",
+                pages_said(pages)
+            ),
+            Self::AiStepsUsedUp => {
+                "The assistant used up the steps one request is allowed and has said what is \
+                 done and what is left"
                     .to_owned()
             }
+            Self::AiConversationTooLarge => {
+                "This conversation has grown too large to send in one piece. Start a new chat \
+                 and say where you were"
+                    .to_owned()
+            }
+            Self::AiContinue => "Continue".to_owned(),
+            Self::AiGoOn => "Please go on with what is left.".to_owned(),
+            Self::AiRetry => "Try again".to_owned(),
+            Self::AiPlan { done, total } => format!("Plan \u{00b7} {done} of {total} done"),
+            Self::AiAllowAll { count } => format!("Allow all {count}"),
+            Self::AiRunMadeChanges { steps } => format!(
+                "In this run the assistant made {} to the document.",
+                edits::count(*steps, "change")
+            ),
+            Self::AiUndoRun => "Undo them all".to_owned(),
+            Self::AiUndoRunPersonEdited => {
+                "You changed the document after the assistant's last step, so its changes cannot \
+                 be undone together without undoing yours. Use Undo for your own changes."
+                    .to_owned()
+            }
+            Self::AiRunTakenBack { steps } => format!(
+                "The assistant's {} taken back.",
+                if *steps == 1 {
+                    "change was".to_owned()
+                } else {
+                    format!("{steps} changes were")
+                }
+            ),
             Self::AiEffort => "Thinking".to_owned(),
             Self::AiEffortOff => "Thinking: default".to_owned(),
             Self::AiEffortNone => "Thinking: off".to_owned(),
@@ -2118,10 +2151,28 @@ impl Message {
             Self::AiThinkingAloud => "thinking\u{2026}".to_owned(),
             Self::AiCopyCode => "Copy this code".to_owned(),
             Self::AiAPicture => "a picture".to_owned(),
-            Self::AiAnswerCutShort => {
-                "The model ran out of room and stopped here \u{2014} ask it to go on".to_owned()
-            }
+            Self::AiAnswerCutShort => "The model ran out of room and stopped here".to_owned(),
         }
+    }
+}
+
+fn pages_said(pages: &[usize]) -> String {
+    let named: Vec<String> = pages.iter().map(ToString::to_string).collect();
+    match pages {
+        [] => "the document".to_owned(),
+        [one] => format!("page {one}"),
+        [first, .., last]
+            if pages.windows(2).all(|pair| pair[1] == pair[0] + 1) && pages.len() > 2 =>
+        {
+            format!("pages {first} to {last}")
+        }
+        _ if pages.len() <= 4 => {
+            let (last, rest) = named
+                .split_last()
+                .map_or(("", &[][..]), |(last, rest)| (last.as_str(), rest));
+            format!("pages {} and {last}", rest.join(", "))
+        }
+        _ => format!("{} pages", pages.len()),
     }
 }
 
@@ -2356,9 +2407,7 @@ mod tests {
             Message::AiCheckingConnection,
             Message::AiNotConnectedYet,
             Message::AiThisDocumentsChat,
-            Message::AiEdit,
             Message::AiEditMeans,
-            Message::AiAskAgain,
             Message::AiAskAgainMeans,
             Message::AiWentBack,
             Message::AiWentBackDocumentStays,
@@ -2374,10 +2423,6 @@ mod tests {
             Message::AiSkipQuestion,
             Message::AiWritingTheAnswer,
             Message::AiWaitingForModel("qwen".to_owned()),
-            Message::AiWritingPieces {
-                written: 3,
-                pieces: 10,
-            },
         ]
     }
 
@@ -2410,7 +2455,57 @@ mod tests {
             Message::AiAPicture,
             Message::AiAnswerCutShort,
             Message::AiEffortNone,
+            Message::AiStepsUsedUp,
+            Message::AiConversationTooLarge,
+            Message::AiContinue,
+            Message::AiGoOn,
+            Message::AiRetry,
+            Message::AiPlan { done: 1, total: 4 },
+            Message::AiAllowAll { count: 3 },
+            Message::AiRunMadeChanges { steps: 3 },
+            Message::AiUndoRun,
+            Message::AiUndoRunPersonEdited,
+            Message::AiRunTakenBack { steps: 3 },
+            Message::AiChangedTheDocument { pages: vec![2, 5] },
         ]
+    }
+
+    #[test]
+    fn a_note_about_a_change_names_the_pages_it_touched() {
+        let said = |pages: &[usize]| {
+            Message::AiChangedTheDocument {
+                pages: pages.to_vec(),
+            }
+            .say(Lang::English)
+        };
+        let note = |pages: &str| format!("The assistant changed {pages}. Undo takes it back.");
+        assert_eq!(said(&[2]), note("page 2"));
+        assert_eq!(said(&[2, 5]), note("pages 2 and 5"));
+        assert_eq!(said(&[3, 4]), note("pages 3 and 4"));
+        assert_eq!(said(&[1, 3, 5]), note("pages 1, 3 and 5"));
+        assert_eq!(said(&[1, 2, 3, 4, 5]), note("pages 1 to 5"));
+        assert_eq!(said(&[1, 3, 5, 7, 9]), note("5 pages"));
+        assert_eq!(said(&[]), note("the document"));
+    }
+
+    #[test]
+    fn a_run_is_said_in_changes_and_in_what_was_taken_back() {
+        let made = |steps: usize| Message::AiRunMadeChanges { steps }.say(Lang::English);
+        assert_eq!(
+            made(1),
+            "In this run the assistant made 1 change to the document."
+        );
+        assert_eq!(
+            made(4),
+            "In this run the assistant made 4 changes to the document."
+        );
+        let back = |steps: usize| Message::AiRunTakenBack { steps }.say(Lang::English);
+        assert_eq!(back(1), "The assistant's change was taken back.");
+        assert_eq!(back(3), "The assistant's 3 changes were taken back.");
+        assert_eq!(
+            Message::AiAllowAll { count: 3 }.say(Lang::English),
+            "Allow all 3"
+        );
     }
 
     #[test]

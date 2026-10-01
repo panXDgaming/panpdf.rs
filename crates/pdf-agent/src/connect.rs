@@ -623,6 +623,7 @@ pub enum ConnectError {
     Cancelled,
     Curl(String),
     ResponseTooLarge,
+    TooLarge(String),
     Http(String),
     Protocol(String),
 }
@@ -634,6 +635,7 @@ impl std::fmt::Display for ConnectError {
             Self::Cancelled => f.write_str("AI request cancelled"),
             Self::Curl(s) => write!(f, "curl could not make the AI request: {s}"),
             Self::ResponseTooLarge => f.write_str("the AI response is too large"),
+            Self::TooLarge(s) => write!(f, "the conversation is too large to send: {s}"),
             Self::Http(s) => write!(f, "the AI service refused the request: {s}"),
             Self::Protocol(s) => write!(f, "the AI service returned an unexpected answer: {s}"),
         }
@@ -968,15 +970,15 @@ impl Connection {
         }
         let words: usize = spoken.iter().map(Turn::words_size).sum();
         if words > MOST_SPOKEN_BYTES {
-            return Err(ConnectError::Invalid(
-                "prompt and context are too large".to_owned(),
-            ));
+            return Err(ConnectError::TooLarge(format!(
+                "{words} bytes of words, and {MOST_SPOKEN_BYTES} is the most"
+            )));
         }
         let attached: usize = spoken.iter().map(Turn::attached_size).sum();
         if attached > MOST_ATTACHED_BYTES {
-            return Err(ConnectError::Invalid(
-                "the attached files are too large".to_owned(),
-            ));
+            return Err(ConnectError::TooLarge(format!(
+                "{attached} bytes of attached files, and {MOST_ATTACHED_BYTES} is the most"
+            )));
         }
         Ok(spoken)
     }

@@ -22,7 +22,12 @@ use pdf_semantics::{ClusterKey, Grouping, SemanticIndex};
 
 type Correspondence = Option<BTreeMap<ClusterKey, ClusterKey>>;
 
-type Said = (usize, Correspondence, Vec<(ClusterKey, ClusterKey)>);
+type Said = (
+    usize,
+    Correspondence,
+    Vec<(ClusterKey, ClusterKey)>,
+    Option<pdf_edit::PageChange>,
+);
 
 type Regrouped = (usize, Option<Arc<Grouping>>, Option<Arc<Grouping>>);
 
@@ -721,11 +726,20 @@ impl Session {
                     plan.effect().page_index,
                     plan.correspondence().cloned(),
                     plan.inserted().to_vec(),
+                    plan.pages().cloned(),
                 ));
                 Ok(plan)
             });
         self.timed();
         applied?;
+        let puts_pages_in = said.iter().any(|(_, _, _, change)| change.is_some())
+            && said.iter().all(|(_, _, _, change)| {
+                matches!(change, None | Some(pdf_edit::PageChange::Added(_)))
+            });
+        if puts_pages_in {
+            self.put_pages_in_each(&said);
+            return Ok(());
+        }
         let regrouped = self.carry_groupings(&said);
         self.last_pages = None;
         self.last_spread = spread_of(&spread);
@@ -745,9 +759,44 @@ impl Session {
         Ok(())
     }
 
+    fn put_pages_in_each(&mut self, said: &[Said]) {
+        let mut put: Vec<usize> = Vec::new();
+        for (page, _, _, change) in said {
+            match change {
+                Some(change @ pdf_edit::PageChange::Added(pages)) => {
+                    self.renumber_pages(change, false);
+                    for earlier in &mut put {
+                        *earlier = change.renumbered(*earlier).unwrap_or(*earlier);
+                    }
+                    put.extend(pages);
+                    put.sort_unstable();
+                }
+                _ => {
+                    self.groupings.remove(page);
+                }
+            }
+        }
+        let change = pdf_edit::PageChange::Added(put);
+        self.last_pages = Some(change.clone());
+        self.last_spread.clear();
+        self.grouping_done.push(GroupingStep {
+            page: change.first(),
+            before: None,
+            after: None,
+            pages: Some(change),
+            taken: Vec::new(),
+            parked: false,
+            spread: Vec::new(),
+            regrouped: Vec::new(),
+        });
+        self.grouping_undone.clear();
+        self.forget_pages();
+        self.revision = self.revision.next();
+    }
+
     fn carry_groupings(&mut self, said: &[Said]) -> Vec<Regrouped> {
         let mut walked: Vec<Regrouped> = Vec::new();
-        for (page, mapping, inserted) in said {
+        for (page, mapping, inserted, _) in said {
             let before = self.groupings.get(page).cloned();
             let after = before
                 .as_ref()
@@ -1427,6 +1476,62 @@ mod tests {
         assert_eq!(refused.source().as_bytes(), at_rest.as_bytes());
         assert_eq!(refused.history().undo_depth(), 0);
         assert!(refused.apply_each(&[]).is_err(), "no command is no step");
+    }
+
+    #[test]
+    fn a_step_of_several_commands_can_put_a_page_in_and_draw_on_it_as_one_undo() {
+        use pdf_edit::{PageChange, PenStep, PenStroke};
+        let at_rest = two_page_fixture();
+        let mut session = Session::new(at_rest.clone(), b"");
+        let drawn = |page_index| Command::DrawPath {
+            page_index,
+            steps: vec![PenStep::Move((10.0, 10.0)), PenStep::Line((50.0, 50.0))],
+            closed: false,
+            stroke: Some(PenStroke::pen([0.0, 0.0, 0.0], 1.0)),
+            fill: None,
+        };
+        let blank = |beside| Command::AddBlankPage {
+            beside,
+            before: false,
+            size: [100.0, 100.0],
+        };
+        session
+            .apply_each(&[drawn(0), blank(1), drawn(2), blank(2), drawn(3)])
+            .expect("two pages go in and are drawn on");
+        assert_eq!(session.page_count().expect("the tree walks"), 4);
+        assert_eq!(session.history().undo_depth(), 1, "one step");
+        assert_eq!(
+            session.last_pages(),
+            Some(&PageChange::Added(vec![2, 3])),
+            "the new pages are named as they now stand"
+        );
+        assert!(session.last_spread().is_empty());
+        session.page(3).expect("the last new page reads");
+        let after = session.source().to_vec();
+
+        assert!(session.undo().expect("undo walks"));
+        assert_eq!(session.page_count().expect("the tree walks"), 2);
+        assert_eq!(session.last_pages(), Some(&PageChange::Removed(vec![2, 3])));
+        assert!(!session.history().can_undo(), "one undo took it all back");
+        assert!(session.redo().expect("redo walks"));
+        assert_eq!(session.page_count().expect("the tree walks"), 4);
+        assert_eq!(session.source().to_vec(), after, "redo is the same bytes");
+
+        let mut refused = Session::new(at_rest.clone(), b"");
+        let wrong = Command::PlaceNewText {
+            page_index: 9,
+            frame: [0.0, 0.0, 10.0, 10.0],
+            text: "x".to_owned(),
+            family: "none".to_owned(),
+            size: 12.0,
+            bold: false,
+            italic: false,
+            fill: None,
+            paragraph: pdf_edit::ParagraphLayout::default(),
+        };
+        assert!(refused.apply_each(&[blank(1), wrong]).is_err());
+        assert_eq!(refused.page_count().expect("the tree walks"), 2);
+        assert_eq!(refused.history().undo_depth(), 0, "nothing was kept");
     }
 
     #[test]

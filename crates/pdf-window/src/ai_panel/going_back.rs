@@ -1,4 +1,4 @@
-use pdf_agent::connect::{Attachment, AttachmentKind, Said, Turn};
+use pdf_agent::connect::{Attachment, AttachmentKind, Turn};
 use pdf_app::ai_recall::{Way, distinct};
 use pdf_app::wording::Message;
 
@@ -47,6 +47,7 @@ impl AiState {
             .collect();
         self.recall.forget();
         self.notice = None;
+        self.drawn.clear();
         self.send_now = and_ask;
     }
 
@@ -67,7 +68,7 @@ impl AiState {
         let at = self
             .turns
             .iter()
-            .rposition(|turn| turn.said() == Said::Person)?;
+            .rposition(|turn| matches!(turn, Turn::Person { .. }))?;
         (at + 1 < self.turns.len()).then_some(at)
     }
 
@@ -139,7 +140,7 @@ impl AiState {
     }
 }
 
-fn pending_again(attachment: Attachment) -> PendingAttachment {
+pub(super) fn pending_again(attachment: Attachment) -> PendingAttachment {
     let kind = match attachment.kind {
         AttachmentKind::Image { .. } => pdf_agent::attach::Kind::Picture,
         AttachmentKind::Text => pdf_agent::attach::Kind::Text,

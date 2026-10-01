@@ -49,7 +49,13 @@ pub enum Decision {
 pub enum Answer {
     Once,
     ForThisChat,
+    AllOfThem,
     Refuse,
+}
+
+#[must_use]
+pub fn may_allow_all(name: &str) -> bool {
+    !ALWAYS_ASK.contains(&name)
 }
 
 #[must_use]
@@ -64,7 +70,7 @@ pub fn decide(
     facts: Option<(bool, bool)>,
     allowed_for_chat: bool,
 ) -> Decision {
-    let Some((read_only, _destructive)) = facts else {
+    let Some((read_only, destructive)) = facts else {
         return Decision::Refuse(Why::UnknownTool);
     };
     if mode == Mode::ChatOnly {
@@ -74,14 +80,15 @@ pub fn decide(
         return Decision::Run;
     }
     let always = ALWAYS_ASK.contains(&name);
+    let careful = always || destructive;
     match mode {
         Mode::ChatOnly => Decision::Refuse(Why::ToolsAreOff),
         Mode::AskBeforeChanges => {
-            if allowed_for_chat && !always {
+            if allowed_for_chat && !careful {
                 Decision::Run
             } else {
                 Decision::Ask {
-                    may_allow_for_chat: !always,
+                    may_allow_for_chat: !careful,
                 }
             }
         }
@@ -182,9 +189,14 @@ mod words {
             } => {
                 let words = markdown.split_whitespace().count();
                 let doing = if *replace {
-                    "Rewrite"
+                    "Write a document over"
                 } else {
                     "Write a document onto"
+                };
+                let covers = if *replace {
+                    "; what is there is covered, not removed"
+                } else {
+                    ""
                 };
                 let first = clip(
                     markdown
@@ -193,7 +205,7 @@ mod words {
                         .unwrap_or_default(),
                 );
                 format!(
-                    "{doing} the pages from page {}, {words} words, starting \u{201c}{first}\u{201d}",
+                    "{doing} the pages from page {}, {words} words, starting \u{201c}{first}\u{201d}{covers}",
                     from_page + 1
                 )
             }
@@ -259,6 +271,9 @@ mod words {
             Request::Undo => "Take back the last change".to_owned(),
             Request::Redo => "Put back the last change that was taken back".to_owned(),
             Request::AskPerson { question, .. } => format!("Ask you: {question}"),
+            Request::UpdatePlan { steps } => {
+                format!("Show you its plan, {} steps", steps.len())
+            }
         }
     }
 

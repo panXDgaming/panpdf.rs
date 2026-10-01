@@ -13,12 +13,13 @@ use pdf_agent::connect::{
     ToolResult, Turn, settle_dangling_calls,
 };
 use pdf_agent::tools::DocumentBrief;
+use pdf_agent::tools::request::{PlanStep, StepState};
 
 use pdf_app::ai_layout;
 use pdf_app::ai_permission::{Answer as Allowed, Mode, describe_call};
 use pdf_app::wording::{Lang, Message};
 
-use crate::ai_actions::{MOST_ROUNDS, Question, QuestionReply, Tools, tools_are_offered};
+use crate::ai_actions::{Question, QuestionReply, Tools, tools_are_offered};
 use crate::icons::Icon;
 use crate::window_state::Window;
 
@@ -28,6 +29,25 @@ mod history;
 mod keeping;
 
 const MAX_CONTEXT: usize = 12_000;
+
+pub(crate) const MOST_MODEL_CALLS: usize = 60;
+
+fn go_on() -> String {
+    Message::AiGoOn.say(Lang::English)
+}
+
+const STEPS_USED_UP: &str = "not run: this request used up the rounds it is allowed";
+
+fn not_run(calls: &[pdf_agent::connect::ToolCall], why: &str) -> Vec<ToolResult> {
+    calls
+        .iter()
+        .map(|call| ToolResult::failed(call.id.clone(), why))
+        .collect()
+}
+
+const BUDGET_SPENT: &str = "\n\nYou have used all the rounds this request is allowed. Call no tool now. In a few \
+short sentences say what is done, what is left, and what you would do next; the person can let \
+you go on.";
 
 const GAP: f32 = 8.0;
 
@@ -160,15 +180,34 @@ enum Answer {
     Chat(u64, Result<Reply, ConnectError>),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NoticeAction {
+    Continue,
+    Retry,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 struct Notice {
     said: Message,
     detail: Option<String>,
+    action: Option<NoticeAction>,
 }
 
 impl Notice {
     fn plain(said: Message) -> Self {
-        Self { said, detail: None }
+        Self {
+            said,
+            detail: None,
+            action: None,
+        }
+    }
+
+    const fn with(said: Message, action: NoticeAction) -> Self {
+        Self {
+            said,
+            detail: None,
+            action: Some(action),
+        }
     }
 }
 
@@ -178,12 +217,14 @@ fn notice_of(error: &ConnectError) -> Notice {
         ConnectError::Cancelled => (Message::AiStopped, None),
         ConnectError::Curl(why) => (Message::AiCouldNotReach, Some(why)),
         ConnectError::ResponseTooLarge => (Message::AiAnswerTooLarge, None),
+        ConnectError::TooLarge(why) => (Message::AiConversationTooLarge, Some(why)),
         ConnectError::Http(why) => (Message::AiServiceRefused, Some(why)),
         ConnectError::Protocol(why) => (Message::AiAnswerUnexpected, Some(why)),
     };
     Notice {
         said,
         detail: detail.cloned(),
+        action: None,
     }
 }
 
@@ -230,7 +271,6 @@ pub(crate) struct AiState {
     models: Vec<Model>,
     turns: Vec<Turn>,
     composer: String,
-    asked: Option<String>,
     settings_open: bool,
     notice: Option<Notice>,
     connected: bool,
@@ -243,6 +283,10 @@ pub(crate) struct AiState {
     second_row_height: f32,
     drawn: Vec<Option<(TurnShape, f32)>>,
     drawn_width: f32,
+    plan_height: f32,
+    undo_the_run_asked: bool,
+    model_calls: usize,
+    summarising: bool,
     effort: Effort,
     pub(crate) mode: Mode,
     pub(crate) tools: Tools,
@@ -252,6 +296,7 @@ pub(crate) struct AiState {
     remember_key: bool,
     chat_id: String,
     saved_turns: usize,
+    save_again_at: u64,
     documents: Vec<String>,
     places: Vec<String>,
     confirming_free: bool,
@@ -277,7 +322,6 @@ impl Default for AiState {
             models: Vec::new(),
             turns: Vec::new(),
             composer: String::new(),
-            asked: None,
             settings_open: true,
             notice: None,
             width: 360.0,
@@ -291,6 +335,10 @@ impl Default for AiState {
             second_row_height: 0.0,
             drawn: Vec::new(),
             drawn_width: 0.0,
+            plan_height: 0.0,
+            undo_the_run_asked: false,
+            model_calls: 0,
+            summarising: false,
             effort: Effort::Off,
             mode: Mode::default(),
             tools: Tools::default(),
@@ -300,6 +348,7 @@ impl Default for AiState {
             remember_key: false,
             chat_id: String::new(),
             saved_turns: 0,
+            save_again_at: 0,
             documents: Vec::new(),
             places: Vec::new(),
             confirming_free: false,
@@ -444,7 +493,7 @@ impl AiState {
         }
         self.generation += 1;
     }
-    fn poll(&mut self, ctx: &egui::Context) {
+    pub(crate) fn poll(&mut self, ctx: &egui::Context) {
         let Some(asking) = self.asking.as_ref() else {
             return;
         };
@@ -480,7 +529,6 @@ impl AiState {
         };
         self.asking = None;
         self.checking = false;
-        self.asked = None;
         self.partial = None;
         let generation = match &answer {
             Answer::Models(g, _) | Answer::Partial(g, _) | Answer::Chat(g, _) => *g,
@@ -500,33 +548,10 @@ impl AiState {
                     self.notice = Some(notice_of(&error));
                 }
             },
-            Answer::Chat(_, result) => {
-                match result {
-                    Ok(reply) => {
-                        self.turns.push(Turn::answered(&reply));
-                        if reply.cut_short {
-                            self.notes
-                                .push((self.turns.len(), Message::AiAnswerCutShort));
-                        }
-                        self.tools.take(&reply.calls);
-                        if reply.calls.is_empty() {
-                            self.tools.rounds = 0;
-                        }
-                        self.settings_open = false;
-                        self.connected = true;
-                    }
-                    Err(error) => {
-                        self.tools.drop_the_queue();
-                        if self.turns.last().is_some_and(|turn| {
-                            turn.said() == Said::Person && !turn.text().is_empty()
-                        }) && let Some(turn) = self.turns.pop()
-                        {
-                            turn.text().clone_into(&mut self.composer);
-                        }
-                        self.notice = Some(notice_of(&error));
-                    }
-                }
-            }
+            Answer::Chat(_, result) => match result {
+                Ok(reply) => self.took_the_reply(ctx, &reply),
+                Err(error) => self.the_reply_failed(&error),
+            },
         }
         ctx.request_repaint();
     }
@@ -552,6 +577,74 @@ impl AiState {
             repaint.request_repaint();
         });
     }
+    fn took_the_reply(&mut self, ctx: &egui::Context, reply: &Reply) {
+        self.settings_open = false;
+        self.connected = true;
+        self.turns.push(Turn::answered(reply));
+        if std::mem::take(&mut self.summarising) {
+            let results = not_run(&reply.calls, STEPS_USED_UP);
+            self.keep_what_was_done(results);
+            self.notice = Some(Notice::with(Message::AiStepsUsedUp, NoticeAction::Continue));
+            return;
+        }
+        if reply.calls.is_empty() {
+            if reply.cut_short {
+                self.notice = Some(Notice::with(
+                    Message::AiAnswerCutShort,
+                    NoticeAction::Continue,
+                ));
+            }
+            return;
+        }
+        if self.model_calls >= MOST_MODEL_CALLS {
+            self.turns.push(Turn::Results {
+                results: not_run(&reply.calls, STEPS_USED_UP),
+            });
+            self.summarising = true;
+            self.ask_the_model(ctx);
+            return;
+        }
+        self.tools.take(&reply.calls);
+    }
+
+    fn the_reply_failed(&mut self, error: &ConnectError) {
+        self.summarising = false;
+        self.tools.drop_the_queue();
+        let mut notice = notice_of(error);
+        match self.turns.last() {
+            Some(Turn::Person { text, .. }) if *text == go_on() => {
+                self.turns.pop();
+                notice.action = Some(NoticeAction::Continue);
+            }
+            Some(Turn::Person { .. }) => {
+                if let Some(Turn::Person { text, attachments }) = self.turns.pop() {
+                    self.composer = text;
+                    self.pending = attachments
+                        .into_iter()
+                        .map(going_back::pending_again)
+                        .collect();
+                }
+            }
+            Some(Turn::Results { .. }) => notice.action = Some(NoticeAction::Retry),
+            _ => {}
+        }
+        self.notice = Some(notice);
+    }
+
+    pub(crate) fn stop_the_run(&mut self) {
+        self.cancel();
+        self.summarising = false;
+        if let Some(results) = self.tools.stop() {
+            self.keep_what_was_done(results);
+        }
+    }
+
+    pub(crate) fn keep_what_was_done(&mut self, results: Vec<ToolResult>) {
+        if !results.is_empty() {
+            self.turns.push(Turn::Results { results });
+        }
+    }
+
     fn start_answer(&mut self, ctx: &egui::Context, context: String, brief: &DocumentBrief) {
         if self.checking {
             self.cancel();
@@ -559,8 +652,14 @@ impl AiState {
         if self.busy() || !self.may_send() {
             return;
         }
+        if self.tools.busy() {
+            self.stop_the_run();
+            if self.tools.busy() {
+                self.send_now = true;
+                return;
+            }
+        }
         settle_dangling_calls(&mut self.turns);
-        self.tools.drop_the_queue();
         self.rewound = None;
         self.recall.forget();
         let asked = std::mem::take(&mut self.composer);
@@ -571,7 +670,10 @@ impl AiState {
             .collect();
         self.turns
             .push(Turn::person_with(asked.trim(), attachments));
-        self.asked = Some(asked.trim().to_owned());
+        self.model_calls = 0;
+        self.summarising = false;
+        self.tools.run = pdf_app::ai_run::Run::default();
+        self.tools.plan.clear();
         self.context = context;
         self.brief = brief.clone();
         self.ask_the_model(ctx);
@@ -585,39 +687,91 @@ impl AiState {
         self.ask_the_model(ctx);
     }
 
-    pub(crate) fn round_done(&mut self, results: Vec<ToolResult>) -> bool {
+    fn continue_the_run(&mut self, ctx: &egui::Context, brief: &DocumentBrief) {
+        if self.busy() || self.tools.busy() {
+            return;
+        }
+        self.notice = None;
+        self.turns.push(Turn::person(go_on()));
+        self.model_calls = 0;
+        self.summarising = false;
+        self.context.clear();
+        self.brief = brief.clone();
+        self.ask_the_model(ctx);
+    }
+
+    fn retry(&mut self, ctx: &egui::Context, brief: &DocumentBrief) {
+        if self.busy()
+            || self.tools.busy()
+            || !matches!(
+                self.turns.last(),
+                Some(Turn::Person { .. } | Turn::Results { .. })
+            )
+        {
+            return;
+        }
+        self.notice = None;
+        self.summarising = self.model_calls >= MOST_MODEL_CALLS;
+        self.brief = brief.clone();
+        self.ask_the_model(ctx);
+    }
+
+    fn act_on_the_notice(
+        &mut self,
+        ctx: &egui::Context,
+        brief: &DocumentBrief,
+        action: NoticeAction,
+    ) {
+        match action {
+            NoticeAction::Continue => self.continue_the_run(ctx, brief),
+            NoticeAction::Retry => self.retry(ctx, brief),
+        }
+    }
+
+    pub(crate) fn round_done(&mut self, results: Vec<ToolResult>) {
         self.turns.push(Turn::Results { results });
-        self.tools.rounds += 1;
-        self.tools.rounds <= MOST_ROUNDS
     }
 
-    pub(crate) fn say_the_document_changed(&mut self, page: usize) {
+    pub(crate) fn say_the_run_cannot_be_taken_back(&mut self) {
+        self.notice = Some(Notice::plain(Message::AiUndoRunPersonEdited));
+    }
+
+    pub(crate) fn say_the_run_was_taken_back(&mut self, steps: usize) {
         self.notes
-            .push((self.turns.len(), Message::AiChangedTheDocument { page }));
+            .push((self.turns.len(), Message::AiRunTakenBack { steps }));
     }
 
-    pub(crate) fn stop_for_too_many_rounds(&mut self) {
-        self.tools.drop_the_queue();
-        settle_dangling_calls(&mut self.turns);
-        self.notice = Some(Notice::plain(Message::AiTooManyRounds));
+    pub(crate) fn say_the_document_changed(&mut self, pages: &[usize]) {
+        self.notes.push((
+            self.turns.len(),
+            Message::AiChangedTheDocument {
+                pages: pages.iter().map(|page| page + 1).collect(),
+            },
+        ));
+    }
+
+    fn what_is_offered(&self) -> (Vec<pdf_agent::connect::ToolOffer>, Option<String>) {
+        if !tools_are_offered(self.mode) {
+            return (Vec::new(), None);
+        }
+        let mut system = pdf_agent::tools::window_instructions(&self.brief)
+            + &self.what_changed_hands().unwrap_or_default();
+        if self.summarising {
+            system.push_str(BUDGET_SPENT);
+            return (Vec::new(), Some(system));
+        }
+        (pdf_agent::tools::offered_to_a_window(), Some(system))
     }
 
     fn ask_the_model(&mut self, ctx: &egui::Context) {
+        self.model_calls += 1;
         let generation = self.generation;
         let connection = self.connection();
-        let turns = pdf_agent::connect::without_the_old_pictures(&self.turns);
+        let turns = pdf_agent::context::shortened(&pdf_agent::connect::without_the_old_pictures(
+            &self.turns,
+        ));
         let context = self.context.clone();
-        let (tools, system) = if tools_are_offered(self.mode) {
-            (
-                pdf_agent::tools::offered_to_a_window(),
-                Some(
-                    pdf_agent::tools::window_instructions(&self.brief)
-                        + &self.what_changed_hands().unwrap_or_default(),
-                ),
-            )
-        } else {
-            (Vec::new(), None)
-        };
+        let (tools, system) = self.what_is_offered();
         let flag = Arc::new(AtomicBool::new(false));
         let worker_flag = flag.clone();
         let (tx, rx) = mpsc::channel();
@@ -656,7 +810,9 @@ impl AiState {
         self.turns.clear();
         self.notes.clear();
         self.tools.clear();
-        self.asked = None;
+        self.drawn.clear();
+        self.model_calls = 0;
+        self.summarising = false;
         self.notice = None;
         self.context.clear();
         self.partial = None;
@@ -675,6 +831,7 @@ impl AiState {
     }
 
     pub(crate) fn document_arrived(&mut self, name: String, place: String) {
+        self.tools.forget_the_names();
         if !place.is_empty() && self.places.last() == Some(&place) {
             return;
         }
@@ -732,15 +889,20 @@ impl AiState {
         if self.documents.len() < 2 {
             return None;
         }
+        let named: Vec<String> = self
+            .documents
+            .iter()
+            .map(|name| pdf_agent::tools::as_data(name, 120))
+            .collect();
         Some(format!(
             "\n\nThis conversation has moved between documents: {}. Only the last is open now. \
              Block names, page numbers and text quoted earlier belong to whichever document was \
              open when they were said: read the open document again before you change it.",
-            self.documents.join(", then "),
+            named.join(", then "),
         ))
     }
 
-    fn working(&self) -> bool {
+    pub(crate) fn working(&self) -> bool {
         (self.busy() && !self.checking) || self.tools.busy()
     }
 
@@ -899,11 +1061,10 @@ impl AiState {
         });
     }
 
-    fn the_notice(&mut self, ui: &mut egui::Ui, lang: Lang) {
-        let Some(notice) = self.notice.clone() else {
-            return;
-        };
+    fn the_notice(&mut self, ui: &mut egui::Ui, lang: Lang) -> Option<NoticeAction> {
+        let notice = self.notice.clone()?;
         let mut close = false;
+        let mut chosen = None;
         egui::Frame::group(ui.style())
             .fill(ui.visuals().faint_bg_color)
             .show(ui, |ui| {
@@ -935,10 +1096,20 @@ impl AiState {
                             .wrap(),
                     );
                 }
+                if let Some(action) = notice.action {
+                    let words = match action {
+                        NoticeAction::Continue => Message::AiContinue,
+                        NoticeAction::Retry => Message::AiRetry,
+                    };
+                    if ui.button(words.say(lang)).clicked() {
+                        chosen = Some(action);
+                    }
+                }
             });
         if close {
             self.notice = None;
         }
+        chosen
     }
 
     fn the_connection(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, lang: Lang) {
@@ -1040,6 +1211,7 @@ impl AiState {
             (
                 describe_call(&pending.request, lang),
                 pending.may_allow_for_chat,
+                pending.of_this_tool,
             )
         });
         let mut answered = None;
@@ -1051,6 +1223,7 @@ impl AiState {
         });
         let mut action = None;
         let mut put_back = false;
+        let mut undo_the_run = false;
         let mut replied = None;
         let names: BTreeMap<String, String> = self
             .turns
@@ -1123,13 +1296,16 @@ impl AiState {
                 {
                     a_note(ui, &said.say(lang));
                 }
+                if idle && self.tools.run.steps() > 0 {
+                    undo_the_run |= the_run_card(ui, self.tools.run.steps(), lang);
+                }
                 if let Some(document_stays) = document_stays
                     && idle
                 {
                     put_back = went_back(ui, document_stays, lang);
                 }
-                if let Some((wants, may_remember)) = card {
-                    answered = the_card(ui, (&wants, may_remember), lang);
+                if let Some((wants, may_remember, of_this_tool)) = card {
+                    answered = the_card(ui, (&wants, may_remember, of_this_tool), lang);
                 }
                 if let Some(question) = self.tools.question.as_mut() {
                     replied = the_question(ui, question, lang);
@@ -1164,6 +1340,9 @@ impl AiState {
         if put_back {
             self.put_back();
         }
+        if undo_the_run {
+            self.undo_the_run_asked = true;
+        }
         if let Some(reply) = replied {
             self.tools.answer_the_question(reply);
         }
@@ -1182,10 +1361,6 @@ impl AiState {
     fn what_is_happening(&self, lang: Lang) -> Option<(Option<Icon>, String)> {
         use crate::ai_actions::Doing;
         match self.tools.doing() {
-            Some(Doing::Writing { written, pieces }) => Some((
-                Some(tool_icon("write_pages")),
-                Message::AiWritingPieces { written, pieces }.say(lang),
-            )),
             Some(Doing::Tool(name, request)) => Some((
                 Some(tool_icon(&name)),
                 format!("{}\u{2026}", pdf_app::ai_status::doing(&request, lang)),
@@ -1359,9 +1534,7 @@ impl AiState {
                         )
                         .clicked()
                         {
-                            this.cancel();
-                            this.tools.drop_the_queue();
-                            this.asked = None;
+                            this.stop_the_run();
                         }
                     } else {
                         let ready = this.ready() && this.may_send();
@@ -1543,6 +1716,100 @@ fn went_back(ui: &mut egui::Ui, document_stays: bool, lang: Lang) -> bool {
     put_back
 }
 
+fn the_run_card(ui: &mut egui::Ui, steps: usize, lang: Lang) -> bool {
+    let mut undo = false;
+    ui.add_space(GAP);
+    egui::Frame::group(ui.style())
+        .fill(ui.visuals().faint_bg_color)
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.weak(egui::RichText::new(Message::AiRunMadeChanges { steps }.say(lang)).small());
+            if ui.small_button(Message::AiUndoRun.say(lang)).clicked() {
+                undo = true;
+            }
+        });
+    undo
+}
+
+const PLAN_MOST_HEIGHT: f32 = 110.0;
+
+fn plan_mark(ui: &mut egui::Ui, state: StepState) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
+    let painter = ui.painter();
+    let centre = rect.center();
+    let ink = ui.visuals().text_color();
+    let weak = ui.visuals().weak_text_color();
+    match state {
+        StepState::Pending => {
+            painter.circle_stroke(centre, 4.5, egui::Stroke::new(1.2, weak));
+        }
+        StepState::InProgress => {
+            painter.circle_stroke(centre, 5.5, egui::Stroke::new(1.2, ink));
+            painter.circle_filled(centre, 3.0, ink);
+        }
+        StepState::Done => {
+            painter.circle_filled(centre, 5.5, weak);
+            let tick = egui::Stroke::new(1.5, ui.visuals().panel_fill);
+            painter.line_segment(
+                [
+                    centre + egui::vec2(-2.5, 0.0),
+                    centre + egui::vec2(-0.7, 2.2),
+                ],
+                tick,
+            );
+            painter.line_segment(
+                [
+                    centre + egui::vec2(-0.7, 2.2),
+                    centre + egui::vec2(2.8, -2.4),
+                ],
+                tick,
+            );
+        }
+    }
+}
+
+fn the_plan(ui: &mut egui::Ui, steps: &[PlanStep], lang: Lang) -> f32 {
+    let top = ui.cursor().top();
+    let done = steps
+        .iter()
+        .filter(|step| step.state == StepState::Done)
+        .count();
+    egui::Frame::group(ui.style())
+        .fill(ui.visuals().faint_bg_color)
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.weak(
+                egui::RichText::new(
+                    Message::AiPlan {
+                        done,
+                        total: steps.len(),
+                    }
+                    .say(lang),
+                )
+                .small(),
+            );
+            egui::ScrollArea::vertical()
+                .id_salt("ai-plan")
+                .max_height(PLAN_MOST_HEIGHT)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    for step in steps {
+                        ui.horizontal(|ui| {
+                            plan_mark(ui, step.state);
+                            let text = egui::RichText::new(&step.text).small();
+                            let text = match step.state {
+                                StepState::Done => text.weak().strikethrough(),
+                                StepState::InProgress => text.strong(),
+                                StepState::Pending => text,
+                            };
+                            ui.add(egui::Label::new(text).wrap());
+                        });
+                    }
+                });
+        });
+    ui.cursor().top() - top
+}
+
 pub(crate) fn composer_id() -> egui::Id {
     egui::Id::new("ai-composer-text")
 }
@@ -1639,7 +1906,6 @@ impl Window {
 
     pub(crate) fn ai_panel(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
-        self.ai.poll(&ctx);
         if self.home {
             self.ai_panel_shape = None;
             return;
@@ -1658,6 +1924,7 @@ impl Window {
         let mut asked = Asked::default();
         let mut close = false;
         let mut answered = None;
+        let mut noticed = None;
         let margin = 8_i8;
         let frame = egui::Frame::side_top_panel(&ui.style().clone())
             .inner_margin(egui::Margin::symmetric(margin, margin));
@@ -1677,7 +1944,7 @@ impl Window {
             if self.ai.settings_open {
                 self.ai.the_connection(ui, &ctx, lang);
             }
-            self.ai.the_notice(ui, lang);
+            noticed = self.ai.the_notice(ui, lang);
             ui.separator();
             let row_height = ui.text_style_height(&egui::TextStyle::Body);
             let chrome = composer_chrome(ui) + self.ai.chips_height + self.ai.second_row_height;
@@ -1686,36 +1953,72 @@ impl Window {
                 ai_layout::most_rows(panel_height, row_height, chrome),
             );
             let composer = ai_layout::composer_height(rows, row_height, chrome);
-            let room =
-                ai_layout::conversation_room(ui.available_height(), composer, LEAST_CONVERSATION);
+            let plan_room = if self.ai.tools.plan.is_empty() {
+                0.0
+            } else {
+                self.ai.plan_height + ui.spacing().item_spacing.y
+            };
+            let room = ai_layout::conversation_room(
+                ui.available_height(),
+                composer + plan_room,
+                LEAST_CONVERSATION,
+            );
             ui.allocate_ui(egui::vec2(ui.available_width(), room), |ui| {
                 answered = self.ai.the_conversation(ui, lang);
             });
+            let plan_height = if self.ai.tools.plan.is_empty() {
+                0.0
+            } else {
+                the_plan(ui, &self.ai.tools.plan, lang)
+            };
+            if (plan_height - self.ai.plan_height).abs() > 0.5 {
+                self.ai.plan_height = plan_height;
+                ctx.request_repaint();
+            }
             asked = self.ai.the_composer(ui, &ctx, lang, (rows, row_height));
         });
         self.ai_panel_shape = Some(panel.response.rect);
         if !moving {
             self.ai.width = panel.response.rect.width().clamp(300.0, 640.0);
         }
+        self.hear_the_panel(&ctx, (asked, answered, noticed), close);
+    }
+
+    fn hear_the_panel(
+        &mut self,
+        ctx: &egui::Context,
+        (asked, answered, noticed): (Asked, Option<Allowed>, Option<NoticeAction>),
+        close: bool,
+    ) {
         if let Some(answer) = answered {
             self.ai.tools.answer_the_card(answer);
+            ctx.request_repaint();
         }
-        self.ai.confirm_full_access(&ctx, lang);
+        self.ai.confirm_full_access(ctx, self.lang);
         if asked.attach {
             self.choosing_for = crate::page_actions::Choosing::ChatAttachment;
             self.asking_to_open = true;
         }
         if asked.asked {
-            let context = if self.ai.include_context {
-                current_page_text(self, MAX_CONTEXT)
-            } else {
-                String::new()
-            };
             let brief = self.document_brief();
-            self.ai.start_answer(&ctx, context, &brief);
+            let here = self.whereabouts();
+            let page_text = self
+                .ai
+                .include_context
+                .then(|| self.text_of_the_page_on_screen(MAX_CONTEXT));
+            let context = pdf_agent::tools::question_context(&here, page_text.as_deref());
+            self.ai.start_answer(ctx, context, &brief);
+            ctx.request_repaint();
         }
-        self.advance_tools(&ctx);
-        self.ai.save_the_chat();
+        if let Some(action) = noticed {
+            let brief = self.document_brief();
+            self.ai.act_on_the_notice(ctx, &brief, action);
+            ctx.request_repaint();
+        }
+        if std::mem::take(&mut self.ai.undo_the_run_asked) {
+            self.take_the_run_back();
+            ctx.request_repaint();
+        }
         if close {
             self.ai.open = false;
             let now = ctx.input(|input| input.time);
@@ -1740,6 +2043,7 @@ fn tool_icon(name: &str) -> Icon {
         "undo" => Icon::Undo,
         "redo" => Icon::Redo,
         "ask_person" => Icon::RadioButton,
+        "update_plan" => Icon::Checkbox,
         _ => Icon::Settings,
     }
 }
@@ -1782,7 +2086,11 @@ fn what_the_tools_did(
     }
 }
 
-fn the_card(ui: &mut egui::Ui, (wants, may_remember): (&str, bool), lang: Lang) -> Option<Allowed> {
+fn the_card(
+    ui: &mut egui::Ui,
+    (wants, may_remember, of_this_tool): (&str, bool, usize),
+    lang: Lang,
+) -> Option<Allowed> {
     let say = |message: Message| message.say(lang);
     let mut answered = None;
     ui.add_space(GAP);
@@ -1797,6 +2105,18 @@ fn the_card(ui: &mut egui::Ui, (wants, may_remember): (&str, bool), lang: Lang) 
             ui.horizontal_wrapped(|ui| {
                 if ui.button(say(Message::AiAllowOnce)).clicked() {
                     answered = Some(Allowed::Once);
+                }
+                if of_this_tool > 1
+                    && ui
+                        .button(
+                            Message::AiAllowAll {
+                                count: of_this_tool,
+                            }
+                            .say(lang),
+                        )
+                        .clicked()
+                {
+                    answered = Some(Allowed::AllOfThem);
                 }
                 if may_remember && ui.button(say(Message::AiAllowForThisChat)).clicked() {
                     answered = Some(Allowed::ForThisChat);
@@ -2021,29 +2341,18 @@ impl Window {
     }
 }
 
-fn current_page_text(window: &Window, limit: usize) -> String {
-    let mut text = String::new();
-    if let Some(leaf) = window.editor.leaf(window.focus) {
-        for cluster in &leaf.overlay.clusters {
-            if let Some(value) = &cluster.text {
-                text.push_str(value);
-            }
-        }
-    }
-    text.chars().take(limit).collect()
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::mpsc;
 
     use eframe::egui;
 
-    use pdf_agent::connect::{ConnectError, Reply, Said, ToolResult};
+    use pdf_agent::connect::{ConnectError, Reply, Said, ToolCall, ToolResult};
+    use pdf_agent::json::Json;
 
     use super::{
-        AiState, Answer, Arriving, Asking, MOST_ROUNDS, Notice, Provider, Turn, claude_code_line,
-        client_configuration, notice_of,
+        AiState, Answer, Arriving, Asking, MOST_MODEL_CALLS, Notice, NoticeAction, Provider, Turn,
+        claude_code_line, client_configuration, notice_of,
     };
     use pdf_app::ai_layout;
     use pdf_app::wording::{Lang, Message};
@@ -2060,6 +2369,40 @@ mod tests {
             text: text.to_owned(),
             ..Reply::default()
         }
+    }
+
+    fn asking_state() -> (mpsc::Sender<Answer>, AiState) {
+        let (send, answers) = mpsc::channel();
+        let state = AiState {
+            asking: Some(Asking {
+                stop: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                answers,
+            }),
+            ..AiState::default()
+        };
+        (send, state)
+    }
+
+    fn asks_for(tools: &[&str]) -> Reply {
+        Reply {
+            calls: tools
+                .iter()
+                .enumerate()
+                .map(|(at, name)| ToolCall::asked(format!("call_{at}"), *name, Json::Null))
+                .collect(),
+            ..said("on it")
+        }
+    }
+
+    fn the_reply_arrives(state: &mut AiState, reply: Reply) {
+        let (send, answers) = mpsc::channel();
+        state.asking = Some(Asking {
+            stop: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            answers,
+        });
+        send.send(Answer::Chat(state.generation, Ok(reply)))
+            .expect("the worker answers");
+        state.poll(&egui::Context::default());
     }
 
     #[test]
@@ -2165,7 +2508,7 @@ mod tests {
     }
 
     #[test]
-    fn an_answer_that_ran_out_of_room_says_so() {
+    fn an_answer_that_ran_out_of_room_offers_to_go_on() {
         for (cut_short, notes) in [(true, 1), (false, 0)] {
             let (send, answers) = mpsc::channel();
             let mut state = AiState {
@@ -2183,7 +2526,20 @@ mod tests {
             send.send(Answer::Chat(state.generation, Ok(reply)))
                 .expect("the worker answers");
             state.poll(&egui::Context::default());
-            assert_eq!(state.notes.len(), notes, "cut_short = {cut_short}");
+            assert_eq!(
+                state.notice.is_some(),
+                notes == 1,
+                "cut_short = {cut_short}"
+            );
+            if cut_short {
+                assert_eq!(
+                    state.notice,
+                    Some(Notice::with(
+                        Message::AiAnswerCutShort,
+                        NoticeAction::Continue
+                    ))
+                );
+            }
         }
     }
 
@@ -2285,6 +2641,7 @@ mod tests {
             Some(Notice {
                 said: Message::AiServiceRefused,
                 detail: Some("401 Unauthorized".to_owned()),
+                action: None,
             })
         );
     }
@@ -2350,6 +2707,7 @@ mod tests {
             ConnectError::ResponseTooLarge,
             ConnectError::Http("401 Unauthorized".to_owned()),
             ConnectError::Protocol("no choices in the answer".to_owned()),
+            ConnectError::TooLarge("2200000 bytes of words".to_owned()),
         ];
         let notices: Vec<Notice> = every.iter().map(notice_of).collect();
         for (at, notice) in notices.iter().enumerate() {
@@ -2370,6 +2728,7 @@ mod tests {
             Notice {
                 said: Message::AiServiceRefused,
                 detail: Some("401 Unauthorized".to_owned()),
+                action: None,
             }
         );
         assert_eq!(notices[1], Notice::plain(Message::AiStopped));
@@ -2432,41 +2791,354 @@ mod tests {
     fn what_the_tools_answered_goes_back_as_one_turn() {
         let mut state = AiState::default();
         state.turns.push(Turn::person("change the heading"));
-        assert!(state.round_done(vec![
+        state.round_done(vec![
             ToolResult::said("call_1", "Done. p2-b3 now reads: X"),
             ToolResult::failed("call_2", "there is no page 40"),
-        ]));
+        ]);
         assert_eq!(state.turns.len(), 2);
         let last = state.turns.last().expect("the results are a turn");
         assert_eq!(last.said(), Said::Person);
         assert_eq!(last.text(), "");
         assert!(last.calls().is_empty());
-        assert_eq!(state.tools.rounds, 1);
     }
 
     #[test]
-    fn the_sixteenth_round_is_the_last() {
-        let mut state = AiState::default();
-        state.turns.push(Turn::person("tidy the whole document"));
-        for round in 1..=MOST_ROUNDS {
-            assert!(
-                state.round_done(vec![ToolResult::said("call_1", "Done.")]),
-                "round {round} should have been performed"
-            );
-            assert_eq!(state.tools.rounds, round);
+    fn the_model_may_ask_for_tools_until_the_budget_is_spent_and_not_after() {
+        for (made, queued) in [(MOST_MODEL_CALLS - 1, 2), (MOST_MODEL_CALLS, 0)] {
+            let (_send, mut state) = asking_state();
+            state.turns.push(Turn::person("tidy the whole document"));
+            state.model_calls = made;
+            the_reply_arrives(&mut state, asks_for(&["read_text", "find_text"]));
+            assert_eq!(state.tools.queue.len(), queued, "after {made} calls");
         }
+    }
+
+    #[test]
+    fn a_reply_asking_for_tools_past_the_budget_is_not_run_and_the_model_is_asked_to_sum_up() {
+        let (_send, mut state) = asking_state();
+        state.turns.push(Turn::person("tidy the whole document"));
+        state.model_calls = MOST_MODEL_CALLS;
+        the_reply_arrives(&mut state, asks_for(&["replace_text", "delete_pages"]));
+        assert!(state.tools.queue.is_empty(), "nothing in the batch ran");
+        let Some(Turn::Results { results }) = state.turns.last() else {
+            panic!("the batch is answered as a turn: {:?}", state.turns);
+        };
+        assert_eq!(results.len(), 2);
         assert!(
-            !state.round_done(vec![ToolResult::said("call_1", "Done.")]),
-            "the seventeenth round is refused"
+            results
+                .iter()
+                .all(|result| result.is_error && result.text.starts_with("not run")),
+            "{results:?}"
         );
-        state.stop_for_too_many_rounds();
-        assert_eq!(state.notice, Some(Notice::plain(Message::AiTooManyRounds)));
+        assert!(state.summarising, "and the last call asks for a summary");
+        assert!(state.busy(), "that call is on its way");
+        assert_eq!(state.model_calls, MOST_MODEL_CALLS + 1);
+    }
+
+    #[test]
+    fn the_call_that_sums_up_the_work_withholds_every_tool() {
+        let mut state = AiState::default();
+        let (tools, system) = state.what_is_offered();
+        assert_eq!(tools.len(), pdf_agent::tools::offered_to_a_window().len());
+        assert!(
+            !system
+                .as_deref()
+                .unwrap_or_default()
+                .contains("Call no tool now"),
+            "a normal call is not told to stop calling"
+        );
+        state.summarising = true;
+        let (tools, system) = state.what_is_offered();
+        assert!(tools.is_empty(), "{} tools were offered", tools.len());
+        assert!(
+            system
+                .as_deref()
+                .unwrap_or_default()
+                .contains("Call no tool now"),
+            "{system:?}"
+        );
+        state.mode = pdf_app::ai_permission::Mode::ChatOnly;
         assert_eq!(
-            state.tools.rounds, 0,
-            "the count starts again with the next question"
+            state.what_is_offered(),
+            (Vec::new(), None),
+            "chat only offers nothing"
         );
-        let english = Message::AiTooManyRounds.say(Lang::English);
-        assert!(!english.is_empty());
+    }
+
+    #[test]
+    fn after_the_summary_the_person_may_continue_and_the_budget_starts_again() {
+        let (_send, mut state) = asking_state();
+        state.turns.push(Turn::person("tidy the whole document"));
+        state.model_calls = MOST_MODEL_CALLS;
+        state.summarising = true;
+        the_reply_arrives(&mut state, said("Done: pages 1 to 5. Left: the footers."));
+        assert!(!state.summarising);
+        assert_eq!(
+            state.notice,
+            Some(Notice::with(Message::AiStepsUsedUp, NoticeAction::Continue))
+        );
+        assert!(!state.busy(), "the run is over until the person says go on");
+
+        state.act_on_the_notice(
+            &egui::Context::default(),
+            &pdf_agent::tools::DocumentBrief::default(),
+            NoticeAction::Continue,
+        );
+        assert!(state.notice.is_none());
+        assert_eq!(
+            state.model_calls, 1,
+            "a fresh budget, and this is its first call"
+        );
+        assert!(state.busy(), "the model is asked again");
+        let Some(Turn::Person { text, .. }) = state.turns.last() else {
+            panic!("going on is a person's turn: {:?}", state.turns.last());
+        };
+        assert!(text.contains("go on"), "{text}");
+    }
+
+    #[test]
+    fn stopping_keeps_the_results_that_were_in_and_says_the_rest_were_not_run() {
+        let mut state = AiState::default();
+        state.turns.push(Turn::person("fix every heading"));
+        state.turns.push(Turn::Model {
+            text: String::new(),
+            calls: ["a", "b", "c"]
+                .iter()
+                .map(|id| ToolCall::asked(*id, "replace_text", Json::Null))
+                .collect(),
+            raw: None,
+        });
+        state.tools.take(&[
+            ToolCall::asked("a", "replace_text", Json::Null),
+            ToolCall::asked("b", "replace_text", Json::Null),
+            ToolCall::asked("c", "replace_text", Json::Null),
+        ]);
+        state.tools.queue.pop_front();
+        state.tools.results.push(ToolResult::said("a", "Done."));
+        state.stop_the_run();
+        assert!(!state.tools.busy());
+        let Some(Turn::Results { results }) = state.turns.last() else {
+            panic!("what was done is kept as a turn: {:?}", state.turns);
+        };
+        assert_eq!(results[0], ToolResult::said("a", "Done."));
+        let rest: Vec<(&str, &str)> = results[1..]
+            .iter()
+            .map(|result| (result.call_id.as_str(), result.text.as_str()))
+            .collect();
+        assert_eq!(
+            rest,
+            [
+                ("b", "not run: the person stopped the assistant"),
+                ("c", "not run: the person stopped the assistant")
+            ]
+        );
+        assert!(results[1..].iter().all(|result| result.is_error));
+        let mut again = state.turns.clone();
+        pdf_agent::connect::settle_dangling_calls(&mut again);
+        assert_eq!(again, state.turns, "no call is left without its answer");
+    }
+
+    #[test]
+    fn a_new_question_while_tools_run_keeps_the_finished_results_and_then_asks() {
+        let mut state = AiState::default();
+        state.turns.push(Turn::person("fix every heading"));
+        state.turns.push(Turn::Model {
+            text: String::new(),
+            calls: ["a", "b"]
+                .iter()
+                .map(|id| ToolCall::asked(*id, "replace_text", Json::Null))
+                .collect(),
+            raw: None,
+        });
+        state
+            .tools
+            .take(&[ToolCall::asked("b", "replace_text", Json::Null)]);
+        state
+            .tools
+            .results
+            .push(ToolResult::said("a", "Done. p1-b1 now reads: X"));
+        "actually, only the first page".clone_into(&mut state.composer);
+        state.start_answer(
+            &egui::Context::default(),
+            String::new(),
+            &pdf_agent::tools::DocumentBrief::default(),
+        );
+        let kinds: Vec<&str> = state
+            .turns
+            .iter()
+            .map(|turn| match turn {
+                Turn::Person { .. } => "person",
+                Turn::Model { .. } => "model",
+                Turn::Results { .. } => "results",
+            })
+            .collect();
+        assert_eq!(kinds, ["person", "model", "results", "person"]);
+        let Turn::Results { results } = &state.turns[2] else {
+            panic!("results");
+        };
+        assert_eq!(results.len(), 2);
+        assert!(!results[0].is_error && results[1].is_error);
+        assert!(state.busy(), "and the new question is on its way");
+        assert!(!state.tools.busy());
+    }
+
+    #[test]
+    fn a_question_that_failed_comes_back_with_its_pictures_and_even_with_no_words() {
+        for words in ["describe this", ""] {
+            let (send, mut state) = asking_state();
+            state.turns.push(Turn::person_with(
+                words,
+                vec![pdf_agent::connect::Attachment::image(
+                    "cover.png",
+                    "image/png",
+                    vec![1, 2, 3],
+                )],
+            ));
+            send.send(Answer::Chat(
+                state.generation,
+                Err(ConnectError::Http("500 Internal".to_owned())),
+            ))
+            .expect("the worker answers");
+            state.poll(&egui::Context::default());
+            assert!(state.turns.is_empty(), "nothing was said after all");
+            assert_eq!(state.composer, words);
+            assert_eq!(state.pending.len(), 1, "the picture comes back too");
+            assert_eq!(state.pending[0].name, "cover.png");
+            assert!(state.may_send(), "so it can be sent again as it was");
+        }
+    }
+
+    #[test]
+    fn an_error_in_the_middle_of_a_run_offers_to_try_again_and_keeps_the_work() {
+        let (send, mut state) = asking_state();
+        state.turns.push(Turn::person("fix every heading"));
+        state.turns.push(Turn::Model {
+            text: String::new(),
+            calls: vec![ToolCall::asked("a", "replace_text", Json::Null)],
+            raw: None,
+        });
+        state.turns.push(Turn::Results {
+            results: vec![ToolResult::said("a", "Done.")],
+        });
+        send.send(Answer::Chat(
+            state.generation,
+            Err(ConnectError::Curl("timed out".to_owned())),
+        ))
+        .expect("the worker answers");
+        state.poll(&egui::Context::default());
+        assert_eq!(state.turns.len(), 3, "what was done stays");
+        assert!(state.composer.is_empty());
+        let notice = state.notice.clone().expect("a notice");
+        assert_eq!(notice.said, Message::AiCouldNotReach);
+        assert_eq!(notice.action, Some(NoticeAction::Retry));
+
+        state.act_on_the_notice(
+            &egui::Context::default(),
+            &pdf_agent::tools::DocumentBrief::default(),
+            NoticeAction::Retry,
+        );
+        assert!(state.busy(), "the same request goes out again");
+        assert_eq!(state.turns.len(), 3, "without a new turn");
+    }
+
+    #[test]
+    fn a_conversation_too_large_to_send_says_so_and_does_not_blame_the_address() {
+        let notice = notice_of(&ConnectError::TooLarge("2200000 bytes of words".to_owned()));
+        assert_eq!(notice.said, Message::AiConversationTooLarge);
+        let english = notice.said.say(Lang::English);
+        assert!(english.contains("too large"), "{english}");
+        assert!(
+            !english.contains("address") && !english.contains("model"),
+            "{english}"
+        );
+        assert_eq!(notice.detail.as_deref(), Some("2200000 bytes of words"));
+    }
+
+    #[test]
+    fn a_saved_chat_brings_its_plan_back() {
+        let steps = r#"{"steps":[{"text":"Read","status":"done"},{"text":"Write","status":"in_progress"}]}"#;
+        let chat = pdf_agent::history::Chat {
+            id: "000000000001".to_owned(),
+            turns: vec![
+                Turn::person("write the report"),
+                Turn::Model {
+                    text: String::new(),
+                    calls: vec![ToolCall::asked(
+                        "p1",
+                        "update_plan",
+                        Json::parse(steps).expect("JSON"),
+                    )],
+                    raw: None,
+                },
+                Turn::Results {
+                    results: vec![ToolResult::said("p1", "Plan: 1 of 2 steps done.")],
+                },
+            ],
+            ..pdf_agent::history::Chat::default()
+        };
+        let written = pdf_agent::history::write(&chat);
+        let back = pdf_agent::history::read(&written).expect("it reads");
+        let mut state = AiState::default();
+        state.take_up(&back);
+        assert_eq!(state.tools.plan.len(), 2);
+        assert_eq!(state.tools.plan[1].text, "Write");
+        assert_eq!(
+            state.tools.plan[1].state,
+            pdf_agent::tools::request::StepState::InProgress
+        );
+        state.new_chat();
+        assert!(state.tools.plan.is_empty(), "a new chat has no plan");
+    }
+
+    #[test]
+    fn ask_again_is_offered_and_works_after_an_answer_that_used_tools() {
+        let mut state = AiState {
+            turns: vec![
+                Turn::person("fix the typos on page 2"),
+                Turn::Model {
+                    text: String::new(),
+                    calls: vec![ToolCall::asked("a", "replace_text", Json::Null)],
+                    raw: None,
+                },
+                Turn::Results {
+                    results: vec![ToolResult::said("a", "Done.")],
+                },
+                Turn::model("Fixed three typos."),
+            ],
+            ..AiState::default()
+        };
+        assert_eq!(
+            state.last_question(),
+            Some(0),
+            "the question, not the results"
+        );
+        state.go_back_to(0, true);
+        assert!(state.turns.is_empty(), "the whole run was taken back");
+        assert_eq!(state.composer, "fix the typos on page 2");
+        assert!(state.send_now);
+    }
+
+    #[test]
+    fn forgetting_the_chat_that_is_open_does_not_bring_it_back() {
+        let mut state = AiState {
+            turns: vec![Turn::person("one"), Turn::model("two")],
+            chat_id: "000000000001".to_owned(),
+            saved_turns: 2,
+            ..AiState::default()
+        };
+        state.forget_a_chat("000000000002");
+        assert_eq!(
+            state.turns.len(),
+            2,
+            "another chat's deletion leaves this one"
+        );
+        state.forget_a_chat("000000000001");
+        assert!(
+            state.turns.is_empty(),
+            "so the next save has nothing to write"
+        );
+        assert!(state.chat_id.is_empty());
+        state.forget_a_chat("../../elsewhere");
     }
 
     #[test]
@@ -2479,7 +3151,7 @@ mod tests {
             .insert("replace_text".to_owned());
         state
             .notes
-            .push((0, Message::AiChangedTheDocument { page: 2 }));
+            .push((0, Message::AiChangedTheDocument { pages: vec![2] }));
         state.new_chat();
         assert!(state.turns.is_empty());
         assert!(state.notes.is_empty());

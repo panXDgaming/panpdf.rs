@@ -1,10 +1,11 @@
-use super::{ALWAYS_ASK, Decision, Mode, Why, decide, refusal_text};
+use super::{ALWAYS_ASK, Decision, Mode, Why, decide, may_allow_all, refusal_text};
 
 type Row = (Mode, &'static str, Option<(bool, bool)>, bool, Decision);
 
 const READS: Option<(bool, bool)> = Some((true, false));
 const CHANGES: Option<(bool, bool)> = Some((false, false));
 const TAKES_OUT: Option<(bool, bool)> = Some((false, true));
+const WRITES_OVER: Option<(bool, bool)> = Some((false, true));
 
 #[test]
 #[expect(
@@ -56,7 +57,34 @@ fn the_table_is_the_rule() {
             TAKES_OUT,
             false,
             Decision::Ask {
+                may_allow_for_chat: false,
+            },
+        ),
+        (
+            Mode::AskBeforeChanges,
+            "delete_pages",
+            TAKES_OUT,
+            true,
+            Decision::Ask {
+                may_allow_for_chat: false,
+            },
+        ),
+        (
+            Mode::AskBeforeChanges,
+            "write_pages",
+            CHANGES,
+            false,
+            Decision::Ask {
                 may_allow_for_chat: true,
+            },
+        ),
+        (
+            Mode::AskBeforeChanges,
+            "write_pages",
+            WRITES_OVER,
+            true,
+            Decision::Ask {
+                may_allow_for_chat: false,
             },
         ),
         (
@@ -172,6 +200,36 @@ fn a_mode_is_written_and_read_back_or_refused() {
 }
 
 #[test]
+fn a_destructive_call_is_never_offered_allow_for_this_chat_in_any_way_it_is_asked() {
+    for mode in [Mode::AskBeforeChanges] {
+        for allowed in [false, true] {
+            let decision = decide(mode, "delete_pages", TAKES_OUT, allowed);
+            assert_eq!(
+                decision,
+                Decision::Ask {
+                    may_allow_for_chat: false
+                },
+                "{mode:?} allowed_for_chat={allowed}"
+            );
+        }
+    }
+    assert_eq!(
+        decide(Mode::AskBeforeChanges, "replace_text", CHANGES, false),
+        Decision::Ask {
+            may_allow_for_chat: true
+        },
+        "known answer: an ordinary change can be allowed for the chat"
+    );
+}
+
+#[test]
+fn a_batch_can_be_allowed_at_once_unless_each_call_must_be_looked_at() {
+    assert!(may_allow_all("delete_pages"));
+    assert!(may_allow_all("replace_text"));
+    assert!(!may_allow_all("insert_pages"));
+}
+
+#[test]
 fn a_refusal_says_not_to_retry() {
     assert!(refusal_text().contains("Do not retry"));
     assert_eq!(ALWAYS_ASK, ["insert_pages"]);
@@ -180,7 +238,7 @@ fn a_refusal_says_not_to_retry() {
 #[cfg(not(target_arch = "wasm32"))]
 mod cards {
     use pdf_agent::json::Json;
-    use pdf_agent::tools::request::{NewText, Request};
+    use pdf_agent::tools::request::{NewText, PlanStep, Request, StepState};
 
     use crate::ai_permission::describe_call;
     use crate::wording::Lang;
@@ -361,6 +419,45 @@ mod cards {
             (
                 Request::Redo,
                 "Put back the last change that was taken back",
+            ),
+            (
+                Request::WritePages {
+                    from_page: 1,
+                    markdown: "# Summary\n\nA few words here".to_owned(),
+                    replace: true,
+                    size: 11.0,
+                    family: "Noto Sans".to_owned(),
+                    margin: 56.0,
+                    theme: "classic".to_owned(),
+                },
+                "Write a document over the pages from page 2, 6 words, starting \u{201c}# Summary\u{201d}; what is there is covered, not removed",
+            ),
+            (
+                Request::WritePages {
+                    from_page: 0,
+                    markdown: "# Summary\n\nA few words here".to_owned(),
+                    replace: false,
+                    size: 11.0,
+                    family: "Noto Sans".to_owned(),
+                    margin: 56.0,
+                    theme: "classic".to_owned(),
+                },
+                "Write a document onto the pages from page 1, 6 words, starting \u{201c}# Summary\u{201d}",
+            ),
+            (
+                Request::UpdatePlan {
+                    steps: vec![
+                        PlanStep {
+                            text: "Read".to_owned(),
+                            state: StepState::Done,
+                        },
+                        PlanStep {
+                            text: "Write".to_owned(),
+                            state: StepState::Pending,
+                        },
+                    ],
+                },
+                "Show you its plan, 2 steps",
             ),
         ];
         for (request, english) in rows {

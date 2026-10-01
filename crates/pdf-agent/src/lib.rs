@@ -2,6 +2,7 @@ pub mod about;
 pub mod attach;
 pub mod composing;
 pub mod connect;
+pub mod context;
 pub mod desk;
 pub mod history;
 pub mod json;

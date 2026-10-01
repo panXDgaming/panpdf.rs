@@ -76,6 +76,7 @@ fn doing_in_english(request: &Request) -> String {
         Request::Undo => "Taking back the last change".to_owned(),
         Request::Redo => "Putting back the last change".to_owned(),
         Request::AskPerson { .. } => "Asking you".to_owned(),
+        Request::UpdatePlan { .. } => "Planning the work".to_owned(),
     }
 }
 
@@ -99,6 +100,7 @@ fn did_in_english(name: &str) -> String {
         "undo" => "Took back a change",
         "redo" => "Put back a change",
         "ask_person" => "Asked you",
+        "update_plan" => "Updated the plan",
         other => return other.to_owned(),
     }
     .to_owned()
@@ -148,6 +150,10 @@ mod tests {
             }),
             "Asking you"
         );
+        assert_eq!(
+            say(Request::UpdatePlan { steps: Vec::new() }),
+            "Planning the work"
+        );
     }
 
     #[test]
@@ -164,6 +170,7 @@ mod tests {
         assert!(long.chars().count() < 70, "{long}");
         assert!(long.ends_with("\u{2026}\u{201d}"));
         assert_eq!(did("ask_person", Lang::English), "Asked you");
+        assert_eq!(did("update_plan", Lang::English), "Updated the plan");
         assert_eq!(did("read_text", Lang::English), "Read the text");
         assert_eq!(did("something_new", Lang::English), "something_new");
     }

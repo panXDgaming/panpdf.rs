@@ -332,26 +332,6 @@ impl Desk {
         apply(open, &command)
     }
 
-    pub fn draw(
-        &mut self,
-        handle: &str,
-        page: usize,
-        steps: &[pdf_edit::PenStep],
-        stroke: Option<([f64; 3], f64)>,
-        fill: Option<[f64; 3]>,
-    ) -> Result<(), Refused> {
-        let open = self.get(handle)?;
-        let view = view_of(&mut open.session, page)?;
-        let command = Command::DrawPath {
-            page_index: page,
-            steps: steps_in_user_space(&view, steps)?,
-            closed: false,
-            stroke: stroke.map(|(colour, width)| pdf_edit::PenStroke::pen(colour, width)),
-            fill,
-        };
-        apply(open, &command)
-    }
-
     #[must_use]
     pub fn fonts(&self) -> Option<Arc<dyn pdf_content::FontProvider>> {
         self.fonts.clone()
@@ -360,6 +340,26 @@ impl Desk {
     pub fn command(&mut self, handle: &str, command: &Command) -> Result<(), Refused> {
         let open = self.get(handle)?;
         apply(open, command)
+    }
+
+    pub fn commands(&mut self, handle: &str, commands: &[Command]) -> Result<(), Refused> {
+        let open = self.get(handle)?;
+        open.session
+            .apply_each(commands)
+            .map_err(|error| error.to_string())?;
+        open.revision += 1;
+        note_any_page_move(open);
+        Ok(())
+    }
+
+    pub fn page_geometries(
+        &mut self,
+        handle: &str,
+    ) -> Result<Vec<pdf_content::PageGeometry>, Refused> {
+        self.get(handle)?
+            .session
+            .page_geometries()
+            .map_err(|error| format!("the pages cannot be measured: {error}"))
     }
 
     pub fn walk(&mut self, handle: &str, back: bool) -> Result<bool, Refused> {
@@ -584,10 +584,15 @@ fn to_shown(device: &pdf_render::DeviceTransform, [x0, y0, x1, y1]: [f64; 4]) ->
     [left, top, right, bottom].map(|value| (value * 100.0).round() / 100.0)
 }
 
-pub fn to_user(view: &PageView, [left, top, right, bottom]: [f64; 4]) -> Result<[f64; 4], Refused> {
-    let device = device(view)?;
-    let inverse = device
-        .matrix
+pub fn to_user(view: &PageView, area: [f64; 4]) -> Result<[f64; 4], Refused> {
+    to_user_with(&device(view)?.matrix, area)
+}
+
+pub fn to_user_with(
+    shown: &pdf_paint::Matrix,
+    [left, top, right, bottom]: [f64; 4],
+) -> Result<[f64; 4], Refused> {
+    let inverse = shown
         .inverse()
         .ok_or_else(|| "this page has no size".to_owned())?;
     let one = inverse.transform(Point { x: left, y: top });
@@ -603,13 +608,11 @@ pub fn to_user(view: &PageView, [left, top, right, bottom]: [f64; 4]) -> Result<
     ])
 }
 
-pub fn steps_in_user_space(
-    view: &PageView,
+pub fn steps_in_user_space_with(
+    shown: &pdf_paint::Matrix,
     steps: &[pdf_edit::PenStep],
 ) -> Result<Vec<pdf_edit::PenStep>, Refused> {
-    let device = device(view)?;
-    let inverse = device
-        .matrix
+    let inverse = shown
         .inverse()
         .ok_or_else(|| "this page has no size".to_owned())?;
     let thousandths = |value: f64| (value * 1000.0).round() / 1000.0;

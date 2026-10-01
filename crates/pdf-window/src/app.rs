@@ -625,6 +625,9 @@ impl Window {
             if self.editor.pages_redrawn() {
                 self.ai.tools.pages_moved();
             }
+            if self.editor.pages_changed().is_some() {
+                self.ai.tools.pages_renumbered();
+            }
         }
         self.follow_the_pages_redrawn();
         if self.editor.pages_redrawn() {
@@ -1486,6 +1489,8 @@ impl eframe::App for Window {
         self.collect_writing(&ctx);
         self.collect_making(&ctx);
         self.take_in_what_was_drawn(&ctx);
+        #[cfg(not(target_arch = "wasm32"))]
+        self.keep_the_assistant_going(&ctx);
         self.guard_close(&ctx);
         if self.leaving.is_some() && self.loading.is_none() {
             self.pump();
