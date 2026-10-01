@@ -849,6 +849,54 @@ fn a_thai_document_with_a_symbol_the_thai_face_lacks_is_written_with_the_symbol_
 }
 
 #[test]
+fn a_form_block_in_one_write_makes_named_fields_that_document_info_lists() {
+    let folder = folder("form");
+    let path = folder.join("form.pdf");
+    let mut desk = crate::desk::Desk::with_fonts(Some(fonts()));
+    let started = super::call(
+        &mut desk,
+        "new_document",
+        &Json::object([("path", Json::text(path.display().to_string()))]),
+    )
+    .expect("starts");
+    let handle = started
+        .data
+        .get("document")
+        .and_then(Json::as_str)
+        .expect("a handle")
+        .to_owned();
+    let markdown = "# Application\n\n## About you\n\n```form\n{\"fields\":[\
+{\"label\":\"Full name\",\"name\":\"full_name\",\"required\":true},\
+{\"label\":\"Email\",\"name\":\"email\",\"half\":true},\
+{\"label\":\"Phone\",\"name\":\"phone\",\"half\":true},\
+{\"label\":\"Why\",\"name\":\"why\",\"kind\":\"paragraph\",\"lines\":3},\
+{\"label\":\"Kept\",\"name\":\"consent\",\"kind\":\"checkbox\"},\
+{\"label\":\"Size\",\"name\":\"size\",\"kind\":\"radio\",\"options\":[\"S\",\"M\"]}]}\n```\n";
+    let said = call_with(
+        &mut desk,
+        "write_pages",
+        &handle,
+        &Json::object([("markdown", Json::text(markdown))]).write(),
+    );
+    assert!(said.text.starts_with("Written"), "{}", said.text);
+    let info = call_with(&mut desk, "document_info", &handle, "{}");
+    for name in ["full_name", "email", "phone", "why", "consent", "size"] {
+        assert!(info.text.contains(name), "{name} is not in {}", info.text);
+    }
+    let again = refused_with(
+        &mut desk,
+        "write_pages",
+        &handle,
+        &Json::object([(
+            "markdown",
+            Json::text("```form\n{\"fields\":[{\"label\":\"A\",\"name\":\"a\"},{\"label\":\"B\",\"name\":\"a\"}]}\n```"),
+        )])
+        .write(),
+    );
+    assert!(again.contains("\"a\""), "{again}");
+}
+
+#[test]
 fn the_instructions_name_each_editing_tool_and_say_when_to_reach_for_it() {
     let said = window_instructions(&DocumentBrief::default());
     for name in [

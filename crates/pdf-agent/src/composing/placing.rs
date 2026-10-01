@@ -103,6 +103,18 @@ pub fn as_commands(
                     fill: *fill,
                 });
             }
+            Mark::Field(asked) => {
+                let area = on(&put_in, asked.page, page, |surface| {
+                    crate::desk::to_user_with(&surface.shown, asked.area)
+                })?;
+                commands.push(Command::AddField {
+                    page_index: asked.page,
+                    rect: area,
+                    kind: asked.kind,
+                    name: asked.name.clone(),
+                    options: asked.options.clone(),
+                });
+            }
         }
     }
     Ok(commands)

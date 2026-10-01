@@ -1,5 +1,6 @@
 pub mod chart;
 pub mod expr;
+pub mod form;
 pub mod math;
 pub mod placing;
 pub mod shapes;
@@ -58,6 +59,7 @@ pub enum Mark {
         stroke: Option<(Colour, f64)>,
         fill: Option<Colour>,
     },
+    Field(crate::fielding::Asked),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -142,6 +144,7 @@ pub fn compose(
         pages: 1,
         pieces: 0,
         titled: false,
+        names: std::collections::BTreeSet::new(),
         keep: 0.0,
         left_out: std::cell::RefCell::new(std::collections::BTreeSet::new()),
     };
@@ -182,6 +185,11 @@ pub fn compose(
                 space_before,
                 indent,
             } => composer.chart(spec, f64::from(*space_before), f64::from(*indent))?,
+            Part::Form {
+                spec,
+                space_before,
+                indent,
+            } => composer.form(spec, f64::from(*space_before), f64::from(*indent))?,
         }
         at += 1;
     }
@@ -222,6 +230,7 @@ pub(crate) struct Composer<'a> {
     pages: usize,
     pieces: usize,
     titled: bool,
+    names: std::collections::BTreeSet<String>,
     keep: f64,
     left_out: std::cell::RefCell<std::collections::BTreeSet<char>>,
 }
@@ -280,6 +289,7 @@ impl Composer<'_> {
                 .unwrap_or_else(|| ((self.right() - self.left()) * 0.58).min(300.0))
                 .max(120.0),
             Part::Table(_) => body * 1.2 * 2.0 + 20.0,
+            Part::Form { spec, indent, .. } => form::keep_height(self, spec, f64::from(*indent)),
             Part::Text(paragraph) if paragraph.kind == Kind::Math => {
                 f64::from(paragraph.size) * 3.0
             }
@@ -315,6 +325,25 @@ impl Composer<'_> {
             stroke,
             fill,
         });
+    }
+
+    pub(crate) fn field(
+        &mut self,
+        area: [f64; 4],
+        kind: pdf_edit::new_field::NewFieldKind,
+        name: String,
+        options: Vec<String>,
+    ) -> Result<(), String> {
+        let asked = crate::fielding::Asked {
+            page: self.page,
+            kind,
+            area,
+            name: Some(name),
+            options,
+        };
+        asked.check()?;
+        self.marks.push(Mark::Field(asked));
+        Ok(())
     }
 
     pub(crate) fn text(&mut self, (x, top): (f64, f64), width: f64, fitted: Fitted) {
@@ -431,7 +460,7 @@ impl Composer<'_> {
         })
     }
 
-    fn usable(&self) -> f64 {
+    pub(crate) fn usable(&self) -> f64 {
         self.bottom() - self.setting.sheet.margin
     }
 
@@ -857,6 +886,10 @@ impl Composer<'_> {
 
     fn chart(&mut self, spec: &str, space_before: f64, indent: f64) -> Result<(), String> {
         chart::set_out(self, spec, space_before, indent)
+    }
+
+    fn form(&mut self, spec: &str, space_before: f64, indent: f64) -> Result<(), String> {
+        form::set_out(self, spec, space_before, indent)
     }
 
     fn table(&mut self, table: &Table) -> Result<(), String> {

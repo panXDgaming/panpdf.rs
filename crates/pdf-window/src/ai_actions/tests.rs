@@ -688,6 +688,32 @@ fn a_whole_document_written_by_one_call_is_one_undo_step() {
 }
 
 #[test]
+fn a_form_block_written_by_one_call_makes_its_fields_in_the_window_and_is_one_undo_step() {
+    let mut window = a_blank_window();
+    assert!(
+        window.editor.fonts().is_some(),
+        "this test needs the packaged fonts"
+    );
+    let form = r#"# Sign up\n\n```form\n{\"fields\":[{\"label\":\"Name\",\"name\":\"person\"},{\"label\":\"Agree\",\"name\":\"agree\",\"kind\":\"checkbox\"}]}\n```"#;
+    let call = tool(
+        "w1",
+        "write_pages",
+        &format!(
+            r#"{{"document":"doc-1","markdown":"{form}","font":"DejaVu Sans","replace":true}}"#
+        ),
+    );
+    let result = run(&mut window, &call);
+    assert!(!result.is_error, "{}", result.text);
+    let fields = window.editor.fields_in_document();
+    let names: Vec<&str> = fields
+        .iter()
+        .map(|(_, field)| field.name.as_str())
+        .collect();
+    assert_eq!(names, ["person", "agree"]);
+    assert_eq!(undo_steps_left(&mut window), 1);
+}
+
+#[test]
 fn the_assistants_own_undo_never_takes_back_a_step_that_was_not_its_own() {
     let mut window = a_blank_window();
     let size = [595.0, 842.0];

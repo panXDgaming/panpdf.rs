@@ -236,6 +236,125 @@ fn charts_are_drawn_or_refused_whole() {
     assert!(refused.unwrap_err().contains("radar"));
 }
 
+fn field_marks(out: &Composed) -> Vec<&crate::fielding::Asked> {
+    out.marks
+        .iter()
+        .filter_map(|mark| match mark {
+            Mark::Field(asked) => Some(asked),
+            _ => None,
+        })
+        .collect()
+}
+
+fn form(fields: &str) -> String {
+    format!("```form\n{{\"fields\":[{fields}]}}\n```\n")
+}
+
+fn refused_form(markdown: &str) -> String {
+    let setting = Setting {
+        sheet: A4,
+        from_page: 0,
+        start: None,
+        family: "Noto Sans",
+        theme: theme::named("classic").expect("classic"),
+        body: 10.0,
+    };
+    compose(&parts(markdown, 10.0), &setting, &Even).expect_err("the form is refused")
+}
+
+#[test]
+fn a_form_block_becomes_labelled_fields_with_stars_on_the_required_ones() {
+    let classic = theme::named("classic").expect("classic");
+    let out = composed(
+        &form(
+            r#"{"label":"Full name","name":"full_name","required":true},
+            {"label":"Role","name":"role","kind":"dropdown","options":["A","B"]},
+            {"label":"Agree","name":"agree","kind":"checkbox"},
+            {"label":"Size","name":"size","kind":"radio","options":["S","M","L"]}"#,
+        ),
+        classic,
+    );
+    let fields = field_marks(&out);
+    let names: Vec<_> = fields
+        .iter()
+        .map(|asked| asked.name.as_deref().unwrap_or_default())
+        .collect();
+    assert_eq!(
+        names,
+        ["full_name", "role", "agree", "size", "size", "size"]
+    );
+    let words: Vec<_> = texts(&out).into_iter().map(|(text, ..)| text).collect();
+    assert!(words.contains(&"Full name *"), "{words:?}");
+    assert!(words.contains(&"Role"), "{words:?}");
+    assert!(words.contains(&"Agree"), "{words:?}");
+    assert_eq!(fields[1].options, ["A", "B"]);
+}
+
+#[test]
+fn a_form_with_a_repeated_name_a_bad_kind_or_bad_json_is_refused_whole() {
+    let twice = refused_form(&form(
+        r#"{"label":"A","name":"same"},{"label":"B","name":"same"}"#,
+    ));
+    assert!(twice.contains("same"), "{twice}");
+    let across = refused_form(&format!(
+        "{}\n{}",
+        form(r#"{"label":"A","name":"same"}"#),
+        form(r#"{"label":"B","name":"same"}"#)
+    ));
+    assert!(across.contains("same"), "{across}");
+    let kind = refused_form(&form(r#"{"label":"A","name":"a","kind":"slider"}"#));
+    assert!(kind.contains("slider"), "{kind}");
+    let json = refused_form("```form\n{\"fields\":\n```\n");
+    assert!(json.contains("not JSON"), "{json}");
+    let dropdown = refused_form(&form(r#"{"label":"A","name":"a","kind":"dropdown"}"#));
+    assert!(dropdown.contains("options"), "{dropdown}");
+}
+
+#[test]
+fn two_half_fields_share_a_row_and_a_full_one_takes_the_width() {
+    let classic = theme::named("classic").expect("classic");
+    let out = composed(
+        &form(
+            r#"{"label":"A","name":"a","half":true},{"label":"B","name":"b","half":true},
+            {"label":"C","name":"c"}"#,
+        ),
+        classic,
+    );
+    let fields = field_marks(&out);
+    assert_eq!(fields.len(), 3);
+    let [a, b, c] = [fields[0].area, fields[1].area, fields[2].area];
+    assert!((a[1] - b[1]).abs() < 1e-6, "one row: {a:?} {b:?}");
+    assert!(b[0] > a[2], "side by side");
+    assert!(c[1] > a[3], "the next row is below");
+    assert!((c[0] - 50.0).abs() < 1e-6 && (c[2] - 545.0).abs() < 1e-6);
+}
+
+#[test]
+fn a_row_of_a_long_form_is_never_split_across_two_pages() {
+    let classic = theme::named("classic").expect("classic");
+    let many: Vec<String> = (0..40)
+        .map(|at| format!(r#"{{"label":"Field {at}","name":"f{at}","half":true}}"#))
+        .collect();
+    let out = composed(&form(&many.join(",")), classic);
+    let fields = field_marks(&out);
+    assert_eq!(fields.len(), 40);
+    assert!(fields.iter().any(|asked| asked.page == 1), "a second page");
+    for pair in fields.chunks(2) {
+        assert_eq!(pair[0].page, pair[1].page, "a row stays on one page");
+        assert!((pair[0].area[1] - pair[1].area[1]).abs() < 1e-6);
+    }
+    let labels = texts(&out);
+    for asked in &fields {
+        let label = labels.iter().find(|(_, area, _, page)| {
+            *page == asked.page
+                && (area[0] - asked.area[0]).abs() < 1e-6
+                && area[3] <= asked.area[1] + 1e-6
+                && asked.area[1] - area[3] < 10.0
+        });
+        assert!(label.is_some(), "a label sits above {asked:?} on its page");
+    }
+}
+
 #[test]
 fn an_equation_is_stacked() {
     let classic = theme::named("classic").expect("classic");

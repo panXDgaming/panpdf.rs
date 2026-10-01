@@ -216,14 +216,20 @@ CHARTS: a fenced block with the language `chart` holding JSON: \
 Scatter: series take \"points\": [[x, y], ..]. Pie: \"values\": [{\"name\": .., \"value\": ..}]. \
 Candlestick: \"candles\": [{\"x\": .., \"open\": .., \"high\": .., \"low\": .., \"close\": ..}] with optional line \"series\" over it. \
 Function: \"functions\": [\"exp(-x^2)\", {\"name\": .., \"expr\": \"sin(x)/x\"}], \"from\", \"to\" (x only; + - * / ^, sin cos tan exp ln log sqrt abs, pi, e). \
+FORMS: a fenced block with the language `form` holding JSON: {\"fields\": [{\"label\": \"Full name\", \"name\": \"full_name\", \
+\"kind\": \"text\"|\"paragraph\"|\"checkbox\"|\"radio\"|\"dropdown\"|\"list\"|\"date\"|\"signature\", \"required\": true, \"half\": true, \
+\"lines\": 4, \"options\": [..]}]}. Each field is a real fillable field with a small label above it (a checkbox has its label to its right, a \
+radio group a row of buttons), laid out down the page; two `half` fields in a row sit side by side. `name` is needed and is unique in the \
+whole document; `options` are for dropdown, list and radio; `lines` is the height of a paragraph. Required fields get a star. Put the \
+section headings in ordinary Markdown between form blocks. fill_field fills them afterwards. A bad form or a repeated name refuses the whole call. \
 A paragraph is bold or italic only when all of it is. No emoji: they are left out. Adds pages when it runs out of room. \
-Everything is checked before anything is written: a chart that cannot be read refuses the whole call, saying why. \
+Everything is checked before anything is written: a chart or form that cannot be read refuses the whole call, saying why. \
 Use this rather than a frame at a time whenever more than one paragraph is being written: it is one call, and the \
 spacing and colours come out the same all the way down. `from_page` says which page to start on. `replace` starts at \
 the top of the page instead of under what is already there, and paints the new page over it: what was there is covered, \
 not removed, and stays in the file under the new page. The whole write is one step the person can undo.",
             input: r#"{"type":"object","properties":{DOCUMENT,
-"markdown":{"type":"string","description":"The document, in CommonMark, with $maths$ and ```chart blocks."},
+"markdown":{"type":"string","description":"The document, in CommonMark, with $maths$, ```chart and ```form blocks."},
 "theme":{"type":"string","enum":["classic","ocean","sunset","forest","grape","rose","slate","midnight","plain"],"description":"The colours. Default classic (navy). midnight is a dark page; plain is black on white."},
 "from_page":{"type":"integer","minimum":1,"description":"Default 1."},
 "replace":{"type":"boolean","description":"Start at the top of the page. Default false."},
@@ -959,7 +965,7 @@ write a page again to change one line of it.\n\
 write_pages, once, in Markdown, and let its structure make it look good: a `#` title, `##` \
 headings for the parts, lists for steps and questions, a table for anything in rows and columns \
 (answer spaces are an empty column), `>` for a tip or a note, `---` between sections, a \
-```chart block when numbers are better seen than read, and a `theme` that suits the subject. \
+```chart block when numbers are better seen than read, a ```form block for a fillable form, and a `theme` that suits the subject. \
 With `replace` the new page covers what was there: the old text stays in the file underneath.\n\
 - **Formulas that matter go on a line of their own as `$$...$$`**, so they are set out like a \
 book -- fractions stacked, roots drawn, limits above and below. Inside a sentence, `$...$` is \
