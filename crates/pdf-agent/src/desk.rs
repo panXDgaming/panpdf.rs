@@ -122,6 +122,44 @@ impl Desk {
         }
     }
 
+    pub fn create(&mut self, path: &Path, size: [f64; 2]) -> Result<Summary, Refused> {
+        if path.exists() {
+            return Err(format!(
+                "{} already exists: open it, or choose another name",
+                path.display()
+            ));
+        }
+        let bytes = pdf_session::blank_document(size)
+            .map_err(|error| format!("a page of that size cannot be made: {error}"))?;
+        let original: Arc<[u8]> = Arc::from(bytes);
+        let source = ByteStore::new(SourceId::new(0), Arc::clone(&original));
+        let session = Session::with_fonts(source, b"", self.fonts.clone());
+        self.opened += 1;
+        let handle = format!("doc-{}", self.opened);
+        self.open.insert(
+            handle.clone(),
+            Open {
+                path: path.to_owned(),
+                original,
+                session,
+                revision: 0,
+                arranged: 0,
+                named: BTreeMap::new(),
+                listed: BTreeMap::new(),
+                links_listed: BTreeMap::new(),
+                saved: None,
+                restrictions_set_aside: false,
+            },
+        );
+        Ok(Summary {
+            handle,
+            pages: 1,
+            title: String::new(),
+            protected: false,
+            restricted: false,
+        })
+    }
+
     pub fn open(
         &mut self,
         path: &Path,

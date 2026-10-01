@@ -96,6 +96,20 @@ Opening changes nothing on disk.",
             destructive: false,
         },
         Tool {
+            name: "new_document",
+            title: "Start a new PDF",
+            description: "Starts a new document of one blank page and returns a handle for the other tools; nothing is \
+written until save_document, which saves it at `path`. Then write_pages fills it, add_field makes it a form, and \
+add_blank_page adds pages. `paper` is a4 (the default), letter, legal, a5 or a3; `landscape` turns it.",
+            input: r#"{"type":"object","properties":{
+"path":{"type":"string","description":"Where it will be saved, ending in .pdf. A path that starts with ~ is taken from the home folder. It must not exist yet."},
+"paper":{"type":"string","enum":["a4","letter","legal","a5","a3"]},
+"landscape":{"type":"boolean"}},
+"required":["path"],"additionalProperties":false}"#,
+            read_only: false,
+            destructive: false,
+        },
+        Tool {
             name: "list_documents",
             title: "Open documents",
             description: "Lists the documents open now: handle, file, pages, and whether there are changes not saved.",
@@ -658,8 +672,9 @@ pub fn exists(name: &str) -> bool {
     tools().iter().any(|tool| tool.name == name)
 }
 
-const NOT_IN_A_WINDOW: [&str; 4] = [
+const NOT_IN_A_WINDOW: [&str; 5] = [
     "open_document",
+    "new_document",
     "list_documents",
     "close_document",
     "save_document",
@@ -1076,6 +1091,7 @@ pub fn call(desk: &mut Desk, name: &str, arguments: &Json) -> Result<Answer, Str
     });
     match name {
         "open_document" => open_document(desk, &args),
+        "new_document" => new_document(desk, &args),
         "list_documents" => Ok(list_documents(desk)),
         "close_document" => close_document(desk, &args),
         "document_info" => crate::about::document_info(desk, args.required("document")?),
@@ -1163,6 +1179,43 @@ If the person says they have the right to edit it, open it again with set_aside_
             ("title", Json::text(summary.title)),
             ("protected", Json::Bool(summary.protected)),
             ("editing_restricted", Json::Bool(summary.restricted)),
+        ]),
+    ))
+}
+
+fn new_document(desk: &mut Desk, args: &Args) -> Result<Answer, String> {
+    let path = expand(args.required("path")?);
+    if !path
+        .extension()
+        .is_some_and(|ending| ending.eq_ignore_ascii_case("pdf"))
+    {
+        return Err("the path should end in .pdf".to_owned());
+    }
+    let [short, long] = match args.text("paper").unwrap_or("a4") {
+        "a4" => [595.0, 842.0],
+        "letter" => [612.0, 792.0],
+        "legal" => [612.0, 1008.0],
+        "a5" => [420.0, 595.0],
+        "a3" => [842.0, 1191.0],
+        other => return Err(format!("there is no paper called {other}")),
+    };
+    let size = if args.flag("landscape") {
+        [long, short]
+    } else {
+        [short, long]
+    };
+    let summary = desk.create(&path, size)?;
+    Ok(Answer::of(
+        format!(
+            "Started {} as {}: one blank page of {} by {} points, not saved yet.",
+            path.display(),
+            summary.handle,
+            size[0],
+            size[1]
+        ),
+        Json::object([
+            ("document", Json::text(summary.handle)),
+            ("pages", Json::count(1)),
         ]),
     ))
 }
@@ -1854,6 +1907,9 @@ fn beside(
         .iter()
         .find(|(held, ..)| held == handle)
         .ok_or_else(|| format!("no document is open as {handle}"))?;
+    if !path.exists() {
+        return Ok(path.clone());
+    }
     let stem = path.file_stem().map_or_else(
         || "document".to_owned(),
         |stem| stem.to_string_lossy().into_owned(),

@@ -7,12 +7,12 @@ use super::{
 use crate::json::Json;
 
 #[test]
-fn a_window_offers_thirty_four_of_the_thirty_eight_tools_and_its_own_five() {
+fn a_window_offers_thirty_four_of_the_thirty_nine_tools_and_its_own_five() {
     let offered = offered_to_a_window();
     assert_eq!(offered.len(), 39, "{:?}", offered.len());
     let published = listed();
     let published = published.as_list().expect("a list");
-    assert_eq!(published.len(), 38);
+    assert_eq!(published.len(), 39);
     assert!(
         !published.iter().any(|tool| matches!(
             tool.get("name").and_then(Json::as_str),
@@ -1205,4 +1205,59 @@ fn the_instructions_name_each_tool_for_files_scans_links_shapes_and_forms() {
         "{said}"
     );
     assert!(super::INSTRUCTIONS.contains("make NEW files beside the document"));
+}
+
+#[test]
+fn a_new_document_is_written_and_saved_where_it_was_asked_for() {
+    let folder = folder("new");
+    let path = folder.join("letter.pdf");
+    let mut desk = crate::desk::Desk::with_fonts(Some(fonts()));
+    let started = super::call(
+        &mut desk,
+        "new_document",
+        &Json::object([
+            ("path", Json::text(path.display().to_string())),
+            ("paper", Json::text("letter".to_owned())),
+        ]),
+    )
+    .expect("starts");
+    let handle = started
+        .data
+        .get("document")
+        .and_then(Json::as_str)
+        .expect("a handle")
+        .to_owned();
+    assert!(!path.exists(), "nothing is written before it is saved");
+    super::call(
+        &mut desk,
+        "write_pages",
+        &Json::object([
+            ("document", Json::text(handle.clone())),
+            (
+                "markdown",
+                Json::text("# Hello\n\nA first line.".to_owned()),
+            ),
+        ]),
+    )
+    .expect("written");
+    super::call(
+        &mut desk,
+        "save_document",
+        &Json::object([("document", Json::text(handle))]),
+    )
+    .expect("saved");
+    assert_eq!(std::fs::read_dir(&folder).expect("a folder").count(), 1);
+    let again = opened(&mut desk, &path.display().to_string());
+    let sizes = desk.page_sizes(&again).expect("sizes");
+    assert_eq!(sizes.len(), 1);
+    assert!((sizes[0][0] - 612.0).abs() < 0.5 && (sizes[0][1] - 792.0).abs() < 0.5);
+    let refused = super::call(
+        &mut desk,
+        "new_document",
+        &Json::object([("path", Json::text(path.display().to_string()))]),
+    );
+    assert!(
+        refused.is_err(),
+        "a file that is there is not started again"
+    );
 }
