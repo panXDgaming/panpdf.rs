@@ -8,14 +8,14 @@ use crate::ai_actions::Performed;
 use crate::ai_actions::tests::{a_blank_window, land_what_was_sent, tool, undo_steps_left};
 use crate::window_state::Window;
 
-fn load_page(window: &mut Window, page: usize) {
+pub(crate) fn load_page(window: &mut Window, page: usize) {
     let source = window.editor.source().cloned().expect("a document");
     let view = pdf_session::interpret_page_fully(&source, page, b"", None, window.editor.fonts())
         .expect("the page reads");
     window.editor.adopt_page(page, Arc::new(view));
 }
 
-fn run_on_pages(window: &mut Window, call: &ToolCall) -> ToolResult {
+pub(crate) fn run_on_pages(window: &mut Window, call: &ToolCall) -> ToolResult {
     window.ai.tools.take(std::slice::from_ref(call));
     window.ai.tools.revision_before = window.editor.revision();
     for _ in 0..50 {
@@ -44,7 +44,7 @@ fn run_on_pages(window: &mut Window, call: &ToolCall) -> ToolResult {
         .expect("the call was answered")
 }
 
-fn a_window_written(markdown: &str) -> Window {
+pub(crate) fn a_window_written(markdown: &str) -> Window {
     let mut window = a_blank_window();
     assert!(
         window.editor.fonts().is_some(),
@@ -63,13 +63,13 @@ fn a_window_written(markdown: &str) -> Window {
     window
 }
 
-fn said(window: &mut Window, name: &str, arguments: &str) -> String {
+pub(crate) fn said(window: &mut Window, name: &str, arguments: &str) -> String {
     let result = run_on_pages(window, &tool("t", name, arguments));
     assert!(!result.is_error, "{name} {arguments}: {}", result.text);
     result.text
 }
 
-fn refused(window: &mut Window, name: &str, arguments: &str) -> String {
+pub(crate) fn refused(window: &mut Window, name: &str, arguments: &str) -> String {
     let result = run_on_pages(window, &tool("t", name, arguments));
     assert!(
         result.is_error,
@@ -79,7 +79,7 @@ fn refused(window: &mut Window, name: &str, arguments: &str) -> String {
     result.text
 }
 
-fn text_of_page(window: &mut Window, page: usize) -> String {
+pub(crate) fn text_of_page(window: &mut Window, page: usize) -> String {
     said(
         window,
         "read_text",

@@ -197,3 +197,30 @@ fn document_info_lists_the_pages_and_the_form() {
         .expect("the text field");
     assert_eq!(name.get("value").and_then(Json::as_str), Some("Somchai"));
 }
+
+#[test]
+fn text_in_a_script_no_face_draws_is_refused_not_placed_as_empty_boxes() {
+    let (mut desk, handle) = crate::desk::tests::with_paragraphs("script", &["Latin words."]);
+    let mut call = |text: &str| {
+        let arguments = crate::json::Json::object([
+            ("document", crate::json::Json::text(handle.clone())),
+            ("page", crate::json::Json::count(1)),
+            ("left", crate::json::Json::Number(72.0)),
+            ("top", crate::json::Json::Number(400.0)),
+            ("width", crate::json::Json::Number(300.0)),
+            ("text", crate::json::Json::text(text)),
+        ]);
+        crate::tools::call(&mut desk, "add_text", &arguments)
+    };
+    let refused = call("\u{928}\u{92e}\u{938}\u{94d}\u{924}\u{947}")
+        .err()
+        .expect("no packaged face draws Devanagari");
+    assert!(
+        refused.contains("the face chosen cannot shape"),
+        "{refused}"
+    );
+    assert!(
+        call("Plain Latin words").is_ok(),
+        "negative control: a script the faces draw is placed"
+    );
+}

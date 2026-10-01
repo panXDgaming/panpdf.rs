@@ -195,8 +195,10 @@ impl AiState {
     pub(super) fn the_conversation(&mut self, ui: &mut egui::Ui, lang: Lang) -> Option<Allowed> {
         let card = self.tools.ask.as_ref().map(|pending| {
             let was = self.tools.text_before(&pending.request);
+            let mut shown = describe_change(&pending.request, was.as_deref(), lang);
+            shown.written_to.clone_from(&pending.written_to);
             (
-                describe_change(&pending.request, was.as_deref(), lang),
+                shown,
                 pending.may_allow_for_chat,
                 pending.of_this_tool,
                 pending.call.id.clone(),

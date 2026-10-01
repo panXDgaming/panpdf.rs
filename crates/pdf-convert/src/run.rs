@@ -6,6 +6,7 @@ mod files;
 mod jobs;
 mod names;
 mod pages;
+mod placing;
 mod random;
 mod running;
 mod watch;
@@ -27,6 +28,7 @@ use crate::catalogue::{Tool, Values};
 use watch::Watch;
 
 pub use failure::Failure;
+pub use placing::{Saved, Writer, is_inside, save_beside, write_new_file};
 pub use running::{Running, start};
 
 #[derive(Clone, Default, PartialEq, Eq)]

@@ -44,7 +44,8 @@ pub fn target(request: &Request) -> Option<Assistant> {
         | Request::AddText { page, .. }
         | Request::WritePages {
             from_page: page, ..
-        } => Some(Assistant::TargetPage(page + 1)),
+        }
+        | Request::SetTabOrder { page, .. } => Some(Assistant::TargetPage(page + 1)),
         Request::ReplaceText { block, .. } | Request::StyleText { block, .. } => {
             Some(Assistant::TargetBlock(block.clone()))
         }
@@ -78,6 +79,35 @@ pub fn target(request: &Request) -> Option<Assistant> {
         Request::GoToPage { page } | Request::LookCloser { page, .. } => {
             Some(Assistant::TargetPage(page + 1))
         }
+        Request::Convert(asked) => Some(match asked.files.first() {
+            Some(file) => Assistant::TargetFile(file.file_name().map_or_else(
+                || file.display().to_string(),
+                |name| name.to_string_lossy().into_owned(),
+            )),
+            None => Assistant::TargetDocument,
+        }),
+        Request::OcrPages(asked) => Some(named_pages(&asked.pages)),
+        Request::ExtractPages(asked) => Some(named_pages(&asked.pages)),
+        Request::ExportPictures(asked) => Some(named_pages(&asked.pages)),
+        Request::SplitDocument(_) | Request::SaveCopy { .. } => Some(Assistant::TargetDocument),
+        Request::Links(action) => match action {
+            pdf_agent::linking::Action::List { page }
+            | pdf_agent::linking::Action::Add { page, .. } => Some(Assistant::TargetPage(page + 1)),
+            pdf_agent::linking::Action::Remove { link } => {
+                Some(Assistant::TargetBlock(link.clone()))
+            }
+        },
+        Request::DrawShape(asked) => Some(Assistant::TargetPage(asked.page + 1)),
+        Request::AddField(asked) => Some(Assistant::TargetPage(asked.page + 1)),
+    }
+}
+
+fn named_pages(spec: &str) -> Assistant {
+    let spec = spec.trim();
+    if spec.is_empty() {
+        Assistant::TargetDocument
+    } else {
+        Assistant::TargetPageNumbers(short(spec))
     }
 }
 
@@ -134,6 +164,10 @@ fn quoted(text: &str) -> String {
     }
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "one line of status for each tool, read as a table"
+)]
 fn doing_in_english(request: &Request) -> String {
     match request {
         Request::DocumentInfo => "Reading what the document says about itself".to_owned(),
@@ -205,6 +239,64 @@ fn doing_in_english(request: &Request) -> String {
         },
         Request::GoToPage { page } => format!("Showing page {}", page + 1),
         Request::LookCloser { page, .. } => format!("Looking closer at page {}", page + 1),
+        Request::Convert(asked) => converting_status(asked.tool).to_owned(),
+        Request::OcrPages(asked) => {
+            if asked.pages.trim().is_empty() {
+                "Reading the scanned pages".to_owned()
+            } else {
+                format!("Reading pages {}", short(asked.pages.trim()))
+            }
+        }
+        Request::ExtractPages(asked) => format!("Taking out pages {}", short(asked.pages.trim())),
+        Request::SplitDocument(_) => "Splitting the document into files".to_owned(),
+        Request::ExportPictures(_) => "Saving pages as pictures".to_owned(),
+        Request::SaveCopy { .. } => "Saving a copy of the document".to_owned(),
+        Request::Links(action) => match action {
+            pdf_agent::linking::Action::List { page } => {
+                format!("Looking at the links of page {}", page + 1)
+            }
+            pdf_agent::linking::Action::Add { page, .. } => {
+                format!("Adding a link to page {}", page + 1)
+            }
+            pdf_agent::linking::Action::Remove { link } => format!("Removing link {link}"),
+        },
+        Request::DrawShape(asked) => format!(
+            "Drawing {} on page {}",
+            asked.shape.with_article(),
+            asked.page + 1
+        ),
+        Request::AddField(asked) => format!("Adding a form field to page {}", asked.page + 1),
+        Request::SetTabOrder { page, .. } => {
+            format!("Ordering the form fields of page {}", page + 1)
+        }
+    }
+}
+
+fn converting_status(tool: pdf_convert::Tool) -> &'static str {
+    use pdf_convert::Tool;
+    match tool {
+        Tool::PdfToWord => "Making a Word file",
+        Tool::PdfToExcel => "Making an Excel file",
+        Tool::PdfToPowerPoint => "Making a PowerPoint file",
+        Tool::PdfToImage => "Making picture files",
+        Tool::PdfToHtml => "Making a web page",
+        Tool::PdfToMarkdown => "Making a Markdown file",
+        Tool::PdfToText => "Making a text file",
+        Tool::PdfToPdfA => "Making a PDF/A copy",
+        Tool::WordToPdf
+        | Tool::ExcelToPdf
+        | Tool::PowerPointToPdf
+        | Tool::ImageToPdf
+        | Tool::ScanToPdf
+        | Tool::HtmlToPdf => "Making a PDF",
+        Tool::Compress => "Compressing a copy",
+        Tool::Repair => "Repairing a copy",
+        Tool::Ocr => "Making a searchable copy",
+        Tool::Unlock => "Taking the password off a copy",
+        Tool::Sign => "Signing a copy",
+        Tool::Redact => "Removing words from a copy for good",
+        Tool::Compare => "Comparing two files",
+        Tool::Protect => "Protecting a copy with a password",
     }
 }
 
@@ -238,6 +330,17 @@ fn did_in_english(name: &str) -> String {
         "objects" => "Worked on pictures and drawings",
         "go_to_page" => "Showed a page",
         "look_closer" => "Looked closer",
+        "convert" => "Made a new file",
+        "protect_document" => "Made a protected copy",
+        "ocr_pages" => "Read scanned pages",
+        "extract_pages" => "Took pages out",
+        "split_document" => "Split the document",
+        "export_page_pictures" => "Saved pages as pictures",
+        "save_copy" => "Saved a copy",
+        "links" => "Worked on links",
+        "draw_shape" => "Drew a shape",
+        "add_field" => "Added a form field",
+        "set_tab_order" => "Ordered the form fields",
         other => return other.to_owned(),
     }
     .to_owned()
@@ -436,6 +539,232 @@ mod tests {
                     .as_deref(),
                 Some(to),
                 "{name}"
+            );
+        }
+    }
+
+    const ONE_CALL_OF_EACH: &[(&str, &str)] = &[
+        ("document_info", "{}"),
+        ("read_text", "{}"),
+        ("find_text", r#"{"text":"a"}"#),
+        ("render_page", r#"{"page":1}"#),
+        ("list_fonts", "{}"),
+        ("replace_text", r#"{"block":"p1-b1","text":"x"}"#),
+        (
+            "add_text",
+            r#"{"page":1,"left":0,"top":0,"width":50,"text":"x","font":"DejaVu Sans"}"#,
+        ),
+        (
+            "write_pages",
+            r##"{"markdown":"# a","font":"DejaVu Sans"}"##,
+        ),
+        ("set_properties", r#"{"title":"a"}"#),
+        ("fill_field", r#"{"name":"a","value":"b"}"#),
+        ("add_blank_page", r#"{"after_page":0}"#),
+        ("delete_pages", r#"{"pages":[1]}"#),
+        ("move_pages", r#"{"pages":[1],"to":2}"#),
+        ("rotate_pages", r#"{"pages":[1],"degrees":90}"#),
+        ("insert_pages", r#"{"from":"/tmp/a.pdf","after_page":0}"#),
+        ("undo", "{}"),
+        ("redo", "{}"),
+        ("find_and_replace", r#"{"find":"a","replace_with":"b"}"#),
+        ("style_text", r#"{"block":"p1-b1","bold":true}"#),
+        ("mark_text", r#"{"text":"a"}"#),
+        ("add_stamp", r#"{"kind":"watermark"}"#),
+        ("bookmarks", r#"{"action":"list"}"#),
+        (
+            "place_picture",
+            r#"{"page":1,"left":0,"top":0,"path":"/tmp/a.png"}"#,
+        ),
+        ("objects", r#"{"action":"list","page":1}"#),
+        (
+            "look_closer",
+            r#"{"page":1,"left":0,"top":0,"right":9,"bottom":9}"#,
+        ),
+        ("convert", r#"{"tool":"pdf-to-text"}"#),
+        ("protect_document", r#"{"password":"x"}"#),
+        ("ocr_pages", "{}"),
+        ("extract_pages", r#"{"pages":"1"}"#),
+        ("split_document", r#"{"every":1}"#),
+        ("export_page_pictures", "{}"),
+        ("save_copy", "{}"),
+        ("links", r#"{"action":"list","page":1}"#),
+        (
+            "draw_shape",
+            r#"{"page":1,"shape":"line","left":0,"top":0,"right":9,"bottom":9}"#,
+        ),
+        (
+            "add_field",
+            r#"{"page":1,"kind":"text","left":0,"top":0,"width":50,"height":20}"#,
+        ),
+        ("set_tab_order", r#"{"page":1,"order":"rows"}"#),
+        ("go_to_page", r#"{"page":1}"#),
+        (
+            "ask_person",
+            r#"{"question":"Which?","options":[{"label":"a"},{"label":"b"}]}"#,
+        ),
+        ("update_plan", r#"{"steps":[{"text":"a","status":"done"}]}"#),
+    ];
+
+    #[test]
+    fn every_tool_a_window_offers_can_be_worded_before_it_runs_and_while_it_runs() {
+        let offered: Vec<String> = pdf_agent::tools::offered_to_a_window()
+            .into_iter()
+            .map(|tool| tool.name)
+            .collect();
+        for name in &offered {
+            let Some((_, arguments)) = ONE_CALL_OF_EACH.iter().find(|(held, _)| held == name)
+            else {
+                panic!("{name} is offered but has no call in this table: add one");
+            };
+            let request = asked(name, arguments);
+            assert!(
+                !crate::ai_permission::describe_call(&request, Lang::English)
+                    .trim()
+                    .is_empty(),
+                "{name} says nothing on its card"
+            );
+            assert!(!doing(&request, Lang::English).trim().is_empty(), "{name}");
+            assert_ne!(did(name, Lang::English), *name, "{name}");
+        }
+        for (name, _) in ONE_CALL_OF_EACH {
+            assert!(
+                offered.iter().any(|held| held == name),
+                "{name} is in the table and is not offered"
+            );
+        }
+        assert_eq!(offered.len(), ONE_CALL_OF_EACH.len());
+    }
+
+    #[test]
+    #[expect(clippy::too_many_lines, reason = "one row per tool, read as a table")]
+    fn the_tools_for_files_scans_links_shapes_and_forms_say_what_they_are_doing_and_to_what() {
+        let rows = [
+            (
+                "convert",
+                r#"{"tool":"pdf-to-word"}"#,
+                "Making a Word file",
+                "the document",
+            ),
+            (
+                "convert",
+                r#"{"tool":"compress-pdf","files":["/a/big.pdf"]}"#,
+                "Compressing a copy",
+                "big.pdf",
+            ),
+            (
+                "convert",
+                r#"{"tool":"redact-pdf","options":{"search":["x"]}}"#,
+                "Removing words from a copy for good",
+                "the document",
+            ),
+            (
+                "protect_document",
+                r#"{"password":"x"}"#,
+                "Protecting a copy with a password",
+                "the document",
+            ),
+            (
+                "ocr_pages",
+                r#"{"pages":"2-3"}"#,
+                "Reading pages 2-3",
+                "pages 2-3",
+            ),
+            (
+                "ocr_pages",
+                "{}",
+                "Reading the scanned pages",
+                "the document",
+            ),
+            (
+                "extract_pages",
+                r#"{"pages":"1, 4"}"#,
+                "Taking out pages 1, 4",
+                "pages 1, 4",
+            ),
+            (
+                "split_document",
+                r#"{"every":5}"#,
+                "Splitting the document into files",
+                "the document",
+            ),
+            (
+                "export_page_pictures",
+                "{}",
+                "Saving pages as pictures",
+                "the document",
+            ),
+            (
+                "save_copy",
+                "{}",
+                "Saving a copy of the document",
+                "the document",
+            ),
+            (
+                "links",
+                r#"{"action":"list","page":3}"#,
+                "Looking at the links of page 3",
+                "page 3",
+            ),
+            (
+                "links",
+                r#"{"action":"add","block":"p2-b1","url":"https://a.org"}"#,
+                "Adding a link to page 2",
+                "page 2",
+            ),
+            (
+                "links",
+                r#"{"action":"remove","link":"p1-l2"}"#,
+                "Removing link p1-l2",
+                "p1-l2",
+            ),
+            (
+                "draw_shape",
+                r#"{"page":2,"shape":"ellipse","left":0,"top":0,"right":9,"bottom":9}"#,
+                "Drawing an ellipse on page 2",
+                "page 2",
+            ),
+            (
+                "add_field",
+                r#"{"page":1,"kind":"text","left":0,"top":0,"width":50,"height":20}"#,
+                "Adding a form field to page 1",
+                "page 1",
+            ),
+            (
+                "set_tab_order",
+                r#"{"page":4,"order":"rows"}"#,
+                "Ordering the form fields of page 4",
+                "page 4",
+            ),
+        ];
+        for (name, arguments, doing_says, to) in rows {
+            let request = asked(name, arguments);
+            assert_eq!(doing(&request, Lang::English), doing_says, "{name}");
+            assert_eq!(
+                target(&request)
+                    .map(|target| target.say(Lang::English))
+                    .as_deref(),
+                Some(to),
+                "{name}"
+            );
+        }
+        for name in [
+            "convert",
+            "protect_document",
+            "ocr_pages",
+            "extract_pages",
+            "split_document",
+            "export_page_pictures",
+            "save_copy",
+            "links",
+            "draw_shape",
+            "add_field",
+            "set_tab_order",
+        ] {
+            assert_ne!(
+                did(name, Lang::English),
+                name,
+                "{name} has a line for what it did"
             );
         }
     }

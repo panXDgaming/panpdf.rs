@@ -7,6 +7,8 @@ use crate::styling::Look;
 use crate::tools::{Args, colour, expand};
 
 mod editing;
+mod filing;
+mod structure;
 
 pub use editing::MOST_DPI;
 
@@ -160,6 +162,21 @@ pub enum Request {
         region: [f64; 4],
         dpi: f64,
     },
+    Convert(crate::converting::Asked),
+    OcrPages(crate::recognizing::Asked),
+    ExtractPages(crate::taking::Extract),
+    SplitDocument(crate::taking::Split),
+    ExportPictures(crate::taking::Pictures),
+    SaveCopy {
+        path: Option<PathBuf>,
+    },
+    Links(crate::linking::Action),
+    DrawShape(crate::shaping::Asked),
+    AddField(crate::fielding::Asked),
+    SetTabOrder {
+        page: usize,
+        order: crate::fielding::Order,
+    },
 }
 
 impl Request {
@@ -179,6 +196,7 @@ impl Request {
         ) || match self {
             Self::Bookmarks(action) => action.only_reads(),
             Self::Objects(action) => action.only_reads(),
+            Self::Links(action) => action.only_reads(),
             _ => false,
         }
     }
@@ -189,6 +207,8 @@ impl Request {
             Self::DeletePages(_) | Self::WritePages { replace: true, .. } => true,
             Self::Bookmarks(action) => action.is_destructive(),
             Self::Objects(action) => action.is_destructive(),
+            Self::Links(action) => action.is_destructive(),
+            Self::Convert(asked) => asked.destroys(),
             _ => false,
         }
     }
@@ -209,7 +229,19 @@ impl Request {
                 } | crate::outlining::Action::Retarget { .. }
             ),
             Self::Objects(action) => matches!(action, crate::objects::Action::List { .. }),
-            Self::PlacePicture(_)
+            Self::Links(action) => matches!(
+                action,
+                crate::linking::Action::List { .. } | crate::linking::Action::Add { .. }
+            ),
+            Self::Convert(asked) => asked.counts_pages(),
+            Self::OcrPages(asked) => !asked.pages.trim().is_empty(),
+            Self::ExportPictures(asked) => !asked.pages.trim().is_empty(),
+            Self::ExtractPages(_)
+            | Self::SplitDocument(_)
+            | Self::DrawShape(_)
+            | Self::AddField(_)
+            | Self::SetTabOrder { .. }
+            | Self::PlacePicture(_)
             | Self::GoToPage { .. }
             | Self::LookCloser { .. }
             | Self::RenderPage { .. }
@@ -229,7 +261,8 @@ impl Request {
             | Self::Redo
             | Self::AskPerson { .. }
             | Self::UpdatePlan { .. }
-            | Self::StyleText { .. } => false,
+            | Self::StyleText { .. }
+            | Self::SaveCopy { .. } => false,
         }
     }
 }
@@ -328,6 +361,17 @@ pub(crate) fn parse_arguments(name: &str, args: &Args) -> Result<Request, String
             page: args.page("page")?,
         }),
         "look_closer" => editing::look_closer(args),
+        "convert" => filing::convert(args),
+        "protect_document" => filing::protect(args),
+        "ocr_pages" => filing::ocr_pages(args),
+        "extract_pages" => filing::extract_pages(args),
+        "split_document" => filing::split_document(args),
+        "export_page_pictures" => filing::export_page_pictures(args),
+        "save_copy" => filing::save_copy(args),
+        "links" => structure::links(args),
+        "draw_shape" => structure::draw_shape(args),
+        "add_field" => structure::add_field(args),
+        "set_tab_order" => structure::set_tab_order(args),
         _ => Err(format!("there is no tool called {name}")),
     }
 }

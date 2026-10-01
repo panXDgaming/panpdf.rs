@@ -2,7 +2,9 @@
 
 pub mod extract;
 pub mod gesture;
+pub mod naming;
 pub mod pictures;
+pub mod pieces;
 pub mod select;
 pub mod stages;
 

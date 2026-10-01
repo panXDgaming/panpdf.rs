@@ -599,7 +599,7 @@ impl Window {
         for (at, held) in page.files.iter().enumerate() {
             let origin = match &held.source {
                 Source::Document => {
-                    give_the_credential(tool, at, &credential, &mut values);
+                    values.give_the_credential(tool, at, &credential);
                     Origin::Document(exported.take().unwrap_or_default())
                 }
                 Source::File(path) => Origin::File(path.clone()),
@@ -735,27 +735,6 @@ fn apply_the_passwords(page: &mut Page, older: &str, newer: &str) {
     if !newer.is_empty() && tool == Tool::Compare {
         page.values
             .set(Setting::SecondPassword, Value::Secret(newer.to_owned()));
-    }
-}
-
-fn give_the_credential(tool: Tool, at: usize, credential: &[u8], values: &mut pdf_convert::Values) {
-    if credential.is_empty() {
-        return;
-    }
-    let setting = if at == 0 {
-        tool.file_password()
-    } else if tool == Tool::Compare {
-        Some(Setting::SecondPassword)
-    } else {
-        None
-    };
-    let Some(setting) = setting else { return };
-    let already = values.text(setting).is_some_and(|text| !text.is_empty());
-    if !already {
-        values.set(
-            setting,
-            Value::Secret(String::from_utf8_lossy(credential).into_owned()),
-        );
     }
 }
 

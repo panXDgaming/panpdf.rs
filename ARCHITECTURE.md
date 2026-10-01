@@ -124,7 +124,8 @@ proved and undoable in the same history -- an agent can do nothing a person
 at the window could not, and is refused in the same words. It speaks MCP
 (JSON-RPC over standard input and output) with a JSON reader of its own, and
 no registry crate. Only `pdf-app` and `pdf-window` depend on it, and only on
-targets other than the browser.
+targets other than the browser. It depends on `pdf-convert`'s `run` feature too,
+for the converters (below), which is why it is not built for the browser either.
 
 The window uses it for more than the connection to a model
 (`pdf_agent::connect`): the table of tools and the typed request each one
@@ -139,6 +140,29 @@ one page is applied last block first, because a block's place in the page's
 content is its offset in the stream, and the engine refuses a command whose
 offset an earlier one in the same step has moved. The window never speaks MCP
 itself.
+
+The converters are the assistant's too (`converting`): `convert` runs any of
+`pdf_convert`'s tools on the open document as it is now, unsaved changes
+included, or on files the person named, and `protect_document` is the one
+converter that is its own tool, because it always asks the person and `convert`
+never does for the others. Options are read by the catalogue's own keys
+(`Setting::key`, `choice_named`, the ranges `Values::faults` checks), so a tool
+added to the catalogue is offered with no second table, and a test holds the
+description the model reads to the catalogue. The window runs the job on a worker
+through `tools_run`, as the Tools room does, and the desk (the MCP server) runs it
+to the end; both then place the result with `pdf_convert::run::save_beside`, the
+same function the Tools room uses: a new file beside the document (or beside the
+first file named), under a name no file has, several files in a new folder, and
+nothing written over -- the writer it is handed refuses a file that is there.
+`taking` does the same for `extract_pages`, `split_document` and
+`export_page_pictures`, with the page groups and file names that
+`pdf_session::pieces` and `pdf_session::naming` give the menus too, so that the
+window and the server name a file alike. `ocr_pages` and `save_copy` are the
+window's own: the first needs its worker pool and the recogniser it has found,
+the second its place to write, and the server has `save_document` and
+`convert` with `ocr-pdf` for the same ends. `links`, `draw_shape`, `add_field`
+and `set_tab_order` are `pdf_edit::Command`s built from a page's shown points, as
+the earlier tools are.
 
 Where a line of text ends is `pdf-edit`'s `layout`, and nothing else's:
 `breaks` answers where a line *may* end, `lines` where lines *do* end given
@@ -292,7 +316,11 @@ them.
 another document's pages is an empty document with pages imported into it and
 the blank page it started from taken out, which is two commands on a session,
 not a new way of writing a file. The layer that can apply commands is the layer
-that can answer with the bytes they produced. `pdf_session::pictures_into_pdf`
+that can answer with the bytes they produced. `pdf_session::pieces` (which pages
+go into which file when a document is split) and `pdf_session::naming` (what
+those files are called beside the original) sit with it for a smaller reason: the
+menus and the assistant both name files, and `pdf-agent` cannot depend on
+`pdf-app`, which depends on it. `pdf_session::pictures_into_pdf`
 is the same shape the other way round: a document whose pages are pictures is
 blank pages the size of each picture with a picture placed on each, which is
 commands on a session -- and the placing is the one that already proves the
@@ -352,7 +380,7 @@ change here; an edge added needs a reason above.
 | `pdf-app` | `pdf-agent`, `pdf-bytes`, `pdf-cli`, `pdf-content`, `pdf-convert` (its catalogue only, which builds for the browser), `pdf-edit`, `pdf-heap`, `pdf-ocr`, `pdf-paint`, `pdf-print`, `pdf-render`, `pdf-semantics`, `pdf-session`, `pdf-syntax` |
 | `pdf-window` | `pdf-agent`, `pdf-app`, `pdf-bytes`, `pdf-cli`, `pdf-content`, `pdf-convert` (with its `run` feature, on targets other than the browser), `pdf-edit`, `pdf-heap`, `pdf-ocr`, `pdf-paint`, `pdf-print`, `pdf-render`, `pdf-semantics`, `pdf-session`, `pdf-syntax` |
 | `pdf-desktop` | `pdf-app`, `pdf-bytes`, `pdf-cli`, `pdf-edit`, `pdf-semantics`, `pdf-session`, `pdf-window` |
-| `pdf-agent` | `pdf-bytes`, `pdf-cli`, `pdf-content`, `pdf-edit`, `pdf-paint`, `pdf-render`, `pdf-semantics`, `pdf-session`, `pdf-syntax` (only to name the bookmarks of a table of contents before they are written, so that the whole table is one change) |
+| `pdf-agent` | `pdf-bytes`, `pdf-cli`, `pdf-content`, `pdf-convert` (with its `run` feature, so a model can run a converter on the open document and the result is placed the way the Tools room places it), `pdf-edit`, `pdf-paint`, `pdf-render`, `pdf-semantics`, `pdf-session`, `pdf-syntax` (only to name the bookmarks of a table of contents before they are written, so that the whole table is one change) |
 
 A crate in `convert/` may depend on the engine crates `pdf-bytes`,
 `pdf-syntax`, `pdf-security`, `pdf-font`, `pdf-content`, `pdf-paint`,

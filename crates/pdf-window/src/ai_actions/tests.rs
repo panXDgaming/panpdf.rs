@@ -30,6 +30,7 @@ fn waiting_to_ask(name: &str) -> Tools {
         },
         may_allow_for_chat: true,
         of_this_tool: 1,
+        written_to: None,
     });
     tools
 }

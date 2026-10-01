@@ -2,8 +2,7 @@ use pdf_convert::{Choice, Group, Kind, Setting, Tool, Value, Values};
 
 use super::{
     Manner, Missing, Trouble, accept, arranged, defaults_to_the_document, extensions, found,
-    manner, named_after, placed, ready, room_for_more, shown, sign_strokes, stem_of, takes_several,
-    terms_in, trouble_in, unused,
+    manner, ready, room_for_more, shown, sign_strokes, takes_several, terms_in, trouble_in,
 };
 use crate::wording::Lang;
 
@@ -314,73 +313,6 @@ fn tools_are_found_by_what_they_are_called_and_what_they_do() {
     assert_eq!(
         found("  searchable   scanned ", None, english),
         vec![Tool::Ocr]
-    );
-}
-
-#[test]
-fn a_name_without_its_ending_is_what_a_result_is_named_after() {
-    assert_eq!(stem_of("report.pdf"), "report");
-    assert_eq!(stem_of("/home/a/report.final.pdf"), "report.final");
-    assert_eq!(stem_of("C:\\docs\\scan.PDF"), "scan");
-    assert_eq!(stem_of(".hidden"), ".hidden");
-    assert_eq!(stem_of(""), "result");
-}
-
-#[test]
-fn one_plain_file_goes_beside_the_original_and_several_go_into_a_folder() {
-    let one = placed(&["report.docx".to_owned()], &["report.pdf"]);
-    assert_eq!(one.folder, None);
-    let pictures: Vec<String> = (1..=3).map(|n| format!("report-{n}.jpg")).collect();
-    let several = placed(&pictures, &["report.pdf"]);
-    assert_eq!(several.folder.as_deref(), Some("report"));
-    let with_attachments = placed(
-        &["report.md".to_owned(), "report_files/image1.png".to_owned()],
-        &["report.pdf"],
-    );
-    assert_eq!(with_attachments.folder.as_deref(), Some("report"));
-    let nested_alone = placed(&["report/report.md".to_owned()], &["report.pdf"]);
-    assert_eq!(nested_alone.folder.as_deref(), Some("report"));
-    let batch = placed(
-        &[
-            "a.docx".to_owned(),
-            "b.docx".to_owned(),
-            "c.docx".to_owned(),
-        ],
-        &["a.pdf", "b.pdf", "c.pdf"],
-    );
-    assert_eq!(batch.folder.as_deref(), Some("a-and-2-more"));
-    let none = placed(&[], &[]);
-    assert_eq!(none.folder.as_deref(), Some("result"));
-}
-
-#[test]
-fn a_comparison_is_named_after_the_older_file() {
-    assert_eq!(
-        named_after(Tool::Compare, "comparison.html", &["v1.pdf", "v2.pdf"]),
-        "v1-comparison.html"
-    );
-    assert_eq!(
-        named_after(Tool::Compare, "comparison.txt", &["v1.pdf", "v2.pdf"]),
-        "v1-comparison.txt"
-    );
-    assert_eq!(
-        named_after(Tool::Compress, "a-compressed.pdf", &["a.pdf"]),
-        "a-compressed.pdf"
-    );
-}
-
-#[test]
-fn a_name_already_taken_is_numbered_from_two_and_never_overwritten() {
-    let taken = |name: &str| ["a.docx", "a-2.docx", "dir"].contains(&name);
-    assert_eq!(unused("b.docx", &taken, true), "b.docx");
-    assert_eq!(unused("a.docx", &taken, true), "a-3.docx");
-    assert_eq!(unused("dir", &taken, false), "dir-2");
-    let dotted = |name: &str| name == "report.v2";
-    assert_eq!(unused("report.v2", &dotted, false), "report.v2-2");
-    assert_eq!(unused("report.v2", &dotted, true), "report-2.v2");
-    assert_eq!(
-        unused("noending", &|name: &str| name == "noending", true),
-        "noending-2"
     );
 }
 

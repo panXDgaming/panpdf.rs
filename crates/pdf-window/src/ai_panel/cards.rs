@@ -1,6 +1,6 @@
 use eframe::egui;
 use pdf_agent::tools::request::{PlanStep, StepState};
-use pdf_app::ai_permission::{Answer as Allowed, Shown};
+use pdf_app::ai_permission::{Answer as Allowed, Shown, WrittenTo};
 use pdf_app::wording::{Assistant, Lang, Message};
 
 use super::look::{
@@ -73,6 +73,18 @@ pub(super) fn the_card(
             egui::Label::new(egui::RichText::new(&shown.headline).strong().size(12.5))
                 .selectable(true),
         );
+        if let Some(place) = &shown.written_to {
+            let (label, path) = match place {
+                WrittenTo::Folder(path) => (Assistant::WillBeWrittenIn, path),
+                WrittenTo::File(path) => (Assistant::WillBeWrittenAs, path),
+            };
+            ui.label(caption(label.say(lang)));
+            ui.add(
+                egui::Label::new(egui::RichText::new(path).size(12.0))
+                    .selectable(true)
+                    .wrap(),
+            );
+        }
         let mut clipped_any = false;
         if let Some(before) = &shown.before {
             let (text, cut) = clipped(before, whole);

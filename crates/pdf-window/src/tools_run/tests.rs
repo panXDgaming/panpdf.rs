@@ -2,12 +2,10 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use pdf_app::wording::Lang;
-use pdf_convert::run::{Failure, Outcome, Progress};
+use pdf_convert::run::{Failure, Outcome, Progress, is_inside};
 use pdf_convert::{Setting, Tool, Value, Values};
 
-use super::{
-    Order, Origin, Poll, Saved, begin, is_inside, progress_line, save_beside, write_a_copy,
-};
+use super::{Order, Origin, Poll, Saved, begin, progress_line, save_beside, write_a_copy};
 
 fn hand_made_pdf(pages: &[&str]) -> Vec<u8> {
     let mut pdf: Vec<u8> = b"%PDF-1.4\n".to_vec();

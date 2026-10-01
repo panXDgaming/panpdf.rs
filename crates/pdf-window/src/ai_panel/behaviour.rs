@@ -208,6 +208,7 @@ fn asked_to_allow() -> Pending {
         request: Request::DeletePages(vec![1]),
         may_allow_for_chat: false,
         of_this_tool: 1,
+        written_to: None,
     }
 }
 
@@ -477,6 +478,7 @@ fn a_run_with_steps_a_plan_a_card_and_a_notice_can_be_drawn() {
         },
         may_allow_for_chat: true,
         of_this_tool: 3,
+        written_to: None,
     });
     state.notice = Some(Notice::with(
         Message::AiAnswerCutShort,
@@ -503,4 +505,41 @@ fn a_chat_is_copied_with_who_said_what_and_without_the_tool_turns() {
     assert_eq!(said, "You:\nhello\n\nllama3:\nhi there");
     let nameless = super::going_back::whole_chat(&turns, "", Lang::English);
     assert!(nameless.contains("Response:\nhi there"), "{nameless}");
+}
+
+#[test]
+fn a_card_for_a_call_that_writes_a_file_is_drawn_with_the_place_it_would_write_to() {
+    for (name, arguments, place) in [
+        (
+            "convert",
+            r#"{"tool":"pdf-to-word"}"#,
+            pdf_app::ai_permission::WrittenTo::Folder("/home/someone/Documents".to_owned()),
+        ),
+        (
+            "save_copy",
+            r#"{"path":"/home/someone/Documents/copy.pdf"}"#,
+            pdf_app::ai_permission::WrittenTo::File("/home/someone/Documents/copy.pdf".to_owned()),
+        ),
+    ] {
+        let call = ToolCall::asked(
+            "c9",
+            name,
+            Json::parse(arguments).expect("the arguments in this test are JSON"),
+        );
+        let request = pdf_agent::tools::request::parse(name, &call.arguments).expect("reads");
+        let mut state = AiState {
+            provider: Provider::Ollama,
+            model: "llama3.2:3b".to_owned(),
+            turns: vec![Turn::person("make it a copy")],
+            ..AiState::default()
+        };
+        state.tools.ask = Some(Pending {
+            call,
+            request,
+            may_allow_for_chat: false,
+            of_this_tool: 1,
+            written_to: Some(place),
+        });
+        drawn_in_a_panel(&mut state, 700.0);
+    }
 }

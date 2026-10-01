@@ -2256,6 +2256,7 @@ dependencies = [
  "pdf-bytes",
  "pdf-cli",
  "pdf-content",
+ "pdf-convert",
  "pdf-edit",
  "pdf-paint",
  "pdf-render",

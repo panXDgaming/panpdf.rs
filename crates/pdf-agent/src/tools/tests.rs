@@ -7,16 +7,16 @@ use super::{
 use crate::json::Json;
 
 #[test]
-fn a_window_offers_twenty_five_of_the_twenty_nine_tools_and_its_own_three() {
+fn a_window_offers_thirty_four_of_the_thirty_eight_tools_and_its_own_five() {
     let offered = offered_to_a_window();
-    assert_eq!(offered.len(), 28, "{:?}", offered.len());
+    assert_eq!(offered.len(), 39, "{:?}", offered.len());
     let published = listed();
     let published = published.as_list().expect("a list");
-    assert_eq!(published.len(), 29);
+    assert_eq!(published.len(), 38);
     assert!(
         !published.iter().any(|tool| matches!(
             tool.get("name").and_then(Json::as_str),
-            Some("ask_person" | "update_plan" | "go_to_page")
+            Some("ask_person" | "update_plan" | "go_to_page" | "ocr_pages" | "save_copy")
         )),
         "the server does not publish the window's own tools"
     );
@@ -29,7 +29,7 @@ fn a_window_offers_twenty_five_of_the_twenty_nine_tools_and_its_own_three() {
     for tool in offered.iter().filter(|tool| {
         !matches!(
             tool.name.as_str(),
-            "ask_person" | "update_plan" | "go_to_page"
+            "ask_person" | "update_plan" | "go_to_page" | "ocr_pages" | "save_copy"
         )
     }) {
         let same = published
@@ -864,4 +864,345 @@ fn the_instructions_name_each_editing_tool_and_say_when_to_reach_for_it() {
     ] {
         assert!(said.contains(name), "the instructions never name {name}");
     }
+}
+
+fn path_of(desk: &crate::desk::Desk, handle: &str) -> std::path::PathBuf {
+    desk.handles()
+        .into_iter()
+        .find(|(held, ..)| held == handle)
+        .map(|(_, path, ..)| path)
+        .expect("an open document")
+}
+
+#[test]
+fn the_server_publishes_the_tools_for_files_links_shapes_and_forms_and_leaves_the_windows_own_out()
+{
+    let published = listed();
+    let published = published.as_list().expect("a list");
+    for name in [
+        "convert",
+        "protect_document",
+        "extract_pages",
+        "split_document",
+        "export_page_pictures",
+        "links",
+        "draw_shape",
+        "add_field",
+        "set_tab_order",
+    ] {
+        let tool = published
+            .iter()
+            .find(|tool| tool.get("name").and_then(Json::as_str) == Some(name))
+            .unwrap_or_else(|| panic!("{name} is published"));
+        let hints = tool.get("annotations").expect("annotations");
+        assert_eq!(
+            hints.get("readOnlyHint"),
+            Some(&Json::Bool(false)),
+            "{name}"
+        );
+        assert_eq!(
+            hints.get("destructiveHint"),
+            Some(&Json::Bool(false)),
+            "{name}"
+        );
+    }
+    let (mut desk, handle) = two_page_desk("server-window-only");
+    for name in ["ocr_pages", "save_copy"] {
+        let why = refused_with(&mut desk, name, &handle, "{}");
+        assert!(
+            why.contains("only in the PanPDF window") && why.contains("save_document"),
+            "{name}: {why}"
+        );
+    }
+    assert!(
+        facts("ocr_pages").is_some() && facts("save_copy").is_some(),
+        "the window asks the table about them"
+    );
+}
+
+#[test]
+fn the_server_converts_the_document_and_writes_a_new_file_beside_it_never_over_one() {
+    let (mut desk, handle) = two_page_desk("server-convert");
+    let path = path_of(&desk, &handle);
+    let first = call_with(&mut desk, "convert", &handle, r#"{"tool":"pdf-to-text"}"#);
+    assert!(first.text.contains("one.txt"), "{}", first.text);
+    assert!(
+        std::fs::read_to_string(path.with_file_name("one.txt"))
+            .expect("the text")
+            .contains("Acme sells anvils"),
+    );
+    let second = call_with(&mut desk, "convert", &handle, r#"{"tool":"pdf-to-text"}"#);
+    assert!(second.text.contains("one-2.txt"), "{}", second.text);
+    let jpg = call_with(
+        &mut desk,
+        "convert",
+        &handle,
+        r#"{"tool":"pdf-to-jpg","options":{"format":"png","dpi":72,"pages":"1-2"}}"#,
+    );
+    assert!(
+        jpg.text.contains("2 files in the new folder") && path.with_file_name("one").is_dir(),
+        "{}",
+        jpg.text
+    );
+    let refused = refused_with(
+        &mut desk,
+        "convert",
+        &handle,
+        r#"{"tool":"pdf-to-text","options":{"dpi":5}}"#,
+    );
+    assert!(
+        refused.contains("is not an option of pdf-to-text"),
+        "{refused}"
+    );
+    let redacted = call_with(
+        &mut desk,
+        "convert",
+        &handle,
+        r#"{"tool":"redact-pdf","options":{"search":["anvils"]}}"#,
+    );
+    assert!(
+        redacted.text.contains("one-redacted.pdf"),
+        "{}",
+        redacted.text
+    );
+    let mut other = crate::desk::Desk::with_fonts(Some(fonts()));
+    let copy = other
+        .open(&path.with_file_name("one-redacted.pdf"), "", false)
+        .expect("the copy opens")
+        .handle;
+    let words: String = other
+        .blocks(&copy, 0)
+        .expect("read")
+        .iter()
+        .map(|block| block.text.clone())
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(
+        !words.to_lowercase().contains("anvils") && words.contains("Acme"),
+        "the words are gone from the copy and the rest stays: {words}"
+    );
+    let original = call_with(&mut desk, "read_text", &handle, "{}");
+    assert!(
+        original.text.contains("anvils"),
+        "the open document still has them"
+    );
+}
+
+#[test]
+fn the_server_takes_pages_out_splits_and_draws_them_as_pictures() {
+    let (mut desk, handle) = two_page_desk("server-taking");
+    let path = path_of(&desk, &handle);
+    let out = call_with(&mut desk, "extract_pages", &handle, r#"{"pages":"2"}"#);
+    assert!(out.text.contains("one-p2.pdf"), "{}", out.text);
+    assert!(path.with_file_name("one-p2.pdf").exists());
+    let split = call_with(&mut desk, "split_document", &handle, r#"{"every":1}"#);
+    assert!(
+        split.text.contains("Split the document into 2 files"),
+        "{}",
+        split.text
+    );
+    assert!(path.with_file_name("one").join("one-2.pdf").exists());
+    let pictures = call_with(
+        &mut desk,
+        "export_page_pictures",
+        &handle,
+        r#"{"pages":"1","dpi":50}"#,
+    );
+    assert!(
+        pictures.text.contains("as PNG pictures at 50 dpi"),
+        "{}",
+        pictures.text
+    );
+    assert!(
+        path.with_file_name("one-p1.png").exists(),
+        "{}",
+        pictures.text
+    );
+    for (name, rest, said) in [
+        ("extract_pages", r#"{"pages":"7"}"#, "page 7"),
+        ("split_document", r#"{"every":9}"#, "1 file, not several"),
+        ("split_document", r#"{"every":1,"at":"2"}"#, "not both"),
+        ("export_page_pictures", r#"{"dpi":1}"#, "`dpi`"),
+    ] {
+        let why = refused_with(&mut desk, name, &handle, rest);
+        assert!(why.contains(said), "{name}: {why}");
+    }
+}
+
+#[test]
+fn the_server_protects_a_copy_that_asks_for_a_password_and_leaves_the_document_open_as_it_was() {
+    let (mut desk, handle) = two_page_desk("server-protect");
+    let path = path_of(&desk, &handle);
+    let said = call_with(
+        &mut desk,
+        "protect_document",
+        &handle,
+        r#"{"password":"open sesame","deny":["copy"]}"#,
+    );
+    assert!(said.text.contains("one-protected.pdf"), "{}", said.text);
+    let protected = path.with_file_name("one-protected.pdf");
+    let mut other = crate::desk::Desk::with_fonts(Some(fonts()));
+    let without = other
+        .open(&protected, "", false)
+        .expect_err("it asks for the password");
+    assert!(without.contains("protected by a password"), "{without}");
+    let wrong = other
+        .open(&protected, "nope", false)
+        .expect_err("a wrong one");
+    assert!(wrong.contains("does not open"), "{wrong}");
+    let right = other
+        .open(&protected, "open sesame", false)
+        .expect("the right one opens it");
+    assert_eq!(right.pages, 2);
+    assert!(
+        !said.text.contains("open sesame"),
+        "the password is not echoed back: {}",
+        said.text
+    );
+    let unprotected = call_with(&mut desk, "read_text", &handle, "{}");
+    assert!(
+        unprotected.text.contains("Acme"),
+        "the open document is as it was"
+    );
+    let refused = refused_with(
+        &mut desk,
+        "convert",
+        &handle,
+        r#"{"tool":"protect-pdf","options":{"password":"x"}}"#,
+    );
+    assert!(refused.contains("protect_document"), "{refused}");
+}
+
+#[test]
+fn the_server_makes_a_link_a_shape_and_a_field_and_each_is_one_undo_step() {
+    let (mut desk, handle) = two_page_desk("server-structure");
+    call_with(&mut desk, "read_text", &handle, "{}");
+    let link = call_with(
+        &mut desk,
+        "links",
+        &handle,
+        r#"{"action":"add","block":"p1-b1","url":"https://example.org"}"#,
+    );
+    assert!(
+        link.text.starts_with("Added a link on page 1"),
+        "{}",
+        link.text
+    );
+    let listed = call_with(&mut desk, "links", &handle, r#"{"action":"list","page":1}"#);
+    assert!(
+        listed.text.contains("p1-l1") && listed.text.contains("https://example.org"),
+        "{}",
+        listed.text
+    );
+    let removed = call_with(
+        &mut desk,
+        "links",
+        &handle,
+        r#"{"action":"remove","link":"p1-l1"}"#,
+    );
+    assert!(
+        removed.text.starts_with("Removed p1-l1"),
+        "{}",
+        removed.text
+    );
+    let shape = call_with(
+        &mut desk,
+        "draw_shape",
+        &handle,
+        r##"{"page":2,"shape":"arrow","left":100,"top":100,"right":300,"bottom":200,"color":"#cc0000"}"##,
+    );
+    assert!(
+        shape.text.starts_with("Drew an arrow on page 2"),
+        "{}",
+        shape.text
+    );
+    let field = call_with(
+        &mut desk,
+        "add_field",
+        &handle,
+        r#"{"page":2,"kind":"text","left":72,"top":300,"width":200,"height":24,"name":"Name"}"#,
+    );
+    assert!(
+        field.text.contains("Added a text field named"),
+        "{}",
+        field.text
+    );
+    let info = call_with(&mut desk, "document_info", &handle, "{}");
+    assert!(info.text.contains("Name (text, page 2)"), "{}", info.text);
+    let order = call_with(
+        &mut desk,
+        "set_tab_order",
+        &handle,
+        r#"{"page":2,"order":"rows"}"#,
+    );
+    assert!(order.text.contains("in rows order"), "{}", order.text);
+    for _ in 0..4 {
+        assert!(
+            call_with(&mut desk, "undo", &handle, "{}")
+                .text
+                .contains("Took back")
+        );
+    }
+    let after = call_with(&mut desk, "document_info", &handle, "{}");
+    assert!(!after.text.contains("Name (text"), "{}", after.text);
+    let links = call_with(&mut desk, "links", &handle, r#"{"action":"list","page":1}"#);
+    assert!(
+        links.text.contains("Page 1 has 1 link"),
+        "the link is back after the removal and the three after it are undone: {}",
+        links.text
+    );
+}
+
+#[test]
+fn the_server_refuses_the_file_and_form_tools_in_words_for_a_document_that_is_not_open() {
+    let (mut desk, _) = two_page_desk("server-refuses-more");
+    for (name, rest) in [
+        ("convert", r#"{"tool":"pdf-to-text"}"#),
+        ("protect_document", r#"{"password":"x"}"#),
+        ("extract_pages", r#"{"pages":"1"}"#),
+        ("split_document", r#"{"every":1}"#),
+        ("export_page_pictures", "{}"),
+        ("links", r#"{"action":"list","page":1}"#),
+        (
+            "draw_shape",
+            r#"{"page":1,"shape":"line","left":0,"top":0,"right":9,"bottom":9}"#,
+        ),
+        (
+            "add_field",
+            r#"{"page":1,"kind":"text","left":0,"top":0,"width":50,"height":20}"#,
+        ),
+        ("set_tab_order", r#"{"page":1,"order":"rows"}"#),
+    ] {
+        let why = refused_with(&mut desk, name, "doc-9", rest);
+        assert!(
+            why.contains("no document is open as doc-9"),
+            "{name}: {why}"
+        );
+    }
+}
+
+#[test]
+fn the_instructions_name_each_tool_for_files_scans_links_shapes_and_forms() {
+    let said = window_instructions(&DocumentBrief::default());
+    for name in [
+        "convert",
+        "protect_document",
+        "extract_pages",
+        "split_document",
+        "export_page_pictures",
+        "save_copy",
+        "ocr_pages",
+        "links",
+        "draw_shape",
+        "add_field",
+        "set_tab_order",
+    ] {
+        assert!(said.contains(name), "the instructions never name {name}");
+    }
+    assert!(
+        said.contains("protect_document and save_copy always ask")
+            && said.contains("never writes over one"),
+        "{said}"
+    );
+    assert!(super::INSTRUCTIONS.contains("make NEW files beside the document"));
 }

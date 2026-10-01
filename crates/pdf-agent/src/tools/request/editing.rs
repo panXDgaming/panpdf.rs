@@ -16,7 +16,7 @@ const LEAST_DPI: f64 = 20.0;
 
 const DEFAULT_DPI: f64 = 200.0;
 
-fn optional_flag(args: &Args, key: &str) -> Result<Option<bool>, String> {
+pub(super) fn optional_flag(args: &Args, key: &str) -> Result<Option<bool>, String> {
     match args.0.get(key) {
         None | Some(Json::Null) => Ok(None),
         Some(Json::Bool(on)) => Ok(Some(*on)),
@@ -24,7 +24,7 @@ fn optional_flag(args: &Args, key: &str) -> Result<Option<bool>, String> {
     }
 }
 
-fn optional_number(
+pub(super) fn optional_number(
     args: &Args,
     key: &str,
     (least, most): (f64, f64),
@@ -39,7 +39,7 @@ fn optional_number(
         .ok_or_else(|| format!("`{key}` is a number from {least} to {most}{unit}"))
 }
 
-fn optional_count(args: &Args, key: &str) -> Result<Option<usize>, String> {
+pub(super) fn optional_count(args: &Args, key: &str) -> Result<Option<usize>, String> {
     if !args.has(key) {
         return Ok(None);
     }
@@ -51,7 +51,7 @@ fn optional_count(args: &Args, key: &str) -> Result<Option<usize>, String> {
         .ok_or_else(|| format!("`{key}` is a whole number from 1"))
 }
 
-fn optional_colour(args: &Args, key: &str) -> Result<Option<[f64; 3]>, String> {
+pub(super) fn optional_colour(args: &Args, key: &str) -> Result<Option<[f64; 3]>, String> {
     if !args.has(key) {
         return Ok(None);
     }

@@ -33,15 +33,15 @@ enum Sweep<'a> {
     Mark(&'a Search, Marking),
 }
 
-fn failed(call: &ToolCall, why: impl Into<String>) -> Performed {
+pub(super) fn failed(call: &ToolCall, why: impl Into<String>) -> Performed {
     Performed::Done(ToolResult::failed(&call.id, why))
 }
 
-fn said(call: &ToolCall, text: impl Into<String>) -> Performed {
+pub(super) fn said(call: &ToolCall, text: impl Into<String>) -> Performed {
     Performed::Done(ToolResult::said(&call.id, text))
 }
 
-fn no_page(page: usize, pages: usize) -> String {
+pub(super) fn no_page(page: usize, pages: usize) -> String {
     format!("there is no page {}: the document has {pages}", page + 1)
 }
 
@@ -661,4 +661,4 @@ impl Window {
 }
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

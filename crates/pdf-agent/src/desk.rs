@@ -7,6 +7,9 @@ use pdf_edit::{BlockRange, BlockReading, ClusterRef, Command, SourceAnchor};
 use pdf_paint::Point;
 use pdf_session::{PageView, Session};
 
+mod filing;
+mod structure;
+
 pub const MOST_CHARACTERS: usize = 60_000;
 
 pub const MOST_PIXELS: f64 = 2_400.0;
@@ -23,6 +26,7 @@ struct Open {
     arranged: u64,
     named: BTreeMap<(usize, usize), Named>,
     listed: BTreeMap<(usize, usize), Listed>,
+    links_listed: BTreeMap<(usize, usize), String>,
     saved: Option<u64>,
     restrictions_set_aside: bool,
 }
@@ -158,6 +162,7 @@ impl Desk {
                 arranged: 0,
                 named: BTreeMap::new(),
                 listed: BTreeMap::new(),
+                links_listed: BTreeMap::new(),
                 saved: None,
                 restrictions_set_aside: restricted && set_aside_restrictions,
             },
@@ -857,6 +862,14 @@ impl Desk {
     }
 }
 
+#[must_use]
+pub fn engine_words(error: &impl std::fmt::Display) -> String {
+    error
+        .to_string()
+        .trim_start_matches("cannot type here: ")
+        .to_owned()
+}
+
 fn unknown(handle: &str) -> Refused {
     format!(
         "no document is open as {handle}: open_document first, or list_documents to see what is open"
@@ -881,6 +894,18 @@ pub fn picture_of(view: &PageView, dpi: f64) -> Result<(Vec<u8>, u32, u32), Refu
     let png = pdf_edit::png::write((canvas.width, canvas.height), &canvas.to_rgb8(), None)
         .map_err(str::to_owned)?;
     Ok((png, canvas.width, canvas.height))
+}
+
+pub fn page_png(view: &PageView, dpi: f64) -> Result<Vec<u8>, Refused> {
+    let (canvas, _) = pdf_cli::render_page_view(view, (dpi / 72.0).max(0.05))
+        .map_err(|error| format!("it cannot be drawn: {error}"))?;
+    let metre = pdf_edit::png::per_metre(dpi);
+    pdf_edit::png::write(
+        (canvas.width, canvas.height),
+        &canvas.to_rgb8(),
+        Some((metre, metre)),
+    )
+    .map_err(str::to_owned)
 }
 
 pub fn page_size_of(view: &PageView) -> Result<[f64; 2], Refused> {
@@ -980,18 +1005,17 @@ fn parse_name(name: &str) -> Result<(usize, usize), Refused> {
 }
 
 pub(crate) fn device(view: &PageView) -> Result<pdf_render::DeviceTransform, Refused> {
-    pdf_render::DeviceTransform::for_page(
-        &view.program.geometry,
-        1.0,
-        pdf_render::RenderLimits::default(),
-    )
-    .map_err(|_| "this page has no size".to_owned())
+    device_of(&view.program.geometry)
 }
 
-pub(crate) fn to_shown(
-    device: &pdf_render::DeviceTransform,
-    [x0, y0, x1, y1]: [f64; 4],
-) -> [f64; 4] {
+pub fn device_of(
+    geometry: &pdf_content::PageGeometry,
+) -> Result<pdf_render::DeviceTransform, Refused> {
+    pdf_render::DeviceTransform::for_page(geometry, 1.0, pdf_render::RenderLimits::default())
+        .map_err(|_| "this page has no size".to_owned())
+}
+
+pub fn to_shown(device: &pdf_render::DeviceTransform, [x0, y0, x1, y1]: [f64; 4]) -> [f64; 4] {
     let corners = [(x0, y0), (x0, y1), (x1, y0), (x1, y1)]
         .map(|(x, y)| device.matrix.transform(Point { x, y }));
     let left = corners

@@ -6,13 +6,16 @@ use pdf_agent::connect::{Picture, ToolCall, ToolResult};
 use pdf_agent::desk::{self, Block, MOST_CHARACTERS};
 use pdf_agent::tools::{self, request::PlanStep, request::Request};
 use pdf_app::Applied;
-use pdf_app::ai_permission::{Decision, Mode, Why, decide, may_allow_all, refusal_text};
+use pdf_app::ai_permission::{Decision, Mode, Why, WrittenTo, decide, may_allow_all, refusal_text};
 use pdf_app::ai_run::{Cannot, Run};
 use pdf_app::wording::{Done, Lang, Message};
 
 use crate::window_state::Window;
 
 mod editing;
+mod filing;
+mod recognizing;
+mod structure;
 
 const WAIT: Duration = Duration::from_secs(30);
 
@@ -32,6 +35,7 @@ pub(crate) struct Pending {
     pub(crate) request: Request,
     pub(crate) may_allow_for_chat: bool,
     pub(crate) of_this_tool: usize,
+    pub(crate) written_to: Option<WrittenTo>,
 }
 
 struct Sent {
@@ -78,6 +82,10 @@ pub(crate) struct Tools {
     landed: Option<Applied>,
     gathering: Option<Gathering>,
     sweeping: Option<editing::Sweeping>,
+    converting: Option<filing::Converting>,
+    making: Option<filing::Making>,
+    recognizing: Option<recognizing::Recognizing>,
+    listed_links: BTreeMap<(usize, usize), String>,
     listed: BTreeMap<(usize, usize), editing::Listed>,
     named: BTreeMap<(usize, usize), Named>,
     arranged: u64,
@@ -147,11 +155,18 @@ impl Tools {
         self.landed = None;
         self.gathering = None;
         self.sweeping = None;
+        self.converting = None;
+        self.making = None;
+        self.recognizing = None;
         self.allowed_now = None;
         self.allowed_all = None;
         self.question = None;
         self.stopping = false;
         self.taking_back = None;
+    }
+
+    fn the_stop_can_finish(&self) -> bool {
+        self.stopping && self.sent.is_none() && !self.files_in_flight()
     }
 
     pub(crate) fn busy(&self) -> bool {
@@ -164,7 +179,8 @@ impl Tools {
     }
 
     pub(crate) fn stop(&mut self) -> Option<Vec<ToolResult>> {
-        let waiting_on_an_edit = self.sent.is_some();
+        let waiting_on_an_edit = self.sent.is_some() || self.files_in_flight();
+        self.stop_the_files();
         let unrun: Vec<ToolCall> = if waiting_on_an_edit {
             self.queue.drain(1..).collect()
         } else {
@@ -278,6 +294,9 @@ impl Tools {
         self.waiting = None;
         self.gathering = None;
         self.sweeping = None;
+        self.converting = None;
+        self.making = None;
+        self.recognizing = None;
         self.allowed_now = None;
         self.results.push(result);
     }
@@ -438,7 +457,8 @@ impl Window {
 
     pub(crate) fn advance_tools(&mut self, ctx: &egui::Context) {
         self.collect_a_sent_edit();
-        if self.ai.tools.stopping && self.ai.tools.sent.is_none() {
+        self.keep_the_files_going(ctx);
+        if self.ai.tools.the_stop_can_finish() {
             self.finish_the_stop();
             return;
         }
@@ -446,7 +466,7 @@ impl Window {
             return;
         }
         while let Some(call) = self.ai.tools.queue.front().cloned() {
-            if self.ai.tools.sent.is_some() {
+            if self.ai.tools.sent.is_some() || self.ai.tools.files_in_flight() {
                 return;
             }
             if self.ai.tools.answer_a_call_that_could_not_be_read(&call) {
@@ -459,14 +479,9 @@ impl Window {
             };
             match decision {
                 Decision::Refuse(why) => {
-                    let said = match why {
-                        Why::ToolsAreOff => {
-                            "This chat is in Chat only, so no tool may be used. The person can \
-                             change that beside the model's name. Answer with what you know."
-                        }
-                        Why::UnknownTool => "there is no tool of that name",
-                    };
-                    self.ai.tools.answer(ToolResult::failed(&call.id, said));
+                    self.ai
+                        .tools
+                        .answer(ToolResult::failed(&call.id, refusal_words(why)));
                     continue;
                 }
                 Decision::Ask { may_allow_for_chat } => {
@@ -482,11 +497,13 @@ impl Window {
                             } else {
                                 1
                             };
+                            let written_to = self.the_place_for(&request);
                             self.ai.tools.ask = Some(Pending {
                                 call,
                                 request,
                                 may_allow_for_chat,
                                 of_this_tool,
+                                written_to,
                             });
                             ctx.request_repaint();
                             return;
@@ -550,6 +567,15 @@ impl Window {
                 .map(|facts| (facts.read_only || only_reads, destructive && !only_reads)),
             self.ai.tools.allowed_for_chat.contains(&call.name),
         )
+    }
+
+    fn keep_the_files_going(&mut self, ctx: &egui::Context) {
+        self.keep_converting();
+        self.keep_making();
+        self.keep_recognizing();
+        if self.ai.tools.files_in_flight() {
+            ctx.request_repaint_after(Duration::from_millis(100));
+        }
     }
 
     fn finish_the_round(&mut self, ctx: &egui::Context) {
@@ -713,6 +739,16 @@ impl Window {
                     pdf_agent::context::plan_said(steps),
                 ))
             }
+            Request::Convert(_)
+            | Request::OcrPages(_)
+            | Request::ExtractPages(_)
+            | Request::SplitDocument(_)
+            | Request::ExportPictures(_)
+            | Request::SaveCopy { .. } => self.perform_filing(call, &request, pages),
+            Request::Links(_)
+            | Request::DrawShape(_)
+            | Request::AddField(_)
+            | Request::SetTabOrder { .. } => self.perform_structure(call, &request, pages),
             Request::FindAndReplace { .. }
             | Request::StyleText { .. }
             | Request::MarkText { .. }
@@ -1381,6 +1417,16 @@ impl Window {
             (self.ai.tools.arranged, self.editor.epoch()),
             now.as_deref(),
         )
+    }
+}
+
+const fn refusal_words(why: Why) -> &'static str {
+    match why {
+        Why::ToolsAreOff => {
+            "This chat is in Chat only, so no tool may be used. The person can \
+             change that beside the model's name. Answer with what you know."
+        }
+        Why::UnknownTool => "there is no tool of that name",
     }
 }
 

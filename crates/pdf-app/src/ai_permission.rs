@@ -38,7 +38,9 @@ impl Mode {
     }
 }
 
-pub const ALWAYS_ASK: [&str; 1] = ["insert_pages"];
+pub const ALWAYS_ASK: [&str; 3] = ["insert_pages", "protect_document", "save_copy"];
+
+pub const ASK_EVEN_IN_FULL_ACCESS: [&str; 2] = ["protect_document", "save_copy"];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Why {
@@ -109,12 +111,20 @@ pub fn decide(
                 Decision::Run
             }
         }
-        Mode::Free => Decision::Run,
+        Mode::Free => {
+            if ASK_EVEN_IN_FULL_ACCESS.contains(&name) {
+                Decision::Ask {
+                    may_allow_for_chat: false,
+                }
+            } else {
+                Decision::Run
+            }
+        }
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use words::{Shown, describe_call, describe_change};
+pub use words::{Shown, WrittenTo, describe_call, describe_change};
 
 #[cfg(not(target_arch = "wasm32"))]
 mod words {
@@ -125,10 +135,17 @@ mod words {
     const MOST: usize = 200;
 
     #[derive(Clone, Debug, Eq, PartialEq)]
+    pub enum WrittenTo {
+        Folder(String),
+        File(String),
+    }
+
+    #[derive(Clone, Debug, Eq, PartialEq)]
     pub struct Shown {
         pub headline: String,
         pub before: Option<String>,
         pub after: Option<String>,
+        pub written_to: Option<WrittenTo>,
     }
 
     fn page_of_block(name: &str) -> Option<usize> {
@@ -144,6 +161,7 @@ mod words {
             headline: describe_call(request, lang),
             before: None,
             after: None,
+            written_to: None,
         };
         match request {
             Request::ReplaceText { block, find, text } => {
@@ -154,12 +172,14 @@ mod words {
                     headline: Assistant::ReplaceTextOn(page).say(lang),
                     before: find.clone().or_else(|| was.map(str::to_owned)),
                     after: Some(text.clone()),
+                    written_to: None,
                 }
             }
             Request::AddText { page, text, .. } => Shown {
                 headline: Assistant::AddTextOn(page + 1).say(lang),
                 before: None,
                 after: Some(text.clone()),
+                written_to: None,
             },
             Request::WritePages { markdown, .. } => Shown {
                 after: Some(markdown.clone()),
@@ -417,6 +437,65 @@ mod words {
                 region[3],
                 page + 1
             ),
+            Request::Convert(asked) => convert_sentence(asked),
+            Request::OcrPages(asked) => ocr_sentence(asked),
+            Request::ExtractPages(asked) => format!(
+                "Save pages {} of the document as a new PDF file beside it",
+                clip(asked.pages.trim())
+            ),
+            Request::SplitDocument(split) => match split {
+                pdf_agent::taking::Split::Every(size) => format!(
+                    "Split the document into new PDF files of {size} page{} each, in a new \
+                     folder beside it",
+                    plural(*size)
+                ),
+                pdf_agent::taking::Split::At(spec) => format!(
+                    "Split the document into new PDF files starting at pages {}, in a new \
+                     folder beside it",
+                    clip(spec.trim())
+                ),
+            },
+            Request::ExportPictures(asked) => {
+                let which = if asked.pages.trim().is_empty() {
+                    "every page".to_owned()
+                } else {
+                    format!("pages {}", clip(asked.pages.trim()))
+                };
+                format!(
+                    "Save {which} as PNG pictures at {:.0} dpi, as new files beside the document",
+                    asked.dpi
+                )
+            }
+            Request::SaveCopy { path: Some(path) } => format!(
+                "Save a copy of the document, with its changes, as the new file {}",
+                path.display()
+            ),
+            Request::SaveCopy { path: None } => {
+                "Save a copy of the document, with its changes, beside the original under a name \
+                 no file has yet"
+                    .to_owned()
+            }
+            Request::Links(action) => link_sentence(action),
+            Request::DrawShape(asked) => format!(
+                "Draw {} on page {}",
+                asked.shape.with_article(),
+                asked.page + 1
+            ),
+            Request::AddField(asked) => {
+                let named = asked.name.as_ref().map_or_else(String::new, |name| {
+                    format!(" named \u{201c}{}\u{201d}", clip(name))
+                });
+                format!(
+                    "Add a {} form field{named} to page {}",
+                    pdf_agent::fielding::kind_name(asked.kind),
+                    asked.page + 1
+                )
+            }
+            Request::SetTabOrder { page, order } => format!(
+                "Put the form fields of page {} in tab order by {}",
+                page + 1,
+                order.as_str()
+            ),
         }
     }
 
@@ -527,6 +606,139 @@ mod words {
                 format!("Resize {object} to {size}")
             }
             Action::Delete { object } => format!("Delete {object}"),
+        }
+    }
+
+    fn source_words(files: &[std::path::PathBuf]) -> String {
+        let names: Vec<String> = files
+            .iter()
+            .take(3)
+            .map(|path| {
+                path.file_name().map_or_else(
+                    || path.display().to_string(),
+                    |name| name.to_string_lossy().into_owned(),
+                )
+            })
+            .collect();
+        match files.len() {
+            0 => "the open document".to_owned(),
+            1..=3 => names.join(", "),
+            many => format!("{} and {} more", names.join(", "), many - 3),
+        }
+    }
+
+    fn convert_sentence(asked: &pdf_agent::converting::Asked) -> String {
+        use pdf_convert::{Setting, Tool, Value};
+        let from = source_words(&asked.files);
+        let made = match asked.tool {
+            Tool::PdfToWord => format!("Turn {from} into a Word file"),
+            Tool::PdfToExcel => format!("Turn {from} into an Excel file"),
+            Tool::PdfToPowerPoint => format!("Turn {from} into a PowerPoint file"),
+            Tool::PdfToImage => format!("Save the pages or pictures of {from} as picture files"),
+            Tool::PdfToHtml => format!("Turn {from} into a web page"),
+            Tool::PdfToMarkdown => format!("Turn {from} into a Markdown file"),
+            Tool::PdfToText => format!("Turn {from} into a plain text file"),
+            Tool::PdfToPdfA => format!("Turn {from} into a PDF/A file, the form kept for archives"),
+            Tool::WordToPdf
+            | Tool::ExcelToPdf
+            | Tool::PowerPointToPdf
+            | Tool::ImageToPdf
+            | Tool::ScanToPdf
+            | Tool::HtmlToPdf => format!("Make a PDF from {from}"),
+            Tool::Compress => format!("Compress a copy of {from}"),
+            Tool::Repair => format!("Repair a copy of {from}"),
+            Tool::Ocr => format!("Make a searchable copy of {from}"),
+            Tool::Unlock => format!("Take the password off a copy of {from}"),
+            Tool::Sign => {
+                let name = match asked.values.explicit(Setting::TypedName) {
+                    Some(Value::Text(name)) => {
+                        format!(" with the name \u{201c}{}\u{201d}", clip(name))
+                    }
+                    _ => " with a picture".to_owned(),
+                };
+                format!("Sign a copy of {from}{name}")
+            }
+            Tool::Redact => {
+                let words = match asked.values.explicit(Setting::Search) {
+                    Some(Value::Terms(terms)) if !terms.is_empty() => {
+                        format!(" \u{201c}{}\u{201d}", clip(&terms.join(", ")))
+                    }
+                    _ => " what the file's own redaction marks cover".to_owned(),
+                };
+                format!(
+                    "Remove{words} from a copy of {from} for good: the words cannot be read \
+                     back from the new file"
+                )
+            }
+            Tool::Compare => {
+                let (one, other) = match asked.files.as_slice() {
+                    [one, other] => (
+                        source_words(std::slice::from_ref(one)),
+                        source_words(std::slice::from_ref(other)),
+                    ),
+                    [other] => (
+                        "the open document".to_owned(),
+                        source_words(std::slice::from_ref(other)),
+                    ),
+                    _ => ("a file".to_owned(), "another file".to_owned()),
+                };
+                format!("Compare {one} with {other}")
+            }
+            Tool::Protect => {
+                let deny = match asked.values.explicit(Setting::Forbid) {
+                    Some(Value::Choices(choices)) if !choices.is_empty() => format!(
+                        ", forbidding {}",
+                        choices
+                            .iter()
+                            .map(|choice| choice.value())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                    _ => String::new(),
+                };
+                format!("Protect a copy of {from} with a password{deny}")
+            }
+        };
+        format!("{made}, writing a new file beside it")
+    }
+
+    fn ocr_sentence(asked: &pdf_agent::recognizing::Asked) -> String {
+        let pages = if asked.pages.trim().is_empty() {
+            "every page".to_owned()
+        } else {
+            format!("pages {}", clip(asked.pages.trim()))
+        };
+        let languages = if asked.languages.is_empty() {
+            String::new()
+        } else {
+            format!(" in {}", asked.languages.join(" and "))
+        };
+        format!(
+            "Read the words of {pages}{languages} with the text recogniser, so they can be searched"
+        )
+    }
+
+    fn link_sentence(action: &pdf_agent::linking::Action) -> String {
+        use pdf_agent::linking::{Action, Goes, Place};
+        match action {
+            Action::List { page } => format!("List the links of page {}", page + 1),
+            Action::Add { page, place, goes } => {
+                let over = match place {
+                    Place::Block(name) => format!("block {name}"),
+                    Place::Area([left, top, right, bottom]) => {
+                        format!("the box [{left:.0}, {top:.0}, {right:.0}, {bottom:.0}]")
+                    }
+                };
+                let to = match goes {
+                    Goes::Address(address) => clip(address),
+                    Goes::Page(to) => format!("page {}", to + 1),
+                };
+                format!(
+                    "Add a link over {over} on page {} that goes to {to}",
+                    page + 1
+                )
+            }
+            Action::Remove { link } => format!("Delete link {link}"),
         }
     }
 

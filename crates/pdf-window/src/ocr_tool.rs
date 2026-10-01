@@ -53,7 +53,7 @@ fn remember(choice: &Choice) {
     }
 }
 
-fn draft() -> OcrDraft {
+pub(crate) fn draft() -> OcrDraft {
     let choice = remembered();
     let mut engine = pdf_ocr::Tesseract::locate().ok();
     if let Some(engine) = engine.as_mut() {
@@ -446,66 +446,21 @@ impl Window {
                 return;
             }
         };
-        let languages = draft.chosen();
-        let skip_text = draft.choice.skip_text;
-        let cancel = Arc::new(AtomicBool::new(false));
-        let next = Arc::new(AtomicUsize::new(0));
-        let shared_pages = Arc::new(pages.clone());
-        let (send, answers) = mpsc::channel();
-        let credential = self.editor.credential().to_vec();
-        let fonts = self.editor.fonts();
-        let workers = std::thread::available_parallelism()
-            .map_or(1, |cores| cores.get().saturating_sub(1))
-            .clamp(1, MOST_WORKERS)
-            .min(pages.len());
-        let handles = (0..workers)
-            .map(|_| {
-                let (cancel, next, pages, send) = (
-                    Arc::clone(&cancel),
-                    Arc::clone(&next),
-                    Arc::clone(&shared_pages),
-                    send.clone(),
-                );
-                let (source, credential, fonts, engine, languages, ctx) = (
-                    source.clone(),
-                    credential.clone(),
-                    fonts.clone(),
-                    engine.clone(),
-                    languages.clone(),
-                    ctx.clone(),
-                );
-                std::thread::spawn(move || {
-                    loop {
-                        if cancel.load(Ordering::Relaxed) {
-                            break;
-                        }
-                        let Some(&page) = pages.get(next.fetch_add(1, Ordering::Relaxed)) else {
-                            break;
-                        };
-                        let read = read_one(
-                            &source,
-                            page,
-                            (&credential, fonts.clone()),
-                            (&engine, &languages, skip_text),
-                            &cancel,
-                        );
-                        if send.send((page, read)).is_err() {
-                            break;
-                        }
-                        ctx.request_repaint();
-                    }
-                })
-            })
-            .collect();
-        if let Some(draft) = self.ocr_draft.as_mut() {
-            draft.reading = Some(OcrReading {
-                cancel,
-                answers,
-                workers: handles,
+        let reading = start_the_readers(
+            ReadJob {
+                source,
+                credential: self.editor.credential().to_vec(),
+                fonts: self.editor.fonts(),
+                engine,
+                languages: draft.chosen(),
+                skip_text: draft.choice.skip_text,
                 pages,
-                read: BTreeMap::new(),
                 epoch: self.editor.epoch(),
-            });
+            },
+            Some(ctx),
+        );
+        if let Some(draft) = self.ocr_draft.as_mut() {
+            draft.reading = Some(reading);
         }
     }
 
@@ -517,17 +472,10 @@ impl Window {
         else {
             return;
         };
-        while let Ok((page, read)) = reading.answers.try_recv() {
-            reading.read.insert(page, read);
-        }
-        let stopped = reading.cancel.load(Ordering::Relaxed);
-        let finished = reading
-            .workers
-            .iter()
-            .all(std::thread::JoinHandle::is_finished);
-        if !(finished && (stopped || reading.read.len() == reading.pages.len())) {
+        if !reading_is_over(reading) {
             return;
         }
+        let stopped = reading.cancel.load(Ordering::Relaxed);
         if self.editor.is_busy() {
             return;
         }
@@ -553,28 +501,13 @@ impl Window {
     }
 
     fn write_what_was_read(&mut self, read: BTreeMap<usize, PageRead>) {
-        let mut layers = Vec::new();
-        let (mut had_text, mut unread, mut failed) = (0, 0, None);
-        let (mut weight, mut sum) = (0.0_f64, 0.0_f64);
-        for (page, outcome) in read {
-            match outcome {
-                PageRead::Read(reading) => {
-                    if reading.layer.words.is_empty() {
-                        continue;
-                    }
-                    #[allow(clippy::cast_precision_loss)]
-                    let words = reading.layer.words.len() as f64;
-                    weight += words;
-                    sum += words * f64::from(reading.confidence.unwrap_or(0.0));
-                    layers.push((page, reading.layer));
-                }
-                PageRead::HadText => had_text += 1,
-                PageRead::Failed(why) => {
-                    unread += 1;
-                    failed.get_or_insert(why);
-                }
-            }
-        }
+        let Sorted {
+            layers,
+            confidence,
+            had_text,
+            unread,
+            failed,
+        } = sorted_out(read);
         if layers.is_empty() {
             let said = match failed {
                 Some(why) => Message::Refused(why.into()),
@@ -584,8 +517,6 @@ impl Window {
             self.editor.say(said);
             return;
         }
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let confidence = (sum / weight.max(1.0)).round().clamp(0.0, 100.0) as u8;
         let job = self
             .editor
             .begin_text_layers(layers, (confidence, had_text, unread));
@@ -594,6 +525,141 @@ impl Window {
             return;
         }
         self.send(job);
+    }
+}
+
+pub(crate) struct ReadJob {
+    pub(crate) source: pdf_bytes::ByteStore,
+    pub(crate) credential: Vec<u8>,
+    pub(crate) fonts: Option<Arc<dyn pdf_content::FontProvider>>,
+    pub(crate) engine: pdf_ocr::Tesseract,
+    pub(crate) languages: Vec<String>,
+    pub(crate) skip_text: bool,
+    pub(crate) pages: Vec<usize>,
+    pub(crate) epoch: u64,
+}
+
+pub(crate) fn start_the_readers(job: ReadJob, repaint: Option<&egui::Context>) -> OcrReading {
+    let ReadJob {
+        source,
+        credential,
+        fonts,
+        engine,
+        languages,
+        skip_text,
+        pages,
+        epoch,
+    } = job;
+    let cancel = Arc::new(AtomicBool::new(false));
+    let next = Arc::new(AtomicUsize::new(0));
+    let shared_pages = Arc::new(pages.clone());
+    let (send, answers) = mpsc::channel();
+    let workers = std::thread::available_parallelism()
+        .map_or(1, |cores| cores.get().saturating_sub(1))
+        .clamp(1, MOST_WORKERS)
+        .min(pages.len().max(1));
+    let handles = (0..workers)
+        .map(|_| {
+            let (cancel, next, pages, send) = (
+                Arc::clone(&cancel),
+                Arc::clone(&next),
+                Arc::clone(&shared_pages),
+                send.clone(),
+            );
+            let (source, credential, fonts, engine, languages, repaint) = (
+                source.clone(),
+                credential.clone(),
+                fonts.clone(),
+                engine.clone(),
+                languages.clone(),
+                repaint.cloned(),
+            );
+            std::thread::spawn(move || {
+                loop {
+                    if cancel.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    let Some(&page) = pages.get(next.fetch_add(1, Ordering::Relaxed)) else {
+                        break;
+                    };
+                    let read = read_one(
+                        &source,
+                        page,
+                        (&credential, fonts.clone()),
+                        (&engine, &languages, skip_text),
+                        &cancel,
+                    );
+                    if send.send((page, read)).is_err() {
+                        break;
+                    }
+                    if let Some(ctx) = &repaint {
+                        ctx.request_repaint();
+                    }
+                }
+            })
+        })
+        .collect();
+    OcrReading {
+        cancel,
+        answers,
+        workers: handles,
+        pages,
+        read: BTreeMap::new(),
+        epoch,
+    }
+}
+
+pub(crate) fn reading_is_over(reading: &mut OcrReading) -> bool {
+    while let Ok((page, read)) = reading.answers.try_recv() {
+        reading.read.insert(page, read);
+    }
+    let stopped = reading.cancel.load(Ordering::Relaxed);
+    let finished = reading
+        .workers
+        .iter()
+        .all(std::thread::JoinHandle::is_finished);
+    finished && (stopped || reading.read.len() == reading.pages.len())
+}
+
+pub(crate) struct Sorted {
+    pub(crate) layers: Vec<(usize, pdf_edit::text_layer::TextLayer)>,
+    pub(crate) confidence: u8,
+    pub(crate) had_text: usize,
+    pub(crate) unread: usize,
+    pub(crate) failed: Option<String>,
+}
+
+pub(crate) fn sorted_out(read: BTreeMap<usize, PageRead>) -> Sorted {
+    let mut layers = Vec::new();
+    let (mut had_text, mut unread, mut failed) = (0, 0, None);
+    let (mut weight, mut sum) = (0.0_f64, 0.0_f64);
+    for (page, outcome) in read {
+        match outcome {
+            PageRead::Read(reading) => {
+                if reading.layer.words.is_empty() {
+                    continue;
+                }
+                #[allow(clippy::cast_precision_loss)]
+                let words = reading.layer.words.len() as f64;
+                weight += words;
+                sum += words * f64::from(reading.confidence.unwrap_or(0.0));
+                layers.push((page, reading.layer));
+            }
+            PageRead::HadText => had_text += 1,
+            PageRead::Failed(why) => {
+                unread += 1;
+                failed.get_or_insert(why);
+            }
+        }
+    }
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let confidence = (sum / weight.max(1.0)).round().clamp(0.0, 100.0) as u8;
+    Sorted {
+        layers,
+        confidence,
+        had_text,
+        unread,
+        failed,
     }
 }
 

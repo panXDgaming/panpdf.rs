@@ -1,11 +1,12 @@
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::time::Instant;
 
-use pdf_app::tools::{named_after, placed, reports_each_file, unused};
+use pdf_app::tools::reports_each_file;
 use pdf_app::wording::{Lang, Tools};
 use pdf_convert::Tool;
 use pdf_convert::Values;
+pub(crate) use pdf_convert::run::Saved;
 use pdf_convert::run::{Context, Failure, Input, Outcome, Progress, Running, start};
 
 pub(crate) enum Origin {
@@ -214,26 +215,10 @@ pub(crate) fn progress_line(
     parts.join(" \u{00b7} ")
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct Saved {
-    pub(crate) folder: PathBuf,
-    pub(crate) files: Vec<PathBuf>,
-    pub(crate) tucked_in: bool,
-}
-
 pub(crate) fn documents_folder() -> Option<PathBuf> {
     let home = crate::chooser::home_folder()?;
     let documents = home.join("Documents");
     Some(if documents.is_dir() { documents } else { home })
-}
-
-pub(crate) fn is_inside(name: &str) -> bool {
-    let path = Path::new(name);
-    !name.is_empty()
-        && !name.contains('\\')
-        && path
-            .components()
-            .all(|component| matches!(component, Component::Normal(_)))
 }
 
 pub(crate) fn save_beside(
@@ -242,75 +227,23 @@ pub(crate) fn save_beside(
     inputs: &[&str],
     (original, base): (&Path, &Path),
 ) -> Result<Saved, String> {
-    let renamed: Vec<String> = outcome
-        .files
-        .iter()
-        .map(|(name, _)| named_after(tool, name, inputs))
-        .collect();
-    if let Some(bad) = renamed.iter().find(|name| !is_inside(name)) {
-        return Err(format!("{bad} is not a name this can write"));
-    }
-    let layout = placed(&renamed, inputs);
-    let mut tried = vec![base.to_path_buf()];
-    if let Some(documents) = documents_folder()
-        && documents != base
-    {
-        tried.push(documents);
-    }
-    let mut last = String::new();
-    for folder in tried {
-        match write_all(
-            &folder,
-            layout.folder.as_deref(),
-            &renamed,
-            outcome,
-            original,
-        ) {
-            Ok(saved) => return Ok(saved),
-            Err(why) => last = why,
-        }
-    }
-    Err(last)
+    put_beside(Some(tool), outcome, inputs, (original, base))
 }
 
-fn write_all(
-    folder: &Path,
-    tucked_in: Option<&str>,
-    names: &[String],
+pub(crate) fn put_beside(
+    tool: Option<Tool>,
     outcome: &Outcome,
-    original: &Path,
+    inputs: &[&str],
+    (original, base): (&Path, &Path),
 ) -> Result<Saved, String> {
-    let there = |name: &str| std::fs::symlink_metadata(folder.join(name)).is_ok();
-    let target = match tucked_in {
-        Some(name) => {
-            let made = folder.join(unused(name, &there, false));
-            std::fs::create_dir(&made).map_err(|error| format!("{}: {error}", made.display()))?;
-            made
-        }
-        None => folder.to_path_buf(),
-    };
-    let mut files = Vec::with_capacity(names.len());
-    for (name, (_, bytes)) in names.iter().zip(&outcome.files) {
-        let inside = |wanted: &str| std::fs::symlink_metadata(target.join(wanted)).is_ok();
-        let wanted = if tucked_in.is_some() {
-            name.clone()
-        } else {
-            unused(name, &inside, true)
-        };
-        let path = target.join(&wanted);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|error| format!("{}: {error}", parent.display()))?;
-        }
-        crate::save_file::save(original, &path, bytes, None)
-            .map_err(|error| format!("{}: {error}", path.display()))?;
-        files.push(path);
-    }
-    Ok(Saved {
-        folder: target,
-        files,
-        tucked_in: tucked_in.is_some(),
-    })
+    let documents = documents_folder();
+    pdf_convert::run::save_beside(
+        tool,
+        outcome,
+        inputs,
+        (base, documents.as_deref()),
+        &mut |path, bytes| crate::save_file::save(original, path, bytes, None).map(drop),
+    )
 }
 
 pub(crate) fn write_a_copy(original: &Path, path: &Path, bytes: &[u8]) -> Result<Saved, String> {

@@ -1,4 +1,5 @@
 pub mod choice;
+pub mod placing;
 pub mod setting;
 pub mod tool;
 pub mod values;

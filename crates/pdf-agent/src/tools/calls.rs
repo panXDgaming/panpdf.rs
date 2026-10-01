@@ -157,3 +157,67 @@ pub(super) fn look_closer(desk: &mut Desk, args: &Args) -> Result<Answer, String
         picture: Some(png),
     })
 }
+
+pub(super) fn convert(desk: &mut Desk, args: &Args, name: &str) -> Result<Answer, String> {
+    let handle = args.required("document")?;
+    let Request::Convert(asked) = parse_arguments(name, args)? else {
+        return Err(not_this(name));
+    };
+    Ok(Answer::of(desk.convert(handle, &asked)?, Json::Null))
+}
+
+pub(super) fn extract_pages(desk: &mut Desk, args: &Args) -> Result<Answer, String> {
+    let handle = args.required("document")?;
+    let Request::ExtractPages(asked) = parse_arguments("extract_pages", args)? else {
+        return Err(not_this("extract_pages"));
+    };
+    Ok(Answer::of(desk.extract(handle, &asked.pages)?, Json::Null))
+}
+
+pub(super) fn split_document(desk: &mut Desk, args: &Args) -> Result<Answer, String> {
+    let handle = args.required("document")?;
+    let Request::SplitDocument(split) = parse_arguments("split_document", args)? else {
+        return Err(not_this("split_document"));
+    };
+    Ok(Answer::of(desk.split(handle, &split)?, Json::Null))
+}
+
+pub(super) fn export_page_pictures(desk: &mut Desk, args: &Args) -> Result<Answer, String> {
+    let handle = args.required("document")?;
+    let Request::ExportPictures(asked) = parse_arguments("export_page_pictures", args)? else {
+        return Err(not_this("export_page_pictures"));
+    };
+    Ok(Answer::of(desk.page_pictures(handle, &asked)?, Json::Null))
+}
+
+pub(super) fn links(desk: &mut Desk, args: &Args) -> Result<Answer, String> {
+    let handle = args.required("document")?;
+    let Request::Links(action) = parse_arguments("links", args)? else {
+        return Err(not_this("links"));
+    };
+    Ok(Answer::of(desk.links(handle, &action)?, Json::Null))
+}
+
+pub(super) fn draw_shape(desk: &mut Desk, args: &Args) -> Result<Answer, String> {
+    let handle = args.required("document")?;
+    let Request::DrawShape(asked) = parse_arguments("draw_shape", args)? else {
+        return Err(not_this("draw_shape"));
+    };
+    Ok(Answer::of(desk.draw_shape(handle, &asked)?, Json::Null))
+}
+
+pub(super) fn add_field(desk: &mut Desk, args: &Args) -> Result<Answer, String> {
+    let handle = args.required("document")?;
+    let Request::AddField(asked) = parse_arguments("add_field", args)? else {
+        return Err(not_this("add_field"));
+    };
+    Ok(Answer::of(desk.add_field(handle, &asked)?, Json::Null))
+}
+
+pub(super) fn set_tab_order(desk: &mut Desk, args: &Args) -> Result<Answer, String> {
+    let handle = args.required("document")?;
+    let Request::SetTabOrder { page, order } = parse_arguments("set_tab_order", args)? else {
+        return Err(not_this("set_tab_order"));
+    };
+    Ok(Answer::of(desk.tab_order(handle, page, order)?, Json::Null))
+}

@@ -1512,3 +1512,126 @@ fn a_typed_signature_is_drawn_with_the_fonts_the_context_hands_over() {
         text_of(&text)
     );
 }
+
+fn scratch_folder(name: &str) -> std::path::PathBuf {
+    let folder = std::env::temp_dir().join(format!("panpdf-placing-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&folder);
+    std::fs::create_dir_all(&folder).unwrap();
+    folder
+}
+
+fn made(files: &[(&str, &[u8])]) -> Outcome {
+    Outcome {
+        files: files
+            .iter()
+            .map(|(name, bytes)| ((*name).to_owned(), bytes.to_vec()))
+            .collect(),
+        notes: Vec::new(),
+    }
+}
+
+#[test]
+fn a_result_goes_beside_the_original_under_a_name_no_file_has() {
+    let folder = scratch_folder("beside");
+    std::fs::write(folder.join("report.docx"), b"mine").unwrap();
+    let outcome = made(&[("report.docx", b"new")]);
+    let saved = super::save_beside(
+        Some(Tool::PdfToWord),
+        &outcome,
+        &["report.pdf"],
+        (&folder, None),
+        &mut |path, bytes| super::write_new_file(path, bytes),
+    )
+    .unwrap();
+    assert_eq!(saved.files, vec![folder.join("report-2.docx")]);
+    assert!(!saved.tucked_in);
+    assert_eq!(std::fs::read(folder.join("report.docx")).unwrap(), b"mine");
+    assert_eq!(std::fs::read(folder.join("report-2.docx")).unwrap(), b"new");
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
+#[test]
+fn several_results_are_tucked_into_a_folder_that_is_new() {
+    let folder = scratch_folder("tucked");
+    std::fs::create_dir(folder.join("report")).unwrap();
+    let outcome = made(&[("report-1.jpg", b"a"), ("report-2.jpg", b"b")]);
+    let saved = super::save_beside(
+        Some(Tool::PdfToImage),
+        &outcome,
+        &["report.pdf"],
+        (&folder, None),
+        &mut |path, bytes| super::write_new_file(path, bytes),
+    )
+    .unwrap();
+    assert!(saved.tucked_in);
+    assert_eq!(saved.folder, folder.join("report-2"));
+    assert_eq!(saved.files.len(), 2);
+    assert!(
+        std::fs::read_dir(folder.join("report"))
+            .unwrap()
+            .next()
+            .is_none()
+    );
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
+#[test]
+fn a_folder_that_cannot_be_written_falls_back_to_the_other_one() {
+    let folder = scratch_folder("fallback");
+    std::fs::write(folder.join("blocker"), b"a file, not a folder").unwrap();
+    let missing = folder.join("blocker").join("inside");
+    let outcome = made(&[("a.txt", b"x")]);
+    let saved = super::save_beside(
+        Some(Tool::PdfToText),
+        &outcome,
+        &["a.pdf"],
+        (&missing, Some(&folder)),
+        &mut |path, bytes| super::write_new_file(path, bytes),
+    )
+    .unwrap();
+    assert_eq!(saved.files, vec![folder.join("a.txt")]);
+    let refused = super::save_beside(
+        Some(Tool::PdfToText),
+        &outcome,
+        &["a.pdf"],
+        (&missing, None),
+        &mut |path, bytes| super::write_new_file(path, bytes),
+    );
+    assert!(refused.is_err(), "negative control: nowhere to write");
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
+#[test]
+fn a_name_that_climbs_out_of_the_folder_is_refused_and_nothing_is_written() {
+    let folder = scratch_folder("climbing");
+    for bad in ["../escape.txt", "/etc/passwd", "a\\b.txt", ""] {
+        assert!(!super::is_inside(bad), "{bad:?}");
+        let outcome = made(&[(bad, b"x")]);
+        let refused = super::save_beside(
+            Some(Tool::PdfToText),
+            &outcome,
+            &["a.pdf"],
+            (&folder, None),
+            &mut |path, bytes| super::write_new_file(path, bytes),
+        );
+        assert!(refused.is_err(), "{bad:?}");
+    }
+    assert!(super::is_inside("report/report.md"));
+    assert!(std::fs::read_dir(&folder).unwrap().next().is_none());
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
+#[test]
+fn a_new_file_is_never_written_over_a_file_that_is_there() {
+    let folder = scratch_folder("never");
+    let path = folder.join("keep.txt");
+    std::fs::write(&path, b"mine").unwrap();
+    let refused = super::write_new_file(&path, b"theirs");
+    assert_eq!(
+        refused.unwrap_err().kind(),
+        std::io::ErrorKind::AlreadyExists
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), b"mine");
+    super::write_new_file(&folder.join("fresh.txt"), b"x").unwrap();
+    let _ = std::fs::remove_dir_all(&folder);
+}

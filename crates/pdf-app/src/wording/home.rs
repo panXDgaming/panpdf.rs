@@ -99,8 +99,8 @@ impl Home {
             Self::PicturesToPages => "Choose the pictures to make a PDF of".to_owned(),
             Self::PicturesToInsert => "Choose the pictures to put in as pages".to_owned(),
             Self::UsePictures(0) => "Use these".to_owned(),
-            Self::UsePictures(1) => "Use this 1".to_owned(),
-            Self::UsePictures(many) => format!("Use these {many}"),
+            Self::UsePictures(1) => "Use 1 picture".to_owned(),
+            Self::UsePictures(many) => format!("Use {many} pictures"),
             Self::FileName => "File name".to_owned(),
             Self::SaveHere => "Save".to_owned(),
             Self::NameTaken => "A file of that name is already in this folder".to_owned(),
@@ -113,6 +113,14 @@ impl Home {
 mod tests {
     use super::{Home, Lang};
     use crate::recent::Ago;
+
+    #[test]
+    fn the_button_that_takes_ticked_pictures_names_what_it_takes() {
+        let said = |count| Home::UsePictures(count).say(Lang::English);
+        assert_eq!(said(0), "Use these");
+        assert_eq!(said(1), "Use 1 picture");
+        assert_eq!(said(5), "Use 5 pictures");
+    }
 
     #[test]
     fn ages_are_counted_in_english_and_thai() {

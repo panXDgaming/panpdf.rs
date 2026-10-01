@@ -1,4 +1,6 @@
-use super::{ALWAYS_ASK, Decision, Mode, Why, decide, may_allow_all, refusal_text};
+use super::{
+    ALWAYS_ASK, ASK_EVEN_IN_FULL_ACCESS, Decision, Mode, Why, decide, may_allow_all, refusal_text,
+};
 
 #[cfg(not(target_arch = "wasm32"))]
 use super::describe_change;
@@ -230,12 +232,66 @@ fn a_batch_can_be_allowed_at_once_unless_each_call_must_be_looked_at() {
     assert!(may_allow_all("delete_pages"));
     assert!(may_allow_all("replace_text"));
     assert!(!may_allow_all("insert_pages"));
+    assert!(!may_allow_all("protect_document"));
+    assert!(!may_allow_all("save_copy"));
+    assert!(
+        may_allow_all("convert"),
+        "negative control: a conversion may be allowed for the chat"
+    );
+}
+
+#[test]
+fn protecting_with_a_password_and_saving_a_copy_ask_in_every_mode_even_full_access() {
+    for name in ["protect_document", "save_copy"] {
+        for mode in [Mode::AskBeforeChanges, Mode::DoIt, Mode::Free] {
+            for allowed_for_chat in [false, true] {
+                assert_eq!(
+                    decide(mode, name, CHANGES, allowed_for_chat),
+                    Decision::Ask {
+                        may_allow_for_chat: false
+                    },
+                    "{name} in {mode:?}"
+                );
+            }
+        }
+        assert_eq!(
+            decide(Mode::ChatOnly, name, CHANGES, false),
+            Decision::Refuse(Why::ToolsAreOff),
+            "a chat that only talks writes no file"
+        );
+        assert!(ALWAYS_ASK.contains(&name) && ASK_EVEN_IN_FULL_ACCESS.contains(&name));
+    }
+    assert_eq!(
+        decide(Mode::Free, "insert_pages", CHANGES, false),
+        Decision::Run,
+        "negative control: full access still takes pages from other files without asking"
+    );
+    assert_eq!(
+        decide(Mode::DoIt, "convert", CHANGES, false),
+        Decision::Run,
+        "negative control: a plain conversion runs when the person said do it"
+    );
+    assert_eq!(
+        decide(Mode::Free, "convert", TAKES_OUT, false),
+        Decision::Run,
+        "full access is full access for the rest"
+    );
+    assert_eq!(
+        decide(Mode::AskBeforeChanges, "convert", TAKES_OUT, true),
+        Decision::Ask {
+            may_allow_for_chat: false
+        },
+        "a redaction is destructive: never allowed for the whole chat"
+    );
 }
 
 #[test]
 fn a_refusal_says_not_to_retry() {
     assert!(refusal_text().contains("Do not retry"));
-    assert_eq!(ALWAYS_ASK, ["insert_pages"]);
+    assert_eq!(
+        ALWAYS_ASK,
+        ["insert_pages", "protect_document", "save_copy"]
+    );
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -559,6 +615,159 @@ mod cards {
             let request = pdf_agent::tools::request::parse(name, &arguments)
                 .unwrap_or_else(|why| panic!("{name} did not read: {why}"));
             assert_eq!(describe_call(&request, Lang::English), english, "{name}");
+        }
+    }
+
+    #[test]
+    #[expect(clippy::too_many_lines, reason = "one card per tool, read as a table")]
+    fn the_tools_for_files_scans_links_shapes_and_forms_say_what_they_would_do() {
+        let rows = [
+            (
+                "convert",
+                r#"{"tool":"pdf-to-word"}"#,
+                "Turn the open document into a Word file, writing a new file beside it",
+            ),
+            (
+                "convert",
+                r#"{"tool":"pdf-to-jpg","files":["/home/a/scan.pdf","/home/a/b.pdf"]}"#,
+                "Save the pages or pictures of scan.pdf, b.pdf as picture files, writing a new file beside it",
+            ),
+            (
+                "convert",
+                r#"{"tool":"word-to-pdf","files":["/a/1.docx","/a/2.docx","/a/3.docx","/a/4.docx"]}"#,
+                "Make a PDF from 1.docx, 2.docx, 3.docx and 1 more, writing a new file beside it",
+            ),
+            (
+                "convert",
+                r#"{"tool":"compare-pdf","files":["/a/newer.pdf"]}"#,
+                "Compare the open document with newer.pdf, writing a new file beside it",
+            ),
+            (
+                "convert",
+                r#"{"tool":"redact-pdf","options":{"search":["Acme","Bangkok"]}}"#,
+                "Remove \u{201c}Acme, Bangkok\u{201d} from a copy of the open document for good: the words cannot be read back from the new file, writing a new file beside it",
+            ),
+            (
+                "convert",
+                r#"{"tool":"sign-pdf","options":{"text":"Alice Example"}}"#,
+                "Sign a copy of the open document with the name \u{201c}Alice Example\u{201d}, writing a new file beside it",
+            ),
+            (
+                "protect_document",
+                r#"{"password":"hunter2","deny":["print","copy"]}"#,
+                "Protect a copy of the open document with a password, forbidding print, copy, writing a new file beside it",
+            ),
+            (
+                "ocr_pages",
+                r#"{"pages":"2-4","languages":["tha","eng"]}"#,
+                "Read the words of pages 2-4 in tha and eng with the text recogniser, so they can be searched",
+            ),
+            (
+                "ocr_pages",
+                "{}",
+                "Read the words of every page with the text recogniser, so they can be searched",
+            ),
+            (
+                "extract_pages",
+                r#"{"pages":"1-3, 5"}"#,
+                "Save pages 1-3, 5 of the document as a new PDF file beside it",
+            ),
+            (
+                "split_document",
+                r#"{"every":1}"#,
+                "Split the document into new PDF files of 1 page each, in a new folder beside it",
+            ),
+            (
+                "split_document",
+                r#"{"at":"5, 12"}"#,
+                "Split the document into new PDF files starting at pages 5, 12, in a new folder beside it",
+            ),
+            (
+                "export_page_pictures",
+                r#"{"pages":"2","dpi":300}"#,
+                "Save pages 2 as PNG pictures at 300 dpi, as new files beside the document",
+            ),
+            (
+                "save_copy",
+                r#"{"path":"/home/a/copy.pdf"}"#,
+                "Save a copy of the document, with its changes, as the new file /home/a/copy.pdf",
+            ),
+            (
+                "save_copy",
+                "{}",
+                "Save a copy of the document, with its changes, beside the original under a name no file has yet",
+            ),
+            (
+                "links",
+                r#"{"action":"list","page":2}"#,
+                "List the links of page 2",
+            ),
+            (
+                "links",
+                r#"{"action":"add","block":"p2-b1","url":"https://example.org"}"#,
+                "Add a link over block p2-b1 on page 2 that goes to https://example.org",
+            ),
+            (
+                "links",
+                r#"{"action":"add","page":1,"left":10,"top":20,"right":110,"bottom":40,"to_page":5}"#,
+                "Add a link over the box [10, 20, 110, 40] on page 1 that goes to page 5",
+            ),
+            (
+                "links",
+                r#"{"action":"remove","link":"p3-l2"}"#,
+                "Delete link p3-l2",
+            ),
+            (
+                "draw_shape",
+                r#"{"page":2,"shape":"arrow","left":0,"top":0,"right":9,"bottom":9}"#,
+                "Draw an arrow on page 2",
+            ),
+            (
+                "draw_shape",
+                r#"{"page":1,"shape":"rectangle","left":0,"top":0,"right":9,"bottom":9}"#,
+                "Draw a rectangle on page 1",
+            ),
+            (
+                "add_field",
+                r#"{"page":1,"kind":"checkbox","left":0,"top":0,"width":20,"height":20,"name":"Agree"}"#,
+                "Add a checkbox form field named \u{201c}Agree\u{201d} to page 1",
+            ),
+            (
+                "set_tab_order",
+                r#"{"page":3,"order":"columns"}"#,
+                "Put the form fields of page 3 in tab order by columns",
+            ),
+        ];
+        for (name, arguments, english) in rows {
+            let arguments = Json::parse(arguments).expect("JSON");
+            let request = pdf_agent::tools::request::parse(name, &arguments)
+                .unwrap_or_else(|why| panic!("{name} did not read: {why}"));
+            assert_eq!(describe_call(&request, Lang::English), english, "{name}");
+        }
+    }
+
+    #[test]
+    fn a_card_never_shows_a_password() {
+        for (name, arguments) in [
+            (
+                "protect_document",
+                r#"{"password":"hunter2","owner_password":"boss"}"#,
+            ),
+            (
+                "convert",
+                r#"{"tool":"pdf-to-text","options":{"password":"hunter2"}}"#,
+            ),
+        ] {
+            let arguments = Json::parse(arguments).expect("JSON");
+            let request = pdf_agent::tools::request::parse(name, &arguments).expect("reads");
+            let said = describe_call(&request, Lang::English);
+            let shown = crate::ai_permission::describe_change(&request, None, Lang::English);
+            for text in [said, shown.headline, shown.after.unwrap_or_default()] {
+                assert!(
+                    !text.contains("hunter2") && !text.contains("boss"),
+                    "{name}: {text}"
+                );
+            }
         }
     }
 

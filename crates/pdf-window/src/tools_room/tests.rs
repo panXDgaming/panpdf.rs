@@ -3,9 +3,9 @@ use std::path::PathBuf;
 use pdf_app::Editor;
 use pdf_bytes::{ByteStore, SourceId};
 use pdf_convert::run::Failure;
-use pdf_convert::{Setting, Tool, Value, Values};
+use pdf_convert::{Setting, Tool};
 
-use super::{Screen, apply_the_passwords, ending_of, give_the_credential};
+use super::{Screen, apply_the_passwords, ending_of};
 use crate::tools_page::{Page, Source, Stage};
 use crate::window_state::Window;
 
@@ -94,33 +94,6 @@ fn recognising_text_with_no_document_asks_for_one_and_opens_the_panel_when_it_ar
     assert!(window.asking_to_open);
     assert!(window.read_text_after_opening);
     assert!(window.ocr_draft.is_none());
-}
-
-#[test]
-fn the_password_of_a_document_is_given_to_the_tool_unless_one_was_typed() {
-    let mut values = Values::new();
-    give_the_credential(Tool::Compress, 0, b"view", &mut values);
-    assert_eq!(values.text(Setting::Password).as_deref(), Some("view"));
-    let mut typed = Values::new().with(Setting::Password, Value::Secret("mine".to_owned()));
-    give_the_credential(Tool::Compress, 0, b"view", &mut typed);
-    assert_eq!(typed.text(Setting::Password).as_deref(), Some("mine"));
-    let mut none = Values::new();
-    give_the_credential(Tool::Compress, 0, b"", &mut none);
-    assert!(!none.is_set(Setting::Password));
-}
-
-#[test]
-fn the_password_of_a_document_goes_where_that_tool_wants_it() {
-    let mut protect = Values::new();
-    give_the_credential(Tool::Protect, 0, b"view", &mut protect);
-    assert_eq!(protect.text(Setting::FilePassword).as_deref(), Some("view"));
-    assert!(!protect.is_set(Setting::NewPassword));
-    let mut newer = Values::new();
-    give_the_credential(Tool::Compare, 1, b"view", &mut newer);
-    assert_eq!(newer.text(Setting::SecondPassword).as_deref(), Some("view"));
-    let mut elsewhere = Values::new();
-    give_the_credential(Tool::Sign, 1, b"view", &mut elsewhere);
-    assert!(!elsewhere.is_set(Setting::Password));
 }
 
 #[test]

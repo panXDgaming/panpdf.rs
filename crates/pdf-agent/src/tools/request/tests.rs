@@ -8,6 +8,7 @@ use crate::pictures::{Asked as PictureAsked, Source};
 use crate::stamping::{Asked as StampAsked, Kind};
 use crate::styling::{Align, Look};
 use crate::tools::offered_to_a_window;
+use pdf_convert::{Choice, Setting, Tool, Value, Values};
 
 fn args(text: &str) -> Json {
     Json::parse(text).expect("the arguments in this test are JSON")
@@ -319,6 +320,106 @@ fn examples() -> Vec<(&'static str, &'static str, Request)> {
             },
         ),
         (
+            "convert",
+            r#"{"document":"doc-1","tool":"compress-pdf","options":{"level":"low"}}"#,
+            Request::Convert(crate::converting::Asked {
+                tool: Tool::Compress,
+                files: Vec::new(),
+                values: Values::new().with(Setting::Level, Value::Choice(Choice::Low)),
+                pictures: Vec::new(),
+                open_result: false,
+            }),
+        ),
+        (
+            "protect_document",
+            r#"{"document":"doc-1","password":"pw","open_result":true}"#,
+            Request::Convert(crate::converting::Asked {
+                tool: Tool::Protect,
+                files: Vec::new(),
+                values: Values::new().with(Setting::NewPassword, Value::Secret("pw".to_owned())),
+                pictures: Vec::new(),
+                open_result: true,
+            }),
+        ),
+        (
+            "ocr_pages",
+            r#"{"document":"doc-1","pages":"2-3","languages":["eng"]}"#,
+            Request::OcrPages(crate::recognizing::Asked {
+                pages: "2-3".to_owned(),
+                languages: vec!["eng".to_owned()],
+                skip_text: true,
+            }),
+        ),
+        (
+            "extract_pages",
+            r#"{"document":"doc-1","pages":"1-3, 5"}"#,
+            Request::ExtractPages(crate::taking::Extract {
+                pages: "1-3, 5".to_owned(),
+            }),
+        ),
+        (
+            "split_document",
+            r#"{"document":"doc-1","every":10}"#,
+            Request::SplitDocument(crate::taking::Split::Every(10)),
+        ),
+        (
+            "export_page_pictures",
+            r#"{"document":"doc-1","pages":"2","dpi":300}"#,
+            Request::ExportPictures(crate::taking::Pictures {
+                pages: "2".to_owned(),
+                dpi: 300.0,
+            }),
+        ),
+        (
+            "save_copy",
+            r#"{"document":"doc-1","path":"/tmp/copy.pdf"}"#,
+            Request::SaveCopy {
+                path: Some(std::path::PathBuf::from("/tmp/copy.pdf")),
+            },
+        ),
+        (
+            "save_copy",
+            r#"{"document":"doc-1"}"#,
+            Request::SaveCopy { path: None },
+        ),
+        (
+            "links",
+            r#"{"document":"doc-1","action":"list","page":2}"#,
+            Request::Links(crate::linking::Action::List { page: 1 }),
+        ),
+        (
+            "draw_shape",
+            r#"{"document":"doc-1","page":1,"shape":"line","left":0,"top":0,"right":50,"bottom":50}"#,
+            Request::DrawShape(crate::shaping::Asked {
+                page: 0,
+                shape: crate::shaping::Shape::Line,
+                from: (0.0, 0.0),
+                to: (50.0, 50.0),
+                colour: [0.0; 3],
+                width: 2.0,
+                fill: None,
+            }),
+        ),
+        (
+            "add_field",
+            r#"{"document":"doc-1","page":1,"kind":"text","left":10,"top":20,"width":100,"height":24}"#,
+            Request::AddField(crate::fielding::Asked {
+                page: 0,
+                kind: pdf_edit::new_field::NewFieldKind::Text,
+                area: [10.0, 20.0, 110.0, 44.0],
+                name: None,
+                options: Vec::new(),
+            }),
+        ),
+        (
+            "set_tab_order",
+            r#"{"document":"doc-1","page":1,"order":"structure"}"#,
+            Request::SetTabOrder {
+                page: 0,
+                order: crate::fielding::Order::Structure,
+            },
+        ),
+        (
             "ask_person",
             r#"{"question":" Which theme? ","options":[{"label":"ocean (Recommended)","description":"Blue and calm"},{"label":"forest"}]}"#,
             Request::AskPerson {
@@ -403,7 +504,7 @@ fn what_is_offered_is_what_can_be_read() {
         .into_iter()
         .map(|tool| tool.name)
         .collect();
-    assert_eq!(offered.len(), 28);
+    assert_eq!(offered.len(), 39);
     for name in &offered {
         let read = parse(name, &args(r#"{"document":"doc-1"}"#));
         assert_ne!(
@@ -567,7 +668,10 @@ fn a_request_says_whether_it_only_reads() {
     for (name, arguments, _) in examples() {
         let request = parse(name, &args(arguments)).expect("the examples parse");
         let facts = crate::tools::facts(name).expect("every example is a tool");
-        let by_action = matches!(request, Request::Bookmarks(_) | Request::Objects(_));
+        let by_action = matches!(
+            request,
+            Request::Bookmarks(_) | Request::Objects(_) | Request::Links(_)
+        );
         assert!(
             by_action || request.only_reads() == facts.read_only,
             "{name} disagrees with the table"
@@ -1048,4 +1152,122 @@ fn the_new_calls_say_whether_they_carry_page_numbers() {
         "style_text",
         r#"{"document":"doc-1","block":"p1-b1","bold":true}"#
     ));
+}
+
+#[test]
+fn only_redacting_and_removing_a_link_are_destructive_among_the_file_and_form_calls() {
+    let read = |name: &str, arguments: &str| parse(name, &args(arguments)).expect("it reads");
+    assert!(
+        read(
+            "convert",
+            r#"{"document":"doc-1","tool":"redact-pdf","options":{"search":["x"]}}"#
+        )
+        .is_destructive()
+    );
+    for harmless in [
+        r#"{"document":"doc-1","tool":"compress-pdf"}"#,
+        r#"{"document":"doc-1","tool":"pdf-to-word"}"#,
+        r#"{"document":"doc-1","tool":"compare-pdf","files":["/a.pdf"]}"#,
+    ] {
+        assert!(!read("convert", harmless).is_destructive(), "{harmless}");
+    }
+    assert!(!read("protect_document", r#"{"document":"doc-1","password":"x"}"#).is_destructive());
+    assert!(
+        read(
+            "links",
+            r#"{"document":"doc-1","action":"remove","link":"p1-l1"}"#
+        )
+        .is_destructive()
+    );
+    for (name, arguments) in [
+        ("ocr_pages", r#"{"document":"doc-1"}"#),
+        ("extract_pages", r#"{"document":"doc-1","pages":"1"}"#),
+        ("split_document", r#"{"document":"doc-1","every":2}"#),
+        ("export_page_pictures", r#"{"document":"doc-1"}"#),
+        ("save_copy", r#"{"document":"doc-1"}"#),
+        (
+            "draw_shape",
+            r#"{"document":"doc-1","page":1,"shape":"line","left":0,"top":0,"right":9,"bottom":9}"#,
+        ),
+        (
+            "add_field",
+            r#"{"document":"doc-1","page":1,"kind":"text","left":0,"top":0,"width":50,"height":20}"#,
+        ),
+        (
+            "set_tab_order",
+            r#"{"document":"doc-1","page":1,"order":"rows"}"#,
+        ),
+    ] {
+        let request = read(name, arguments);
+        assert!(!request.is_destructive() && !request.only_reads(), "{name}");
+    }
+    assert!(
+        read("links", r#"{"document":"doc-1","action":"list","page":1}"#).only_reads(),
+        "listing links changes nothing"
+    );
+}
+
+#[test]
+fn the_file_and_form_calls_say_whether_they_carry_page_numbers() {
+    let says = |name: &str, arguments: &str| {
+        parse(name, &args(arguments))
+            .expect("it reads")
+            .counts_pages()
+    };
+    assert!(says("extract_pages", r#"{"document":"doc-1","pages":"2"}"#));
+    assert!(says("split_document", r#"{"document":"doc-1","every":2}"#));
+    assert!(says(
+        "export_page_pictures",
+        r#"{"document":"doc-1","pages":"2"}"#
+    ));
+    assert!(!says("export_page_pictures", r#"{"document":"doc-1"}"#));
+    assert!(says("ocr_pages", r#"{"document":"doc-1","pages":"2"}"#));
+    assert!(!says("ocr_pages", r#"{"document":"doc-1"}"#));
+    assert!(says(
+        "convert",
+        r#"{"document":"doc-1","tool":"pdf-to-text","options":{"pages":"2"}}"#
+    ));
+    assert!(!says(
+        "convert",
+        r#"{"document":"doc-1","tool":"pdf-to-text"}"#
+    ));
+    assert!(says(
+        "links",
+        r#"{"document":"doc-1","action":"list","page":1}"#
+    ));
+    assert!(!says(
+        "links",
+        r#"{"document":"doc-1","action":"remove","link":"p1-l1"}"#
+    ));
+    assert!(says(
+        "draw_shape",
+        r#"{"document":"doc-1","page":1,"shape":"line","left":0,"top":0,"right":9,"bottom":9}"#
+    ));
+    assert!(says(
+        "set_tab_order",
+        r#"{"document":"doc-1","page":1,"order":"rows"}"#
+    ));
+    assert!(!says("save_copy", r#"{"document":"doc-1"}"#));
+    assert!(!says(
+        "protect_document",
+        r#"{"document":"doc-1","password":"x"}"#
+    ));
+}
+
+#[test]
+fn a_save_copy_path_is_a_full_path_and_nothing_else() {
+    let refuse = |arguments: &str| refused("save_copy", arguments);
+    assert!(refuse(r#"{"document":"doc-1","path":"copy.pdf"}"#).contains("is not a full path"));
+    assert!(refuse(r#"{"document":"doc-1","path":"../copy.pdf"}"#).contains("is not a full path"));
+    assert!(refuse(r#"{"document":"doc-1","path":"  "}"#).contains("is empty"));
+    let home = parse(
+        "save_copy",
+        &args(r#"{"document":"doc-1","path":"~/copy.pdf"}"#),
+    );
+    if std::env::var_os("HOME").is_some() {
+        assert!(
+            home.is_ok(),
+            "a path from the home folder is full: {home:?}"
+        );
+    }
 }

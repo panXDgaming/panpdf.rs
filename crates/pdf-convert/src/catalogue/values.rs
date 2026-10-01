@@ -207,6 +207,27 @@ impl Values {
         }
     }
 
+    pub fn give_the_credential(&mut self, tool: Tool, at: usize, credential: &[u8]) {
+        if credential.is_empty() {
+            return;
+        }
+        let setting = if at == 0 {
+            tool.file_password()
+        } else if tool == Tool::Compare {
+            Some(Setting::SecondPassword)
+        } else {
+            None
+        };
+        let Some(setting) = setting else { return };
+        let already = self.text(setting).is_some_and(|text| !text.is_empty());
+        if !already {
+            self.set(
+                setting,
+                Value::Secret(String::from_utf8_lossy(credential).into_owned()),
+            );
+        }
+    }
+
     #[must_use]
     pub fn faults(&self, tool: Tool) -> Vec<Fault> {
         let mut faults = Vec::new();
