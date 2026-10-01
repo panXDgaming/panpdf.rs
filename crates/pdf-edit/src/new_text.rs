@@ -51,6 +51,7 @@ pub(crate) struct Cluster {
     pub(crate) text: String,
     pub(crate) meanings: Vec<String>,
     pub(crate) advance: f64,
+    pub(crate) face: usize,
     breaks: bool,
 }
 
@@ -68,10 +69,8 @@ pub(crate) fn plan_new_text(
     new: &NewText<'_>,
 ) -> Result<Plan, SpikeError> {
     let frame = checked_frame(new)?;
-    let face = face_for(&page, new)?;
-    let embeddable = Embeddable::of(&face.program)
-        .ok_or_else(|| refused("the face chosen cannot be embedded yet"))?;
-    let clusters = shape(new.text, &face, embeddable, new.size)?;
+    let faces = faces_for(&page, new)?;
+    let clusters = shape(new.text, &faces, new.size)?;
     let blocked = stands_in_the_frame(page, new, frame);
     let alignment = new.paragraph.alignment.unwrap_or(Alignment::Start);
     let placed = turned(
@@ -79,21 +78,9 @@ pub(crate) fn plan_new_text(
         new.turn,
     );
 
-    let meaning = meanings(&clusters, embeddable);
-    let mark = face_mark(&face.identity.sha256, face.identity.face_index);
-    let before = embedded_before(source, &page, new.share_from, &mark);
-    let shared_with = before
-        .as_ref()
-        .filter(|found| !found.named_here)
-        .and(new.share_from);
-    let (name, mut writes) = named_face(
-        source,
-        (page.program.page, page.credential),
-        (embeddable, &mark, meaning),
-        before,
-    )?;
-
     let opened = (page.credential, page.restrictions);
+    let (fonts_used, mut writes, shared_with) =
+        embed_faces(source, &page, new, (&faces, &clusters))?;
     let read = |document: &ByteStore, index| {
         crate::spike_move_text::read_page(document, index, page.credential, page.fonts)
     };
@@ -116,7 +103,7 @@ pub(crate) fn plan_new_text(
         carrying.program.streams[stream].bytes.as_bytes(),
         &placed,
         new,
-        (&name, None, Matrix::IDENTITY),
+        (&fonts_used, None, Matrix::IDENTITY),
     );
     let mut graph = interpret_bytes_of(&carrying.program, stream, &first, page.fonts)?;
     let standing = standing_state(&carrying.graph, &graph)?;
@@ -141,7 +128,7 @@ pub(crate) fn plan_new_text(
             carrying.program.streams[stream].bytes.as_bytes(),
             &placed,
             new,
-            (&name, state.as_deref(), inverse),
+            (&fonts_used, state.as_deref(), inverse),
         );
         graph = interpret_bytes_of(&carrying.program, stream, &bytes, page.fonts)?;
     }
@@ -170,6 +157,48 @@ pub(crate) fn plan_new_text(
             declared_region: Some(region(turned_box(frame, new.turn), &placed)),
         },
     ))
+}
+
+type Embedded = (Vec<String>, Vec<PlannedWrite>, Option<usize>);
+
+fn embed_faces(
+    source: &ByteStore,
+    page: &PlannerPage<'_>,
+    new: &NewText<'_>,
+    (faces, clusters): (&[pdf_content::SubstitutedFace], &[Vec<Cluster>]),
+) -> Result<Embedded, SpikeError> {
+    let opened = (page.credential, page.restrictions);
+    let mut running = source.clone();
+    let mut writes: Vec<PlannedWrite> = Vec::new();
+    let mut names: Vec<String> = vec![String::new(); faces.len()];
+    let mut shared_with = None;
+    let used: Vec<usize> = (0..faces.len())
+        .filter(|at| clusters.iter().flatten().any(|cluster| cluster.face == *at))
+        .collect();
+    for (turn, at) in used.iter().enumerate() {
+        let face = &faces[*at];
+        let embeddable = Embeddable::of(&face.program)
+            .ok_or_else(|| refused("the face chosen cannot be embedded yet"))?;
+        let meaning = meanings(clusters, *at, embeddable);
+        let mark = face_mark(&face.identity.sha256, face.identity.face_index);
+        let before = embedded_before(source, page, new.share_from, &mark);
+        if before.as_ref().is_some_and(|found| !found.named_here) {
+            shared_with = new.share_from;
+        }
+        let (name, step) = named_face(
+            &running,
+            (page.program.page, page.credential),
+            (embeddable, &mark, meaning),
+            before,
+        )?;
+        if turn + 1 < used.len() {
+            running = crate::block_rewrite::commit_writes(&running, &step, opened)?;
+        }
+        writes.retain(|was| step.iter().all(|write| write.reference != was.reference));
+        writes.extend(step);
+        names[*at] = name;
+    }
+    Ok((names, writes, shared_with))
 }
 
 fn checked_frame(new: &NewText<'_>) -> Result<[f64; 4], SpikeError> {
@@ -206,6 +235,56 @@ pub(crate) fn face_for(
         .fonts
         .ok_or_else(|| refused("no font provider was given, so no face can be chosen"))?;
     face_in(fonts, new.text, (new.family, new.bold, new.italic))
+}
+
+pub(crate) fn faces_for(
+    page: &PlannerPage<'_>,
+    new: &NewText<'_>,
+) -> Result<Vec<pdf_content::SubstitutedFace>, SpikeError> {
+    let fonts = page
+        .fonts
+        .ok_or_else(|| refused("no font provider was given, so no face can be chosen"))?;
+    faces_in(fonts, new.text, (new.family, new.bold, new.italic))
+}
+
+fn faces_in(
+    fonts: &std::sync::Arc<dyn pdf_content::FontProvider>,
+    text: &str,
+    (family, bold, italic): (&str, bool, bool),
+) -> Result<Vec<pdf_content::SubstitutedFace>, SpikeError> {
+    let request = pdf_content::FontRequest::for_family(
+        family,
+        FontStyle {
+            weight: if bold { 700 } else { 400 },
+            italic,
+        },
+    );
+    let first = text
+        .chars()
+        .find(|letter| *letter != '\n')
+        .ok_or_else(|| refused("there is no text to put on the page"))?;
+    let own = fonts
+        .primary_face(&request)
+        .or_else(|| fonts.fallback_face(&request, first))
+        .ok_or_else(|| refused("no face on this machine draws what was typed"))?;
+    let found = own.identity.style;
+    if (found.is_bold() && !bold) || (found.italic && !italic) {
+        return Err(refused(
+            "this family has no face in the weight or slope asked for on this machine",
+        ));
+    }
+    let mut faces = vec![own];
+    let mut seen = std::collections::BTreeSet::new();
+    for letter in text.chars().filter(|letter| !letter.is_whitespace()) {
+        if !seen.insert(letter) || faces.iter().any(|face| draws(face, letter)) {
+            continue;
+        }
+        let face = crate::block_rewrite::faces::kindred_face(fonts, &request, family, letter)
+            .filter(|face| draws(face, letter))
+            .ok_or_else(|| refused("no face on this machine draws what was typed"))?;
+        faces.push(face);
+    }
+    Ok(faces)
 }
 
 fn face_in(
@@ -264,16 +343,14 @@ fn draws(face: &pdf_content::SubstitutedFace, letter: char) -> bool {
 
 pub(crate) fn shape(
     text: &str,
-    face: &pdf_content::SubstitutedFace,
-    embeddable: Embeddable<'_>,
+    faces: &[pdf_content::SubstitutedFace],
     size: f64,
 ) -> Result<Vec<Vec<Cluster>>, SpikeError> {
     let segmenter = GraphemeClusterSegmenter::new();
-    let metrics = embeddable.metrics();
-    let em = f64::from(metrics.units_per_em());
-    if em <= 0.0 {
-        return Err(refused("the face chosen states no em"));
-    }
+    let embeddables: Vec<Option<Embeddable<'_>>> = faces
+        .iter()
+        .map(|face| Embeddable::of(&face.program))
+        .collect();
     let mut paragraphs = Vec::new();
     for paragraph in text.split('\n') {
         let boundaries: Vec<usize> = segmenter.segment_str(paragraph).collect();
@@ -282,11 +359,27 @@ pub(crate) fn shape(
         for pair in boundaries.windows(2) {
             let (from, to) = (pair[0], pair[1]);
             let cluster = &paragraph[from..to];
-            let shaped =
-                pdf_content::shape_cluster(&face.program, face.identity.face_index, cluster)
-                    .ok_or_else(|| refused("the face chosen cannot shape what was typed"))?;
-            if shaped.iter().any(|glyph| glyph.glyph == 0) {
-                return Err(refused("the face chosen does not draw what was typed"));
+            let (at, shaped) = faces
+                .iter()
+                .enumerate()
+                .find_map(|(at, face)| {
+                    let shaped = pdf_content::shape_cluster(
+                        &face.program,
+                        face.identity.face_index,
+                        cluster,
+                    )?;
+                    shaped
+                        .iter()
+                        .all(|glyph| glyph.glyph != 0)
+                        .then_some((at, shaped))
+                })
+                .ok_or_else(|| refused("the face chosen does not draw what was typed"))?;
+            let embeddable =
+                embeddables[at].ok_or_else(|| refused("the face chosen cannot be embedded yet"))?;
+            let metrics = embeddable.metrics();
+            let em = f64::from(metrics.units_per_em());
+            if em <= 0.0 {
+                return Err(refused("the face chosen states no em"));
             }
             if shaped.first().is_some_and(|glyph| glyph.x != 0) {
                 return Err(refused(
@@ -317,6 +410,7 @@ pub(crate) fn shape(
                 meanings,
                 text: cluster.to_owned(),
                 advance,
+                face: at,
                 breaks: breaks.binary_search(&from).is_ok(),
             });
         }
@@ -328,6 +422,7 @@ pub(crate) fn shape(
 pub(crate) struct PlacedLine {
     pub(crate) origin: Point,
     pub(crate) codes: Vec<u16>,
+    pub(crate) faces: Vec<usize>,
     pub(crate) glyphs: Vec<Glyph>,
     pub(crate) pens: Vec<Point>,
     pub(crate) advance: f64,
@@ -366,12 +461,14 @@ pub(crate) fn place(
         let start = frame[0] + line.left + alignment.offset(run, line.width);
         let baseline = frame[3] - size - line.top;
         let mut codes = Vec::new();
+        let mut faces = Vec::new();
         let mut glyphs = Vec::new();
         let mut pens = Vec::new();
         let mut pen = start;
         for (at, cluster) in clusters.iter().enumerate() {
             for (code, glyph) in cluster.codes.iter().zip(&cluster.glyphs) {
                 codes.push(*code);
+                faces.push(cluster.face);
                 glyphs.push(Glyph {
                     x: pen - start + glyph.x,
                     ..*glyph
@@ -390,6 +487,7 @@ pub(crate) fn place(
                     y: baseline,
                 },
                 codes,
+                faces,
                 glyphs,
                 pens,
                 advance: pen - start,
@@ -458,10 +556,8 @@ pub fn room_for_new_text(
     if !(size.is_finite() && size > 0.0) {
         return Err(refused("text needs a size above nothing"));
     }
-    let face = face_in(fonts, text, (family, bold, italic))?;
-    let embeddable = Embeddable::of(&face.program)
-        .ok_or_else(|| refused("the face chosen cannot be embedded yet"))?;
-    let clusters = shape(text, &face, embeddable, size)?;
+    let faces = faces_in(fonts, text, (family, bold, italic))?;
+    let clusters = shape(text, &faces, size)?;
     let (_, layout) = laid_out(&clusters, width, size, &[])?;
     Ok(Room {
         height: layout.height,
@@ -476,10 +572,15 @@ pub fn room_for_new_text(
 
 pub(crate) fn meanings(
     paragraphs: &[Vec<Cluster>],
+    face: usize,
     embeddable: Embeddable<'_>,
 ) -> BTreeMap<u16, String> {
     let mut meaning = BTreeMap::new();
-    for cluster in paragraphs.iter().flatten() {
+    for cluster in paragraphs
+        .iter()
+        .flatten()
+        .filter(|cluster| cluster.face == face)
+    {
         for (code, text) in cluster.codes.iter().zip(&cluster.meanings) {
             let Some(glyph) = embeddable.glyph(*code) else {
                 continue;
@@ -604,7 +705,7 @@ fn candidate(
     decoded: &[u8],
     lines: &[PlacedLine],
     new: &NewText<'_>,
-    (name, state, inverse): (&str, Option<&str>, Matrix),
+    (names, state, inverse): (&[String], Option<&str>, Matrix),
 ) -> Vec<u8> {
     let [red, green, blue] = new.fill.unwrap_or([0.0, 0.0, 0.0]);
     let mut out = Vec::with_capacity(decoded.len() + lines.len() * 64);
@@ -616,6 +717,7 @@ fn candidate(
     out.extend_from_slice(
         format!(
             "BT /{name} {size} Tf {pitch} TL 0 Tc 0 Tw 100 Tz 0 Ts {red} {green} {blue} rg\n",
+            name = names.first().map_or("", String::as_str),
             size = new.size,
             pitch = new.size * LINE_EM,
         )
@@ -634,13 +736,50 @@ fn candidate(
             )
             .as_bytes(),
         );
-        out.extend_from_slice(&shows(line, new.size).0);
+        for (face, segment) in segments(line) {
+            out.extend_from_slice(format!("/{} {} Tf ", names[face], new.size).as_bytes());
+            out.extend_from_slice(&shows(&segment, new.size).0);
+        }
     }
     out.extend_from_slice(b"ET Q\n");
     out
 }
 
 const SAME_PLACE: f64 = 1e-6;
+
+fn segments(line: &PlacedLine) -> Vec<(usize, PlacedLine)> {
+    let mut out: Vec<(usize, PlacedLine)> = Vec::new();
+    let mut from = 0;
+    let mut end_of_last = 0.0;
+    while from < line.codes.len() {
+        let face = line.faces[from];
+        let to = (from..line.codes.len())
+            .find(|at| line.faces[*at] != face)
+            .unwrap_or(line.codes.len());
+        let glyphs: Vec<Glyph> = line.glyphs[from..to]
+            .iter()
+            .map(|glyph| Glyph {
+                x: glyph.x - end_of_last,
+                ..*glyph
+            })
+            .collect();
+        end_of_last = line.glyphs[to - 1].x + line.glyphs[to - 1].width;
+        out.push((
+            face,
+            PlacedLine {
+                origin: line.origin,
+                codes: line.codes[from..to].to_vec(),
+                faces: line.faces[from..to].to_vec(),
+                glyphs,
+                pens: line.pens[from..to].to_vec(),
+                advance: line.advance,
+                turn: line.turn,
+            },
+        ));
+        from = to;
+    }
+    out
+}
 
 pub(crate) fn shows(line: &PlacedLine, size: f64) -> (Vec<u8>, usize) {
     let glyphs = &line.glyphs;
@@ -791,7 +930,15 @@ fn prove_added(
     after: &PaintGraph,
     (lines, opacity): (&[PlacedLine], f64),
 ) -> Result<(), SpikeError> {
-    let counts: Vec<usize> = lines.iter().map(|line| shows(line, 1.0).1).collect();
+    let counts: Vec<usize> = lines
+        .iter()
+        .map(|line| {
+            segments(line)
+                .iter()
+                .map(|(_, segment)| shows(segment, 1.0).1)
+                .sum()
+        })
+        .collect();
     if after.atoms.len() != before.atoms.len() + counts.iter().sum::<usize>() {
         return Err(SpikeError::MoveNotIsolated);
     }
@@ -1588,6 +1735,53 @@ pub(crate) mod tests {
         let face = super::face_in(&fonts, "A \u{0E01}", ("Test Face", false, false))
             .expect("a face of the script draws the whole line");
         assert_eq!(face.identity.family, "Noto Sans Thai");
+    }
+
+    #[test]
+    fn a_line_keeps_the_requested_face_for_what_it_draws_and_a_second_face_for_the_rest() {
+        let fonts = provider();
+        let families = |text: &str| -> Vec<String> {
+            super::faces_in(&fonts, text, ("Noto Sans Thai", false, false))
+                .expect("faces draw the line")
+                .into_iter()
+                .map(|face| face.identity.family.clone())
+                .collect()
+        };
+        assert_eq!(families("\u{0E01}A B"), ["Noto Sans Thai"]);
+        assert_eq!(families("\u{0E01} Y"), ["Noto Sans Thai", "Wide Face"]);
+
+        let room = super::room_for_new_text(
+            &fonts,
+            "\u{0E01}Y",
+            ("Noto Sans Thai", 10.0, false, false),
+            100.0,
+        )
+        .expect("the line is measured");
+        assert_eq!(room.lines, 1);
+        assert!((room.widest - 8.5).abs() < 1e-9, "{room:?}");
+
+        let source = document("");
+        let mut asked = command("\u{0E01}Y\u{0E01}", [20.0, 100.0, 180.0, 140.0]);
+        if let Command::PlaceNewText { family, .. } = &mut asked {
+            "Noto Sans Thai".clone_into(family);
+        }
+        let plan = plan_command_with_fonts(&source, &asked, b"", Some(Arc::clone(&fonts)))
+            .expect("the line is planned");
+        let after = plan.commit(&source, b"").expect("the plan commits");
+        let xs: Vec<f64> = pens(&after, &fonts).into_iter().map(|(x, _)| x).collect();
+        assert_eq!(xs.len(), 3);
+        for (found, wanted) in xs.iter().zip([20.0, 24.5, 28.5]) {
+            assert!((found - wanted).abs() < 1e-6, "{xs:?}");
+        }
+        let shaped = super::shape(
+            "\u{0E01}Y\u{0E01}",
+            &super::faces_in(&fonts, "\u{0E01}Y", ("Noto Sans Thai", false, false))
+                .expect("faces draw the line"),
+            10.0,
+        )
+        .expect("the line is shaped");
+        let faces: Vec<usize> = shaped[0].iter().map(|cluster| cluster.face).collect();
+        assert_eq!(faces, [0, 1, 0]);
     }
 
     #[test]

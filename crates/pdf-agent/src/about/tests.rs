@@ -215,10 +215,7 @@ fn text_in_a_script_no_face_draws_is_refused_not_placed_as_empty_boxes() {
     let refused = call("\u{928}\u{92e}\u{938}\u{94d}\u{924}\u{947}")
         .err()
         .expect("no packaged face draws Devanagari");
-    assert!(
-        refused.contains("the face chosen cannot shape"),
-        "{refused}"
-    );
+    assert!(refused.contains("draws what was typed"), "{refused}");
     assert!(
         call("Plain Latin words").is_ok(),
         "negative control: a script the faces draw is placed"

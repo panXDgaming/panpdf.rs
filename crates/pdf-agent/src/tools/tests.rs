@@ -830,7 +830,7 @@ fn a_dark_theme_written_beside_a_picture_leaves_the_picture_and_the_page_above_i
 }
 
 #[test]
-fn a_thai_document_with_a_symbol_the_thai_face_lacks_is_written_and_read_back_in_stand_ins() {
+fn a_thai_document_with_a_symbol_the_thai_face_lacks_is_written_with_the_symbol_in_another_face() {
     let folder = folder("thai-symbols");
     let path = document(&folder, "one.pdf", "x", 0);
     let mut desk = crate::desk::Desk::with_fonts(Some(fonts()));
@@ -844,8 +844,8 @@ fn a_thai_document_with_a_symbol_the_thai_face_lacks_is_written_and_read_back_in
     assert!(said.text.starts_with("Written"), "{}", said.text);
     let read = call_with(&mut desk, "read_text", &handle, "{}");
     assert!(read.text.contains("ความเร็ว"), "{}", read.text);
-    assert!(read.text.contains("alpha"), "{}", read.text);
-    assert!(read.text.contains("->"), "{}", read.text);
+    assert!(read.text.contains('α'), "{}", read.text);
+    assert!(read.text.contains('→'), "{}", read.text);
 }
 
 #[test]
