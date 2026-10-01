@@ -1444,6 +1444,17 @@ impl Window {
             self.drop_the_text_draft();
             return;
         }
+        if self
+            .ocr_draft
+            .as_ref()
+            .is_some_and(|draft| draft.reading.is_none() && draft.fetching.is_none())
+        {
+            self.ocr_draft = None;
+            return;
+        }
+        if self.stamp_draft.take().is_some() {
+            return;
+        }
         if self.tool != Tool::Select {
             self.tool = Tool::Select;
             self.pictures.clear();

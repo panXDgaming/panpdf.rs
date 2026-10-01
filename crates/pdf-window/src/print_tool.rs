@@ -572,7 +572,10 @@ fn what_is_asked(
     if sheets.is_ok() {
         dialog::note(ui, dialog::Tone::Calm, &summary.say(lang));
     }
-    for why in blocking {
+    for why in blocking
+        .iter()
+        .filter(|why| !matches!(why, Message::PrintNoService(_) | Message::PrintNoPrinter))
+    {
         ui.add_space(6.0);
         dialog::note(ui, dialog::Tone::Trouble, &why.say(lang));
     }
@@ -633,6 +636,27 @@ fn which_printer(
                     egui::RichText::new(Message::PrintLooking.say(lang)).color(dialog::weak(ui)),
                 );
             });
+        }
+        Some(Err(why)) => {
+            dialog::note(
+                ui,
+                dialog::Tone::Warning,
+                &Message::PrintNoService(why.clone()).say(lang),
+            );
+            ui.add_space(2.0);
+            dialog::foldable(
+                ui,
+                egui::Id::new("print-service-details"),
+                &pdf_app::wording::Fact::Details.say(lang),
+                |ui| dialog::small(ui, why),
+            );
+        }
+        Some(Ok((list, _))) if list.is_empty() => {
+            dialog::note(
+                ui,
+                dialog::Tone::Warning,
+                &Message::PrintNoPrinter.say(lang),
+            );
         }
         Some(printers) => {
             let list = printers

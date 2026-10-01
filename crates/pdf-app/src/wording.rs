@@ -1390,7 +1390,9 @@ impl Message {
             Self::PrintPreviousSheet => "Previous sheet".to_owned(),
             Self::PrintNextSheet => "Next sheet".to_owned(),
             Self::PrintNoPrinter => "No printer is set up on this computer.".to_owned(),
-            Self::PrintNoService(why) => format!("The print service can't be reached: {why}"),
+            Self::PrintNoService(_) => {
+                "The print service isn't answering, so no printer can be found.".to_owned()
+            }
             Self::PrintCopies => "Copies".to_owned(),
             Self::PrintMonochrome => "Black and white".to_owned(),
             Self::PrintSides => "Sides".to_owned(),
