@@ -13,6 +13,7 @@ mod chooser;
 mod chrome;
 mod clipboard;
 mod contents;
+mod dialog;
 mod draw_pen;
 mod draw_shape;
 mod drawing_speed;

@@ -513,6 +513,8 @@ impl Window {
         let size = egui::vec2(width, room::TOOL_HEIGHT);
         let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
         let response = response.on_hover_text(self.hover_words(ui.ctx(), command));
+        response
+            .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, &name));
         let visuals = ui.visuals();
         let colour = if !enabled {
             visuals.weak_text_color()
@@ -529,6 +531,7 @@ impl Window {
                 ui.painter()
                     .rect_filled(rect, 4.0, visuals.widgets.hovered.bg_fill);
             }
+            crate::dialog::focus_ring(ui, &response, rect, 4.0);
             let top = if self.toolbar_compact {
                 rect.center().y - room::ICON_SIDE / 2.0
             } else {
@@ -1065,6 +1068,14 @@ impl Window {
         }
     }
 
+    fn is_showing_a_document(&self) -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.tools.is_some() {
+            return false;
+        }
+        self.has_document() && !self.home
+    }
+
     pub(crate) fn status_bar(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         let now = ctx.input(|input| input.time);
@@ -1078,7 +1089,7 @@ impl Window {
         let status = said.say(lang);
         let trouble = said.tone() == Tone::Trouble;
         let hint = self.tool_hint();
-        let with_document = self.has_document() && !self.home;
+        let with_document = self.is_showing_a_document();
         let position = with_document.then(|| {
             #[expect(
                 clippy::cast_possible_truncation,
@@ -1320,6 +1331,22 @@ pub(crate) fn place_of(path: &std::path::Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::{Lang, StillHolding, language_rows, leaving_offer};
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn the_tools_room_shows_no_page_and_zoom_of_the_document_behind_it() {
+        let mut window = crate::window_state::Window::new(
+            pdf_app::Editor::stand_in().expect("the stand-in document opens"),
+            std::path::PathBuf::from("/missing/original.pdf"),
+            Vec::new(),
+        );
+        assert!(window.is_showing_a_document());
+        window.open_the_tools(None);
+        assert!(
+            !window.is_showing_a_document(),
+            "the status bar has nothing to say about a page that is not on screen"
+        );
+    }
 
     #[test]
     fn the_picker_lists_exactly_the_languages_the_window_speaks() {

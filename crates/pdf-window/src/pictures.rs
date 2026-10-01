@@ -5,6 +5,7 @@ use eframe::egui;
 
 use pdf_app::wording::{Command, Home, Message};
 
+use crate::dialog;
 use crate::page_actions::Choosing;
 use crate::take_out::{Piece, Wrote};
 use crate::window_state::Window;
@@ -86,63 +87,55 @@ impl Window {
         let pages = export_pages(choices, count);
         let (mut close, mut go_on) = (false, false);
         let title = Message::Command(Command::PagesAsPictures).say(lang);
-        let modal = egui::Modal::new(egui::Id::new("export-dialog")).show(ctx, |ui| {
-            ui.set_width(420.0);
-            ui.heading(title.trim_end_matches('\u{2026}'));
-            ui.label(
-                egui::RichText::new(Message::ExportWhy.say(lang))
-                    .size(11.0)
-                    .color(ui.visuals().weak_text_color()),
+        let why = Message::ExportWhy.say(lang);
+        let shut = Message::Close.say(lang);
+        let spec = dialog::Spec {
+            id: "export-dialog",
+            width: 420.0,
+        };
+        let modal = dialog::modal(ctx, &spec, |ui| {
+            close = dialog::header(
+                ui,
+                title.trim_end_matches('\u{2026}'),
+                Some(&why),
+                Some(&shut),
             );
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.radio_value(&mut choices.all, true, Message::AllPages.say(lang));
-                ui.radio_value(&mut choices.all, false, Message::SomePages.say(lang));
-                let typed = ui.add(
+            dialog::caption(ui, &Message::StampPages.say(lang));
+            let which = [
+                (true, Message::AllPages.say(lang)),
+                (false, Message::SomePages.say(lang)),
+            ];
+            dialog::segments(ui, "export-pages", &mut choices.all, &which);
+            if !choices.all {
+                ui.add_space(6.0);
+                ui.add(
                     egui::TextEdit::singleline(&mut choices.pages)
                         .hint_text("1-5, 8")
-                        .desired_width(120.0),
+                        .desired_width(f32::INFINITY),
                 );
-                if typed.changed() {
-                    choices.all = false;
-                }
-            });
-            ui.horizontal(|ui| {
-                ui.label(Message::ExportResolution.say(lang));
-                for resolution in RESOLUTIONS {
-                    ui.radio_value(&mut choices.dpi, resolution, resolution.to_string());
-                }
-                ui.label(Message::ExportDpi.say(lang));
-            });
-            ui.separator();
+            }
+            dialog::divide(ui);
+            dialog::caption(ui, &Message::ExportResolution.say(lang));
+            let sharpness = RESOLUTIONS.map(|resolution| (resolution, resolution.to_string()));
+            dialog::segments(ui, "export-resolution", &mut choices.dpi, &sharpness);
+            ui.add_space(10.0);
             match &pages {
                 Ok(pages) => {
                     let first = pages.first().copied().unwrap_or(shown);
                     let (width, height) = pixels(choices.dpi, first).unwrap_or((0, 0));
-                    ui.label(
-                        Message::ExportSize {
-                            pages: pages.len(),
-                            width,
-                            height,
-                        }
-                        .say(lang),
-                    );
+                    let said = Message::ExportSize {
+                        pages: pages.len(),
+                        width,
+                        height,
+                    };
+                    dialog::note(ui, dialog::Tone::Calm, &said.say(lang));
                 }
-                Err(why) => {
-                    let said = why.say(lang);
-                    ui.label(egui::RichText::new(said).color(ui.visuals().warn_fg_color));
-                }
+                Err(why) => dialog::note(ui, dialog::Tone::Warning, &why.say(lang)),
             }
-            ui.separator();
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            dialog::footer(ui, |ui| {
                 let ready = pages.as_ref().is_ok_and(|pages| !pages.is_empty());
-                let on = egui::Button::new(Message::SplitWhere.say(lang));
-                if ui.add_enabled(ready, on).clicked() {
-                    go_on = true;
-                }
-                if ui.button(Message::Home(Home::Cancel).say(lang)).clicked() {
-                    close = true;
-                }
+                go_on = dialog::primary(ui, &Message::SplitWhere.say(lang), ready).clicked();
+                close |= dialog::secondary(ui, &Message::Home(Home::Cancel).say(lang)).clicked();
             });
         });
         if modal.should_close() {

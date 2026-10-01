@@ -330,6 +330,7 @@ pub(crate) struct View {
     pub(crate) pages_folded: bool,
     pub(crate) pages_width: f32,
     pub(crate) dark: Option<bool>,
+    pub(crate) frames: bool,
 }
 
 impl Default for View {
@@ -338,6 +339,7 @@ impl Default for View {
             pages_folded: false,
             pages_width: PANEL_WIDTH,
             dark: None,
+            frames: false,
         }
     }
 }
@@ -350,9 +352,10 @@ impl View {
             None => "",
         };
         format!(
-            "pages-folded {}\npages-width {:.0}\n{theme}",
+            "pages-folded {}\npages-width {:.0}\nframes {}\n{theme}",
             u8::from(self.pages_folded),
-            self.pages_width
+            self.pages_width,
+            u8::from(self.frames)
         )
     }
 
@@ -362,6 +365,7 @@ impl View {
             let mut words = line.split_whitespace();
             match (words.next(), words.next()) {
                 (Some("pages-folded"), Some(value)) => view.pages_folded = value == "1",
+                (Some("frames"), Some(value)) => view.frames = value == "1",
                 (Some("theme"), Some("dark")) => view.dark = Some(true),
                 (Some("theme"), Some("light")) => view.dark = Some(false),
                 (Some("pages-width"), Some(value)) => {
@@ -727,12 +731,14 @@ mod tests {
             pages_folded: true,
             pages_width: 231.0,
             dark: Some(true),
+            frames: true,
         };
         assert_eq!(View::read(&view.write()), view);
         let open = View {
             pages_folded: false,
             pages_width: 164.0,
             dark: Some(false),
+            frames: false,
         };
         assert_eq!(View::read(&open.write()), open);
         let undecided = View { dark: None, ..open };
@@ -742,6 +748,7 @@ mod tests {
             "a person who never chose is not written down as having chosen"
         );
         assert_eq!(View::read(""), View::default());
+        assert!(!View::default().frames, "frames stay quiet until asked for");
         assert_eq!(View::read("moon-phase waxing\n"), View::default());
         assert_eq!(View::read("pages-width nonsense\n"), View::default());
         assert_eq!(View::read("pages-width -5\n"), View::default());

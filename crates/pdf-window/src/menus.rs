@@ -472,6 +472,7 @@ impl Window {
             let all = item(Command::ShowFrames).selected(self.show_frames);
             if ui.add(all).clicked() {
                 self.show_frames = !self.show_frames;
+                self.remember_the_view();
             }
             ui.separator();
             ui.add_enabled_ui(self.show_frames, |ui| {

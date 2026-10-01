@@ -3,6 +3,8 @@ use eframe::egui;
 use crate::format::CONTROL_HEIGHT;
 use crate::icons::Icon;
 
+pub(super) use crate::dialog::{hairline, spinner};
+
 pub(super) const CAPTION: f32 = 11.0;
 
 pub(super) const ROUND: u8 = 6;
@@ -13,16 +15,6 @@ pub(super) fn caption(text: impl Into<String>) -> egui::RichText {
 
 pub(super) fn small(text: impl Into<String>) -> egui::RichText {
     egui::RichText::new(text).size(CAPTION)
-}
-
-pub(super) fn hairline(ui: &mut egui::Ui) {
-    let (rect, _) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
-    ui.painter().hline(
-        rect.x_range(),
-        rect.center().y,
-        ui.visuals().widgets.noninteractive.bg_stroke,
-    );
 }
 
 pub(super) fn accent_fill(ui: &egui::Ui) -> egui::Color32 {
@@ -261,31 +253,6 @@ pub(super) fn round_button(
         icon.draw(ui.painter(), rect.shrink(7.0), ink);
     }
     response.on_hover_text(hover)
-}
-
-pub(super) fn spinner(ui: &mut egui::Ui) {
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
-    if !ui.is_rect_visible(rect) {
-        return;
-    }
-    ui.ctx()
-        .request_repaint_after(std::time::Duration::from_millis(60));
-    let radius = rect.width() / 2.0 - 1.5;
-    let time = ui.input(|input| input.time);
-    let start = time * std::f64::consts::TAU;
-    let points: Vec<egui::Pos2> = (0..=14_u32)
-        .map(|at| {
-            let angle = start + 4.2 * f64::from(at) / 14.0;
-            let (sin, cos) = angle.sin_cos();
-            #[expect(clippy::cast_possible_truncation, reason = "a point on the screen")]
-            let offset = egui::vec2(cos as f32, sin as f32);
-            rect.center() + radius * offset
-        })
-        .collect();
-    ui.painter().add(egui::Shape::line(
-        points,
-        egui::Stroke::new(1.6, ui.visuals().weak_text_color()),
-    ));
 }
 
 pub(super) fn disclosure(ui: &mut egui::Ui, open: bool) {

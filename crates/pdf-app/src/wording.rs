@@ -187,6 +187,7 @@ pub enum Message {
     StampHeader,
     StampFooter,
     StampMiddle,
+    StampLook,
     StampColour,
     StampOpacity,
     StampMargin,
@@ -213,16 +214,16 @@ pub enum Message {
         total: usize,
     },
     OcrNotInstalled,
+    OcrNeedsRecogniser,
+    OcrCannotInstallRecogniser,
     OcrNoLanguage,
-    OcrModel,
+    OcrLanguagesCost,
+    OcrAccuracy,
+    OcrQualityTradeoff(pdf_ocr::Quality),
     OcrQuality(pdf_ocr::Quality),
     OcrErrorRate {
         code: String,
         cer: f32,
-    },
-    OcrGetModel {
-        code: String,
-        bytes: u64,
     },
     OcrGettingModel(String),
     OcrModelFailed(String),
@@ -280,6 +281,10 @@ pub enum Message {
     },
     PrintButton,
     PrintPrinter,
+    PrintArrangement,
+    PrintLooking,
+    PrintPreviousSheet,
+    PrintNextSheet,
     PrintNoPrinter,
     PrintNoService(String),
     PrintCopies,
@@ -312,9 +317,11 @@ pub enum Message {
     PrintSheetFailed(String),
 
     SplitWhy,
+    SplitBySize,
     SplitEvery,
     SplitEveryPages,
     SplitAtPages,
+    SplitStartsHint,
     SplitInto {
         pages: usize,
         files: usize,
@@ -330,7 +337,6 @@ pub enum Message {
 
     ExportWhy,
     ExportResolution,
-    ExportDpi,
     ExportSize {
         pages: usize,
         width: u32,
@@ -362,6 +368,10 @@ pub enum Message {
     Contents,
     AddBookmarkSaid,
     RenameBookmark,
+    FieldEarlier,
+    FieldLater,
+    BookmarkShow,
+    BookmarkHide,
     BookmarkUp,
     BookmarkDown,
     BookmarkIn,
@@ -1207,15 +1217,16 @@ impl Message {
             Self::StampWhere => "Where".to_owned(),
             Self::StampHeader => "Header".to_owned(),
             Self::StampFooter => "Footer".to_owned(),
-            Self::StampMiddle => "Middle of the page (watermark)".to_owned(),
+            Self::StampMiddle => "Middle".to_owned(),
+            Self::StampLook => "Look".to_owned(),
             Self::StampColour | Self::PrintColour => "Colour".to_owned(),
             Self::StampOpacity => "Opacity".to_owned(),
             Self::StampMargin => "Margin (pt)".to_owned(),
             Self::StampPages => "Pages".to_owned(),
             Self::StampPagesHint => "all, or 1-5, 8, 11-".to_owned(),
             Self::StampOnly(pdf_edit::stamp::Only::Every) => "Every page".to_owned(),
-            Self::StampOnly(pdf_edit::stamp::Only::Odd) => "Odd pages only".to_owned(),
-            Self::StampOnly(pdf_edit::stamp::Only::Even) => "Even pages only".to_owned(),
+            Self::StampOnly(pdf_edit::stamp::Only::Odd) => "Odd pages".to_owned(),
+            Self::StampOnly(pdf_edit::stamp::Only::Even) => "Even pages".to_owned(),
             Self::StampStart => "First page of the range is number".to_owned(),
             Self::StampPreview { page, line } => format!("Page {}: \u{201c}{line}\u{201d}", page + 1),
             Self::StampPreviewNotShown { page } => {
@@ -1226,7 +1237,8 @@ impl Message {
             Self::OcrWhy => "Reads the words in scanned pages so they can be searched and \
                              copied. It runs on this computer; nothing is sent anywhere."
                 .to_owned(),
-            Self::OcrLanguages => "Languages on the pages (each one more takes longer)".to_owned(),
+            Self::OcrLanguages => "Languages".to_owned(),
+            Self::OcrLanguagesCost => "Each language you tick makes reading slower.".to_owned(),
             Self::OcrLanguage(code) => match crate::ocr_languages::Language::of(code) {
                 Some(language) => match language.shown_autonym() {
                     Some(own) => format!("{} ({own})", language.english),
@@ -1243,18 +1255,26 @@ impl Message {
                                       install tesseract-ocr with tesseract-ocr-lao, \
                                       tesseract-ocr-tha and tesseract-ocr-eng."
                 .to_owned(),
+            Self::OcrNeedsRecogniser => "Reading scans needs a text recogniser, and this computer \
+                                         does not have one yet."
+                .to_owned(),
+            Self::OcrCannotInstallRecogniser => "Reading scans needs a text recogniser, and \
+                                                 PanPDF cannot install one on this system by \
+                                                 itself."
+                .to_owned(),
             Self::OcrNoLanguage => "Choose at least one language".to_owned(),
-            Self::OcrModel => "Models".to_owned(),
+            Self::OcrAccuracy => "Accuracy".to_owned(),
+            Self::OcrQualityTradeoff(pdf_ocr::Quality::Accurate) => {
+                "Reads the most letters right, and takes longer.".to_owned()
+            }
+            Self::OcrQualityTradeoff(pdf_ocr::Quality::Fast) => {
+                "Reads sooner, with a few more letters wrong.".to_owned()
+            }
             Self::OcrQuality(pdf_ocr::Quality::Accurate) => "Accurate".to_owned(),
             Self::OcrQuality(pdf_ocr::Quality::Fast) => "Fast".to_owned(),
             Self::OcrErrorRate { code, cer } => format!(
                 "{}: {cer:.1} % of letters read wrong",
                 Self::OcrLanguage(code.clone()).say(Lang::English)
-            ),
-            Self::OcrGetModel { code, bytes } => format!(
-                "Download {} ({})",
-                Self::OcrLanguage(code.clone()).say(Lang::English),
-                megabytes(*bytes)
             ),
             Self::OcrGettingModel(code) => format!(
                 "Getting {}\u{2026}",
@@ -1268,9 +1288,7 @@ impl Message {
             Self::OcrEngineFailed(said) => {
                 format!("The recogniser could not be installed: {said}")
             }
-            Self::OcrEngineElsewhere => "The text recogniser (Tesseract) is not on this \
-                                        computer, and this program cannot put it there by \
-                                        itself. On Windows, install it from \
+            Self::OcrEngineElsewhere => "The recogniser is Tesseract. On Windows, install it from \
                                         https://github.com/UB-Mannheim/tesseract/wiki ; on \
                                         macOS, run: brew install tesseract"
                 .to_owned(),
@@ -1367,6 +1385,10 @@ impl Message {
             } => format!("{pages} pages on {sheets} sheets of {paper}"),
             Self::PrintButton => "Print".to_owned(),
             Self::PrintPrinter => "Printer".to_owned(),
+            Self::PrintArrangement => "Layout".to_owned(),
+            Self::PrintLooking => "Looking for printers\u{2026}".to_owned(),
+            Self::PrintPreviousSheet => "Previous sheet".to_owned(),
+            Self::PrintNextSheet => "Next sheet".to_owned(),
             Self::PrintNoPrinter => "No printer is set up on this computer.".to_owned(),
             Self::PrintNoService(why) => format!("The print service can't be reached: {why}"),
             Self::PrintCopies => "Copies".to_owned(),
@@ -1428,9 +1450,11 @@ impl Message {
             Self::SplitWhy => "Each file holds a run of pages, and together they hold every \
                                page of this document."
                 .to_owned(),
+            Self::SplitBySize => "Same size".to_owned(),
             Self::SplitEvery => "Files of".to_owned(),
             Self::SplitEveryPages => "pages each".to_owned(),
-            Self::SplitAtPages => "Start a new file at pages".to_owned(),
+            Self::SplitAtPages => "At pages".to_owned(),
+            Self::SplitStartsHint => "A new file starts at each page you list.".to_owned(),
             Self::SplitInto { pages: 1, files } => format!("1 page in {files} files"),
             Self::SplitInto { pages, files: 1 } => format!("{pages} pages in 1 file"),
             Self::SplitInto { pages, files } => format!("{pages} pages in {files} files"),
@@ -1445,8 +1469,7 @@ impl Message {
             Self::ExportWhy => "Each page is written out as a PNG picture of what is on \
                                 screen, one file for each page."
                 .to_owned(),
-            Self::ExportResolution => "Resolution".to_owned(),
-            Self::ExportDpi => "dots an inch".to_owned(),
+            Self::ExportResolution => "Resolution, in dots an inch".to_owned(),
             Self::ExportSize {
                 pages: 1,
                 width,
@@ -1489,6 +1512,10 @@ impl Message {
             Self::Contents => "Contents".to_owned(),
             Self::AddBookmarkSaid => "Add a bookmark for the page on screen".to_owned(),
             Self::RenameThePlace | Self::RenameBookmark => "Rename".to_owned(),
+            Self::FieldEarlier => "Earlier in the tab order".to_owned(),
+            Self::FieldLater => "Later in the tab order".to_owned(),
+            Self::BookmarkShow => "Show the bookmarks inside".to_owned(),
+            Self::BookmarkHide => "Hide the bookmarks inside".to_owned(),
             Self::BookmarkUp => "Move up".to_owned(),
             Self::BookmarkDown => "Move down".to_owned(),
             Self::BookmarkIn => "Make it a child of the one above".to_owned(),
@@ -1634,7 +1661,7 @@ impl Message {
                 Command::Edit => "Edit",
                 Command::View => "View",
                 Command::Documents => "Documents in this folder",
-                Command::ShowFrames => "Show frames",
+                Command::ShowFrames => "Show all frames",
                 Command::Frames => "Frames",
                 Command::FramesOfText => "Around text",
                 Command::FramesOfPictures => "Around pictures",
@@ -2228,17 +2255,18 @@ mod tests {
             Message::OcrStop,
             Message::OcrProgress { done: 2, total: 9 },
             Message::OcrNotInstalled,
+            Message::OcrNeedsRecogniser,
+            Message::OcrCannotInstallRecogniser,
             Message::OcrNoLanguage,
-            Message::OcrModel,
+            Message::OcrLanguagesCost,
+            Message::OcrAccuracy,
+            Message::OcrQualityTradeoff(pdf_ocr::Quality::Accurate),
+            Message::OcrQualityTradeoff(pdf_ocr::Quality::Fast),
             Message::OcrQuality(pdf_ocr::Quality::Accurate),
             Message::OcrQuality(pdf_ocr::Quality::Fast),
             Message::OcrErrorRate {
                 code: "lao".to_owned(),
                 cer: 9.0,
-            },
-            Message::OcrGetModel {
-                code: "tha".to_owned(),
-                bytes: 7_614_571,
             },
             Message::OcrGettingModel("eng".to_owned()),
             Message::OcrModelFailed("curl: (6)".to_owned()),
@@ -2248,9 +2276,11 @@ mod tests {
             Message::OcrEngineElsewhere,
             Message::OcrThisPage,
             Message::SplitWhy,
+            Message::SplitBySize,
             Message::SplitEvery,
             Message::SplitEveryPages,
             Message::SplitAtPages,
+            Message::SplitStartsHint,
             Message::SplitInto { pages: 1, files: 1 },
             Message::SplitInto { pages: 9, files: 3 },
             Message::SplitWhere,
@@ -2263,7 +2293,6 @@ mod tests {
             Message::CouldNotTakePagesOut("no room".to_owned()),
             Message::ExportWhy,
             Message::ExportResolution,
-            Message::ExportDpi,
             Message::ExportSize {
                 pages: 1,
                 width: 2480,
@@ -2324,6 +2353,10 @@ mod tests {
             },
             Message::PrintButton,
             Message::PrintPrinter,
+            Message::PrintArrangement,
+            Message::PrintLooking,
+            Message::PrintPreviousSheet,
+            Message::PrintNextSheet,
             Message::PrintNoPrinter,
             Message::PrintNoService("x".to_owned()),
             Message::PrintCopies,
@@ -2740,7 +2773,7 @@ mod tests {
                 (pdf_ocr::Quality::Fast, "6.1 MB", "11.6"),
             ] {
                 let model = pdf_ocr::models::model("lao", quality).expect("a Lao model");
-                let offer = Message::OcrGetModel {
+                let offer = Message::OcrDownloadModel {
                     code: model.code.to_owned(),
                     bytes: model.bytes,
                 }

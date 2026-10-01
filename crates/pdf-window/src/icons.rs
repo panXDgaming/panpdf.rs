@@ -106,22 +106,12 @@ pub(crate) enum Icon {
         expect(dead_code, reason = "the assistant panel is not built for the browser")
     )]
     Attach,
-    #[cfg_attr(
-        target_arch = "wasm32",
-        expect(dead_code, reason = "the assistant panel is not built for the browser")
-    )]
     Info,
-    #[cfg_attr(
-        target_arch = "wasm32",
-        expect(dead_code, reason = "the assistant panel is not built for the browser")
-    )]
     Check,
-    #[cfg_attr(
-        target_arch = "wasm32",
-        expect(dead_code, reason = "the assistant panel is not built for the browser")
-    )]
     Expand,
     Close,
+    Up,
+    Download,
     #[cfg_attr(
         target_arch = "wasm32",
         expect(
@@ -297,6 +287,12 @@ impl Icon {
             }
             Self::Check => pen.line(&[(0.16, 0.54), (0.40, 0.76), (0.84, 0.26)]),
             Self::Expand => pen.line(&[(0.18, 0.36), (0.50, 0.68), (0.82, 0.36)]),
+            Self::Up => pen.line(&[(0.18, 0.64), (0.50, 0.32), (0.82, 0.64)]),
+            Self::Download => {
+                pen.line(&[(0.50, 0.12), (0.50, 0.64)]);
+                pen.line(&[(0.26, 0.42), (0.50, 0.66), (0.74, 0.42)]);
+                pen.line(&[(0.14, 0.74), (0.14, 0.88), (0.86, 0.88), (0.86, 0.74)]);
+            }
             Self::Assistant => assistant(&pen),
             Self::Tools => toolbox(&pen),
         }
@@ -1185,6 +1181,8 @@ mod tests {
             Icon::Info,
             Icon::Check,
             Icon::Expand,
+            Icon::Up,
+            Icon::Download,
             Icon::Assistant,
             Icon::Tools,
         ];
@@ -1193,6 +1191,6 @@ mod tests {
                 assert_ne!(icon, other, "two of the same icon");
             }
         }
-        assert_eq!(every.len(), 69);
+        assert_eq!(every.len(), 71);
     }
 }

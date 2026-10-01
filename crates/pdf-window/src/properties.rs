@@ -4,11 +4,13 @@ use pdf_app::wording::{Fact, Lang, Message};
 use pdf_edit::info::{self, DocumentInfo, Protection, Stamp};
 use pdf_edit::reprotect;
 
+use crate::dialog;
+use crate::icons::Icon;
 use crate::window_state::Window;
 
 const WIDTH: f32 = 520.0;
 
-const HEIGHT: f32 = 448.0;
+const HEIGHT: f32 = 400.0;
 
 pub(crate) struct Properties {
     pub(crate) was: DocumentInfo,
@@ -18,7 +20,8 @@ pub(crate) struct Properties {
     pub(crate) keywords: String,
     pub(crate) protection: Option<Protection>,
     pub(crate) signatures: Vec<pdf_edit::signature::Signature>,
-    pub(crate) file: FileFacts,
+    pub(crate) file: Option<FileFacts>,
+    pub(crate) reading: Option<std::sync::mpsc::Receiver<Learned>>,
     pub(crate) half: Half,
     pub(crate) security: Security,
 }
@@ -47,7 +50,7 @@ pub(crate) struct Security {
 }
 
 impl Security {
-    fn of(protection: Option<Protection>) -> Self {
+    fn of(protection: Option<Protection>, asks_to_open: bool) -> Self {
         let allowed = protection.map_or_else(reprotect::Allowed::default, |protection| {
             reprotect::Allowed {
                 print: protection.may.print,
@@ -60,7 +63,7 @@ impl Security {
         });
         Self {
             protect: protection.is_some(),
-            ask_to_open: false,
+            ask_to_open: asks_to_open,
             user: String::new(),
             user_again: String::new(),
             restrict: protection
@@ -133,6 +136,65 @@ pub(crate) struct FileFacts {
     repairs: Vec<String>,
 }
 
+pub(crate) struct Learned {
+    file: FileFacts,
+    signatures: Vec<pdf_edit::signature::Signature>,
+    asks_to_open: bool,
+}
+
+fn learn(source: Option<&pdf_bytes::ByteStore>, credential: &[u8]) -> Learned {
+    let Some(source) = source else {
+        return Learned {
+            file: file_facts(None),
+            signatures: Vec::new(),
+            asks_to_open: false,
+        };
+    };
+    Learned {
+        file: file_facts(Some(source)),
+        signatures: pdf_edit::signature::signatures(source, credential).unwrap_or_default(),
+        asks_to_open: info::lock(source, &[]) == info::Lock::Refused,
+    }
+}
+
+fn file_facts(source: Option<&pdf_bytes::ByteStore>) -> FileFacts {
+    let Some(source) = source else {
+        return FileFacts {
+            version: String::new(),
+            bytes: 0,
+            revisions: 0,
+            objects: (0, 0, 0),
+            repairs: Vec::new(),
+        };
+    };
+    let read = pdf_cli::inspect_recovering(source, pdf_cli::InspectLimits::default());
+    let bytes = source.len() as u64;
+    match read {
+        Err(_) => FileFacts {
+            version: String::new(),
+            bytes,
+            revisions: 0,
+            objects: (0, 0, 0),
+            repairs: Vec::new(),
+        },
+        Ok(report) => FileFacts {
+            version: report.version.to_string(),
+            bytes,
+            revisions: report.revisions.len(),
+            objects: (
+                report.objects.active(),
+                report.objects.compressed,
+                report.objects.free,
+            ),
+            repairs: report
+                .repairs
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
+        },
+    }
+}
+
 impl Window {
     pub(crate) fn open_the_properties(&mut self) {
         if self.properties.is_some() || !self.has_document() || self.home {
@@ -142,6 +204,12 @@ impl Window {
             return;
         };
         let info = facts.info;
+        let source = self.editor.source().cloned();
+        let credential = self.editor.credential().to_vec();
+        let (send, reading) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = send.send(learn(source.as_ref(), &credential));
+        });
         self.properties = Some(Properties {
             title: info.title.clone(),
             author: info.author.clone(),
@@ -149,56 +217,12 @@ impl Window {
             keywords: info.keywords.clone(),
             was: info,
             protection: facts.protection,
-            file: self.file_facts(),
-            signatures: self
-                .editor
-                .source()
-                .map(|source| {
-                    pdf_edit::signature::signatures(source, self.editor.credential())
-                        .unwrap_or_default()
-                })
-                .unwrap_or_default(),
+            file: None,
+            reading: Some(reading),
+            signatures: Vec::new(),
             half: Half::General,
-            security: Security::of(facts.protection),
+            security: Security::of(facts.protection, false),
         });
-    }
-
-    fn file_facts(&self) -> FileFacts {
-        let Some(source) = self.editor.source() else {
-            return FileFacts {
-                version: String::new(),
-                bytes: 0,
-                revisions: 0,
-                objects: (0, 0, 0),
-                repairs: Vec::new(),
-            };
-        };
-        let read = pdf_cli::inspect_recovering(source, pdf_cli::InspectLimits::default());
-        let bytes = source.len() as u64;
-        match read {
-            Err(_) => FileFacts {
-                version: String::new(),
-                bytes,
-                revisions: 0,
-                objects: (0, 0, 0),
-                repairs: Vec::new(),
-            },
-            Ok(report) => FileFacts {
-                version: report.version.to_string(),
-                bytes,
-                revisions: report.revisions.len(),
-                objects: (
-                    report.objects.active(),
-                    report.objects.compressed,
-                    report.objects.free,
-                ),
-                repairs: report
-                    .repairs
-                    .iter()
-                    .map(std::string::ToString::to_string)
-                    .collect(),
-            },
-        }
     }
 
     pub(crate) fn properties_window(&mut self, ctx: &egui::Context) {
@@ -211,70 +235,64 @@ impl Window {
         let mut apply = None;
         let unsaved = self.unsaved();
         let mut panel = self.properties.take().expect("the window is open");
+        learn_what_arrived(&mut panel, ctx);
         let heading = Fact::Properties.say(lang);
-        let shown = egui::Modal::new(egui::Id::new("document-properties")).show(ctx, |ui| {
-            ui.set_width(WIDTH);
-            ui.heading(&heading);
-            ui.add_space(2.0);
-            ui.horizontal(|ui| {
-                for (half, name) in [
-                    (Half::General, Fact::General),
-                    (Half::Details, Fact::Details),
-                    (Half::Security, Fact::Security),
-                ] {
-                    ui.selectable_value(&mut panel.half, half, name.say(lang));
+        let shut = Fact::Close.say(lang);
+        let spec = dialog::Spec {
+            id: "document-properties",
+            width: WIDTH,
+        };
+        let shown = dialog::modal(ctx, &spec, |ui| {
+            close = dialog::header(ui, &heading, None, Some(&shut));
+            let halves = [
+                (Half::General, Fact::General.say(lang)),
+                (Half::Details, Fact::Details.say(lang)),
+                (Half::Security, Fact::Security.say(lang)),
+            ];
+            dialog::segments(ui, "properties-half", &mut panel.half, &halves);
+            ui.add_space(10.0);
+            dialog::scrolling(ui, "properties-body", HEIGHT, |ui| match panel.half {
+                Half::General => general_half(ui, &mut panel, lang),
+                Half::Details | Half::Security if panel.reading.is_some() => {
+                    reading_the_file(ui, lang);
                 }
+                Half::Details => self.details_half(ui, &panel),
+                Half::Security => security_half(ui, &mut panel, lang),
             });
-            ui.separator();
-            egui::ScrollArea::vertical()
-                .max_height(HEIGHT)
-                .min_scrolled_height(HEIGHT)
-                .auto_shrink([false, false])
-                .show(ui, |ui| match panel.half {
-                    Half::General => general_half(ui, &mut panel, lang),
-                    Half::Details => self.details_half(ui, &panel),
-                    Half::Security => security_half(ui, &mut panel, lang),
-                });
-            ui.separator();
-            ui.horizontal(|ui| {
-                match panel.half {
-                    Half::General => {
-                        let changed = panel.changed().is_some();
-                        let button = egui::Button::new(Fact::Save.say(lang));
-                        if ui.add_enabled(working && changed, button).clicked() {
-                            save = true;
-                        }
-                        if !changed {
-                            ui.label(
-                                egui::RichText::new(Fact::NothingToSave.say(lang))
-                                    .size(11.0)
-                                    .color(ui.visuals().weak_text_color()),
-                            );
-                        }
+            let (changed, asked) = (
+                panel.changed().is_some(),
+                panel.security.asked(panel.protection),
+            );
+            let hint = match panel.half {
+                Half::General if !changed => Some(Fact::NothingToSave.say(lang)),
+                Half::Security if unsaved => Some(Fact::SaveBeforeChangingProtection.say(lang)),
+                _ => None,
+            };
+            dialog::footer_with(
+                ui,
+                |ui| {
+                    if let Some(hint) = &hint {
+                        ui.label(egui::RichText::new(hint).size(11.5).color(dialog::weak(ui)));
                     }
-                    Half::Security => {
-                        let asked = panel.security.asked(panel.protection);
-                        let ready = working && !unsaved && asked.is_some();
-                        let button = egui::Button::new(Fact::Apply.say(lang));
-                        if ui.add_enabled(ready, button).clicked() {
-                            apply = asked;
+                },
+                |ui| {
+                    match panel.half {
+                        Half::General => {
+                            let ready = working && changed;
+                            save = dialog::primary(ui, &Fact::Save.say(lang), ready).clicked();
                         }
-                        if unsaved {
-                            ui.label(
-                                egui::RichText::new(Fact::SaveBeforeChangingProtection.say(lang))
-                                    .size(11.0)
-                                    .color(ui.visuals().weak_text_color()),
-                            );
+                        Half::Security => {
+                            let ready =
+                                working && !unsaved && asked.is_some() && panel.reading.is_none();
+                            if dialog::primary(ui, &Fact::Apply.say(lang), ready).clicked() {
+                                apply = asked;
+                            }
                         }
+                        Half::Details => {}
                     }
-                    Half::Details => {}
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button(Fact::Close.say(lang)).clicked() {
-                        close = true;
-                    }
-                });
-            });
+                    close |= dialog::secondary(ui, &shut).clicked();
+                },
+            );
         });
         if shown.should_close() {
             close = true;
@@ -295,7 +313,9 @@ impl Window {
 
     fn details_half(&self, ui: &mut egui::Ui, panel: &Properties) {
         let lang = self.lang;
-        let file = &panel.file;
+        let Some(file) = panel.file.as_ref() else {
+            return;
+        };
         grid(ui, "properties-file", |ui| {
             if self.untitled {
                 row(ui, &Fact::File.say(lang), &Fact::NoFileYet.say(lang), lang);
@@ -377,6 +397,60 @@ impl Window {
     }
 }
 
+fn learn_what_arrived(panel: &mut Properties, ctx: &egui::Context) {
+    let Some(reading) = panel.reading.as_ref() else {
+        return;
+    };
+    match reading.try_recv() {
+        Ok(learned) => {
+            panel.file = Some(learned.file);
+            panel.signatures = learned.signatures;
+            panel.security.ask_to_open = learned.asks_to_open;
+            panel.reading = None;
+        }
+        Err(std::sync::mpsc::TryRecvError::Empty) => {
+            ctx.request_repaint_after(std::time::Duration::from_millis(60));
+        }
+        Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+            panel.file = Some(file_facts(None));
+            panel.reading = None;
+        }
+    }
+}
+
+fn reading_the_file(ui: &mut egui::Ui, lang: Lang) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 8.0;
+        dialog::spinner(ui);
+        ui.label(egui::RichText::new(Fact::ReadingTheFile.say(lang)).color(dialog::weak(ui)));
+    });
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Mark {
+    Yes,
+    No,
+    Care,
+}
+
+fn marked(ui: &mut egui::Ui, mark: Mark, text: &str, colour: egui::Color32) {
+    ui.horizontal_top(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(14.0, 16.0), egui::Sense::hover());
+        let icon = match mark {
+            Mark::Yes => Icon::Check,
+            Mark::No => Icon::Close,
+            Mark::Care => Icon::Info,
+        };
+        icon.draw(
+            ui.painter(),
+            egui::Rect::from_center_size(rect.center(), egui::vec2(13.0, 13.0)),
+            colour,
+        );
+        ui.add(egui::Label::new(egui::RichText::new(text).color(colour)).wrap());
+    });
+}
+
 fn protection_said(ui: &mut egui::Ui, protection: Protection, lang: Lang) {
     let owner = matches!(protection.access, info::AccessLevel::Owner);
     ui.label(format!(
@@ -408,13 +482,12 @@ fn protection_said(ui: &mut egui::Ui, protection: Protection, lang: Lang) {
         (Fact::MayFillForms, may.fill_forms),
         (Fact::MayAssemble, may.assemble),
     ] {
-        let mark = if allowed { '\u{2713}' } else { '\u{2715}' };
-        let colour = if allowed {
-            ui.visuals().text_color()
+        let (mark, colour) = if allowed {
+            (Mark::Yes, ui.visuals().text_color())
         } else {
-            ui.visuals().weak_text_color()
+            (Mark::No, ui.visuals().weak_text_color())
         };
-        ui.label(egui::RichText::new(format!("{mark}  {}", what.say(lang))).color(colour));
+        marked(ui, mark, &what.say(lang), colour);
     }
 }
 
@@ -564,16 +637,12 @@ fn now() -> Stamp {
 
 fn security_half(ui: &mut egui::Ui, panel: &mut Properties, lang: Lang) {
     let asking = &mut panel.security;
-    ui.add_space(4.0);
-    ui.horizontal(|ui| {
-        ui.selectable_value(&mut asking.protect, false, Fact::NoProtection.say(lang));
-        ui.selectable_value(
-            &mut asking.protect,
-            true,
-            Fact::PasswordProtection.say(lang),
-        );
-    });
-    ui.add_space(8.0);
+    let modes = [
+        (false, Fact::NoProtection.say(lang)),
+        (true, Fact::PasswordProtection.say(lang)),
+    ];
+    dialog::segments(ui, "protection-mode", &mut asking.protect, &modes);
+    ui.add_space(10.0);
 
     if !asking.protect {
         if panel.protection.is_some() {
@@ -672,19 +741,16 @@ fn passwords(
 }
 
 fn allowances(ui: &mut egui::Ui, allowed: &mut reprotect::Allowed, lang: Lang) {
-    ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new(Fact::PrintingAllowed.say(lang))
-                .color(ui.visuals().weak_text_color()),
-        );
-        for (how, name) in [
-            (info::PrintAllowance::Faithful, Fact::PrintFully),
-            (info::PrintAllowance::Degraded, Fact::PrintLowOnly),
-            (info::PrintAllowance::Refused, Fact::PrintNever),
-        ] {
-            ui.selectable_value(&mut allowed.print, how, name.say(lang));
-        }
-    });
+    ui.label(
+        egui::RichText::new(Fact::PrintingAllowed.say(lang)).color(ui.visuals().weak_text_color()),
+    );
+    let hows = [
+        (info::PrintAllowance::Faithful, Fact::PrintFully.say(lang)),
+        (info::PrintAllowance::Degraded, Fact::PrintLowOnly.say(lang)),
+        (info::PrintAllowance::Refused, Fact::PrintNever.say(lang)),
+    ];
+    dialog::segments(ui, "printing-allowed", &mut allowed.print, &hows);
+    ui.add_space(4.0);
     for (what, allow) in [
         (Fact::MayEdit, &mut allowed.modify),
         (Fact::MayCopy, &mut allowed.copy),
@@ -771,16 +837,13 @@ fn signature_said(ui: &mut egui::Ui, signature: &pdf_edit::signature::Signature,
     });
     match signature.covers {
         Covers::WholeDocument => {
-            ui.label(format!("\u{2713}  {}", Fact::CoversTheWholeFile.say(lang)));
+            let ink = ui.visuals().text_color();
+            marked(ui, Mark::Yes, &Fact::CoversTheWholeFile.say(lang), ink);
         }
         Covers::UpTo { signed_through, of } => {
-            ui.label(
-                egui::RichText::new(format!(
-                    "\u{2715}  {}",
-                    Fact::ChangedAfterSigning(of - signed_through).say(lang)
-                ))
-                .color(ui.visuals().warn_fg_color),
-            );
+            let ink = ui.visuals().warn_fg_color;
+            let said = Fact::ChangedAfterSigning(of - signed_through).say(lang);
+            marked(ui, Mark::No, &said, ink);
         }
         Covers::Unstated => {
             ui.label(
@@ -800,24 +863,24 @@ fn verdict_said(ui: &mut egui::Ui, checked: &pdf_edit::signature::Checked, lang:
     use pdf_edit::signature::{Integrity, Trust};
 
     let (mark, fact, colour) = match &checked.integrity {
-        Integrity::Intact => ('\u{2713}', Fact::SignatureIntact, ui.visuals().text_color()),
+        Integrity::Intact => (Mark::Yes, Fact::SignatureIntact, ui.visuals().text_color()),
         Integrity::ContentChanged => (
-            '\u{2715}',
+            Mark::No,
             Fact::SignatureContentChanged,
             ui.visuals().error_fg_color,
         ),
         Integrity::SignatureWrong => (
-            '\u{2715}',
+            Mark::No,
             Fact::SignatureIsWrong,
             ui.visuals().error_fg_color,
         ),
         Integrity::CannotCheck(why) => (
-            '?',
+            Mark::Care,
             Fact::SignatureCannotCheck(why.clone()),
             ui.visuals().weak_text_color(),
         ),
     };
-    ui.label(egui::RichText::new(format!("{mark}  {}", fact.say(lang))).color(colour));
+    marked(ui, mark, &fact.say(lang), colour);
 
     if let Some(signer) = &checked.signer {
         ui.add_space(2.0);
@@ -839,23 +902,27 @@ fn verdict_said(ui: &mut egui::Ui, checked: &pdf_edit::signature::Checked, lang:
     ui.add_space(2.0);
     let (mark, fact, colour) = match &checked.trust {
         Trust::Anchored { root } => (
-            '\u{2713}',
+            Mark::Yes,
             Fact::TrustedThrough(root.clone()),
             ui.visuals().text_color(),
         ),
         Trust::UnknownAuthority { top } => (
-            '!',
+            Mark::Care,
             Fact::AuthorityNotKnown(top.clone()),
             ui.visuals().warn_fg_color,
         ),
-        Trust::Incomplete => ('!', Fact::ChainIncomplete, ui.visuals().warn_fg_color),
+        Trust::Incomplete => (
+            Mark::Care,
+            Fact::ChainIncomplete,
+            ui.visuals().warn_fg_color,
+        ),
         Trust::NoStore => (
-            '!',
+            Mark::Care,
             Fact::NoListOfAuthorities,
             ui.visuals().weak_text_color(),
         ),
     };
-    ui.label(egui::RichText::new(format!("{mark}  {}", fact.say(lang))).color(colour));
+    marked(ui, mark, &fact.say(lang), colour);
 
     let small = |ui: &mut egui::Ui, text: String| {
         ui.label(
@@ -875,27 +942,121 @@ fn verdict_said(ui: &mut egui::Ui, checked: &pdf_edit::signature::Checked, lang:
         small(ui, Fact::SignedAtMoment(when.write()).say(lang));
     }
     if let Some(hash) = checked.hash.filter(|_| !checked.hash_is_sound) {
-        ui.label(
-            egui::RichText::new(format!(
-                "!  {}",
-                Fact::HashNoLongerProves(hash.to_owned()).say(lang)
-            ))
-            .size(11.0)
-            .color(ui.visuals().warn_fg_color),
+        let ink = ui.visuals().warn_fg_color;
+        marked(
+            ui,
+            Mark::Care,
+            &Fact::HashNoLongerProves(hash.to_owned()).say(lang),
+            ink,
         );
     }
     if let Some((from, until)) = checked
         .certificate_life
         .filter(|_| !checked.certificate_is_current)
     {
-        ui.label(
-            egui::RichText::new(format!(
-                "!  {}",
-                Fact::CertificateLife(from.write(), until.write()).say(lang)
-            ))
-            .size(11.0)
-            .color(ui.visuals().warn_fg_color),
+        let ink = ui.visuals().warn_fg_color;
+        marked(
+            ui,
+            Mark::Care,
+            &Fact::CertificateLife(from.write(), until.write()).say(lang),
+            ink,
         );
     }
     small(ui, Fact::RevocationNotChecked.say(lang));
+}
+
+#[cfg(test)]
+mod tests {
+    use pdf_bytes::{ByteStore, SourceId};
+    use pdf_edit::info::{self, Permissions};
+    use pdf_edit::reprotect::Wanted;
+
+    use super::{Security, learn, learn_what_arrived};
+    use crate::window_state::Window;
+
+    fn window() -> Window {
+        Window::new(
+            pdf_app::Editor::stand_in().expect("the stand-in document opens"),
+            std::path::PathBuf::from("/missing/original.pdf"),
+            Vec::new(),
+        )
+    }
+
+    #[test]
+    fn the_properties_open_at_once_and_the_file_is_read_beside_the_window() {
+        let mut window = window();
+        window.open_the_properties();
+        let panel = window.properties.as_mut().expect("the window is up");
+        assert!(
+            panel.file.is_none() && panel.reading.is_some(),
+            "the whole file was not parsed before the window appeared"
+        );
+        let ctx = eframe::egui::Context::default();
+        let started = std::time::Instant::now();
+        while panel.reading.is_some() {
+            learn_what_arrived(panel, &ctx);
+            assert!(started.elapsed() < std::time::Duration::from_secs(20));
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(panel.file.is_some(), "what the file holds arrived");
+    }
+
+    fn locked() -> ByteStore {
+        ByteStore::new(
+            SourceId::new(0),
+            &include_bytes!("../../pdf-edit/tests/data/modifiable-r3.pdf")[..],
+        )
+    }
+
+    fn protection() -> info::Protection {
+        info::Protection {
+            revision: 3,
+            stream_cipher: info::CipherMethod::Aes128,
+            string_cipher: info::CipherMethod::Aes128,
+            access: info::AccessLevel::Owner,
+            may: Permissions::all(),
+        }
+    }
+
+    #[test]
+    fn a_document_that_asks_for_a_password_is_known_to_ask() {
+        let learned = learn(Some(&locked()), b"view");
+        assert!(learned.asks_to_open, "the empty password does not open it");
+        assert!(learned.file.bytes > 0, "the facts about the file came too");
+        let nothing = learn(None, b"");
+        assert!(!nothing.asks_to_open);
+    }
+
+    #[test]
+    fn a_document_that_asks_for_a_password_still_asks_after_its_permissions_are_changed() {
+        let mut security = Security::of(Some(protection()), true);
+        assert!(security.ask_to_open, "the box shows what the file does");
+        security.restrict = true;
+        security.owner = "master".to_owned();
+        security.owner_again = "master".to_owned();
+        assert!(
+            security.asked(Some(protection())).is_none(),
+            "an open password is not dropped without a word: it must be typed again"
+        );
+        security.user = "view".to_owned();
+        security.user_again = "view".to_owned();
+        let Some(Wanted::Protected(asked)) = security.asked(Some(protection())) else {
+            panic!("with both passwords typed the change goes ahead");
+        };
+        assert_eq!(asked.user, b"view");
+        assert_eq!(asked.owner, b"master");
+    }
+
+    #[test]
+    fn a_person_can_still_take_the_open_password_away() {
+        let mut security = Security::of(Some(protection()), true);
+        security.restrict = true;
+        security.owner = "master".to_owned();
+        security.owner_again = "master".to_owned();
+        security.ask_to_open = false;
+        let Some(Wanted::Protected(asked)) = security.asked(Some(protection())) else {
+            panic!("unticking the box is a choice, and it goes ahead");
+        };
+        assert!(asked.user.is_empty());
+    }
 }

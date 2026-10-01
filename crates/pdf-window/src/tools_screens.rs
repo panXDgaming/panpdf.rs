@@ -7,6 +7,7 @@ use pdf_app::wording::{Lang, Tools};
 use pdf_convert::run::{Failure, Outcome};
 use pdf_convert::{Group, Setting, Tool};
 
+pub(crate) use crate::dialog::hairline;
 use crate::tools_marks;
 use crate::tools_page::{ACCENT, ACCENT_HOVER, Act};
 use crate::tools_run::{Saved, Working};
@@ -46,15 +47,6 @@ pub(crate) fn section(ui: &mut egui::Ui, text: &str) {
             .color(weak(ui)),
     );
     ui.add_space(6.0);
-}
-
-pub(crate) fn hairline(ui: &mut egui::Ui) {
-    let (rect, _) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
-    ui.painter().line_segment(
-        [rect.left_center(), rect.right_center()],
-        ui.visuals().widgets.noninteractive.bg_stroke,
-    );
 }
 
 pub(crate) fn primary_button(ui: &mut egui::Ui, text: &str, enabled: bool, width: f32) -> bool {

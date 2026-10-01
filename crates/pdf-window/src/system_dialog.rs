@@ -8,6 +8,7 @@ use std::sync::mpsc::{Receiver, TryRecvError, channel};
 pub(crate) enum Kind {
     Pdfs,
     Pictures,
+    PicturesAndPdfs,
     Endings(&'static [&'static str]),
     Ending(&'static str),
 }
@@ -113,6 +114,7 @@ fn patterns(kind: Kind) -> String {
     match kind {
         Kind::Pdfs => "*.pdf *.PDF".to_owned(),
         Kind::Pictures => "*.png *.jpg *.jpeg *.PNG *.JPG *.JPEG".to_owned(),
+        Kind::PicturesAndPdfs => "*.png *.jpg *.jpeg *.pdf *.PNG *.JPG *.JPEG *.PDF".to_owned(),
         Kind::Endings(endings) => both(endings),
         Kind::Ending(ending) => both(&[ending]),
     }
@@ -123,6 +125,7 @@ fn kind_name(kind: Kind) -> String {
     match kind {
         Kind::Pdfs => "PDF".to_owned(),
         Kind::Pictures => "PNG, JPEG".to_owned(),
+        Kind::PicturesAndPdfs => "PNG, JPEG, PDF".to_owned(),
         Kind::Endings(endings) => endings
             .iter()
             .map(|ending| ending.to_ascii_uppercase())
@@ -280,6 +283,20 @@ mod tests {
         assert!(!save.iter().any(|argument| argument.contains("overwrite")));
         let several = zenity(&question(None, true));
         assert!(several.contains(&"--multiple".to_owned()));
+    }
+
+    #[test]
+    fn the_desktop_dialog_for_the_chat_shows_pictures_and_pdfs() {
+        let mut ask = question(None, false);
+        ask.kind = Kind::PicturesAndPdfs;
+        let shown = zenity(&ask);
+        let filter = shown
+            .iter()
+            .find(|argument| argument.starts_with("--file-filter="))
+            .expect("a filter");
+        assert!(filter.contains("*.pdf"), "{filter}");
+        assert!(filter.contains("*.png"), "{filter}");
+        assert!(filter.contains("*.JPG"), "{filter}");
     }
 
     #[test]
