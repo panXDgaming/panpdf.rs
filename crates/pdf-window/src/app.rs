@@ -244,6 +244,10 @@ impl Window {
             ai: crate::ai_panel::AiState::remembered(),
             #[cfg(not(target_arch = "wasm32"))]
             agents_open: false,
+            #[cfg(not(target_arch = "wasm32"))]
+            tools: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            read_text_after_opening: false,
             painter: Painter::new(),
             tiles: Ledger::new(),
             textures: BTreeMap::new(),
@@ -1492,8 +1496,21 @@ impl eframe::App for Window {
         }
         self.menu_bar(ui);
         self.choose_a_file(&ctx);
-        self.take_dropped_files(&ctx);
+        #[cfg(not(target_arch = "wasm32"))]
+        let given_to_a_tool = self.tools_take_the_drop(&ctx);
+        #[cfg(target_arch = "wasm32")]
+        let given_to_a_tool = false;
+        if !given_to_a_tool {
+            self.take_dropped_files(&ctx);
+        }
         self.ask_for_the_password(&ctx);
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.tools.is_some() {
+            self.tools_screen(ui);
+            self.confirm_leaving(&ctx);
+            self.close_the_frame(&ctx, began);
+            return;
+        }
         if self.home {
             self.status_bar(ui);
             self.home_screen(ui);

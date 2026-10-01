@@ -59,7 +59,7 @@ end of this file, and no other is allowed.
 | `pdf-heap` | Asking the allocator to hand freed memory back to the operating system. The only crate where `unsafe` is allowed, by the design record: four C calls, no dependency, its own lint table so the workspace rule stays `forbid` |
 | `pdf-print` | Printing: which pages, on what paper, how large and how many to a sheet; each sheet drawn as it prints; and the job given to the system's print service -- CUPS over IPP, or Windows's spooler |
 | `pdf-convert` | The one door to the converters of `convert/`: which tools there are, what each takes and makes and every setting and choice it has, as types that need no dependency; and, behind its `run` feature, running one over files with progress, a way to cancel, a worker thread, and the fonts and random bytes the tools ask of their host |
-| `pdf-app` | Editor logic and the window: the product's one front end |
+| `pdf-app` | Editor logic and the window: the product's one front end, with the room in which every converter of `pdf-convert` is run |
 | `pdf-agent` | The engine offered to AI agents over the Model Context Protocol (`panpdf-mcp`): the second front end, with no window |
 
 `/JPXDecode` is a whole second file format rather than a filter, so its decoder
@@ -190,6 +190,30 @@ generator `pdf-security` writes encrypted files with is seeded on the worker,
 from the system when it will give bytes and from the hasher's own random keys
 when it will not, so protecting a file works on Windows as it does elsewhere.
 
+The window reaches that door in one room, the Tools room (2026-10-01), built
+for targets other than the browser. Everything about it that needs no window
+is in `pdf-app`, where it is tested: `pdf_app::tools` says which settings a
+tool shows up front and which under "More settings", what each tool needs
+before its button works (a web page needs its `.html`, comparing needs two
+files, protecting needs a password typed twice the same, a signature needs
+what the way it is made needs), where a result goes and what it is called,
+how a drawn signature is turned into what the signer reads, and which plain
+sentence a failure is put in; and `pdf_app::wording::Tools` holds every
+sentence for every tool, setting and choice, by `match` over the catalogue's
+own enums with no wildcard, so a tool or a setting added to `pdf-convert` does
+not compile until the window can say it. `pdf-window` draws the list of tools,
+a tool's page and its progress, result and failure, and runs a tool with
+`pdf_convert::run::start` on a thread that first reads the files, so the window
+never waits on a disc. The open document is handed to a tool as it is on
+screen, unsaved edits and its password included. A result is written beside
+the file it was made from, into a new folder when it is several files, under
+a name no file has, by the same writer that saves a document and so never over
+the original; and it is held in memory too, so it can be saved again under
+another name. OCR PDF is not run through the vendored tool: it opens the
+window's own recogniser panel, which already manages the recogniser and its
+languages. Choosing the areas to black out in Redact PDF is the one setting the
+room does not offer; its words and the file's own marks are.
+
 Cycles are architecture failures.
 Rendering does not write PDFs. Semantics does not mutate atoms. The writer does
 not infer user intent.
@@ -314,8 +338,8 @@ change here; an edge added needs a reason above.
 | `pdf-heap` | nothing |
 | `pdf-print` | `pdf-bytes`, `pdf-content`, `pdf-render`, `pdf-session`, `pdf-syntax` |
 | `pdf-convert` | every crate in `convert/` and `pdf-content`, only through its `run` feature; `convert-raster`, `pdf-bytes` and `pdf-session` in its tests only |
-| `pdf-app` | `pdf-agent`, `pdf-bytes`, `pdf-cli`, `pdf-content`, `pdf-edit`, `pdf-heap`, `pdf-ocr`, `pdf-paint`, `pdf-print`, `pdf-render`, `pdf-semantics`, `pdf-session`, `pdf-syntax` |
-| `pdf-window` | `pdf-agent`, `pdf-app`, `pdf-bytes`, `pdf-cli`, `pdf-content`, `pdf-edit`, `pdf-heap`, `pdf-ocr`, `pdf-paint`, `pdf-print`, `pdf-render`, `pdf-semantics`, `pdf-session`, `pdf-syntax` |
+| `pdf-app` | `pdf-agent`, `pdf-bytes`, `pdf-cli`, `pdf-content`, `pdf-convert` (its catalogue only, which builds for the browser), `pdf-edit`, `pdf-heap`, `pdf-ocr`, `pdf-paint`, `pdf-print`, `pdf-render`, `pdf-semantics`, `pdf-session`, `pdf-syntax` |
+| `pdf-window` | `pdf-agent`, `pdf-app`, `pdf-bytes`, `pdf-cli`, `pdf-content`, `pdf-convert` (with its `run` feature, on targets other than the browser), `pdf-edit`, `pdf-heap`, `pdf-ocr`, `pdf-paint`, `pdf-print`, `pdf-render`, `pdf-semantics`, `pdf-session`, `pdf-syntax` |
 | `pdf-desktop` | `pdf-app`, `pdf-bytes`, `pdf-cli`, `pdf-edit`, `pdf-semantics`, `pdf-session`, `pdf-window` |
 | `pdf-agent` | `pdf-bytes`, `pdf-cli`, `pdf-content`, `pdf-edit`, `pdf-paint`, `pdf-render`, `pdf-semantics`, `pdf-session` |
 

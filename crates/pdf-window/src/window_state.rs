@@ -898,6 +898,10 @@ pub(crate) struct Window {
     pub(crate) ai: crate::ai_panel::AiState,
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) agents_open: bool,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) tools: Option<crate::tools_room::Room>,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) read_text_after_opening: bool,
     pub(crate) dark: bool,
     pub(crate) dark_chosen: bool,
     pub(crate) asking_to_open: bool,

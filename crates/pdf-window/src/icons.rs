@@ -95,6 +95,11 @@ pub(crate) enum Icon {
         )
     )]
     Assistant,
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(dead_code, reason = "the tools room is not built for the browser")
+    )]
+    Tools,
 }
 
 const WEIGHT: f32 = 0.085;
@@ -239,6 +244,7 @@ impl Icon {
             }
             Self::Stop => pen.block((0.24, 0.24), (0.76, 0.76), 0.08),
             Self::Assistant => assistant(&pen),
+            Self::Tools => toolbox(&pen),
         }
     }
 }
@@ -642,6 +648,13 @@ fn folder(pen: &Pen<'_>) {
         (0.06, 0.84),
     ]);
     pen.line(&[(0.06, 0.42), (0.94, 0.42)]);
+}
+
+fn toolbox(pen: &Pen<'_>) {
+    pen.line(&[(0.32, 0.30), (0.32, 0.14), (0.68, 0.14), (0.68, 0.30)]);
+    pen.frame((0.06, 0.30), (0.94, 0.86), 0.06);
+    pen.line(&[(0.06, 0.56), (0.94, 0.56)]);
+    pen.in_accent(CHAIN).block((0.43, 0.48), (0.57, 0.66), 0.02);
 }
 
 fn assistant(pen: &Pen<'_>) {
@@ -1068,12 +1081,13 @@ mod tests {
             Icon::Send,
             Icon::Stop,
             Icon::Assistant,
+            Icon::Tools,
         ];
         for (step, icon) in every.iter().enumerate() {
             for other in &every[step + 1..] {
                 assert_ne!(icon, other, "two of the same icon");
             }
         }
-        assert_eq!(every.len(), 61);
+        assert_eq!(every.len(), 62);
     }
 }

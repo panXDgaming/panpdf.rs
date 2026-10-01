@@ -655,6 +655,10 @@ impl Window {
         self.ai
             .document_arrived(self.title_for_the_chat(&path), place_of(&path));
         self.opened = path;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.tools = None;
+        }
         self.resume = None;
         self.input = pdf_app::draft::Input::default();
         self.restriction_answered = false;
@@ -778,6 +782,10 @@ impl Window {
         match loading.handle.join() {
             Ok(Opened::Document(editor)) => {
                 self.take_the_document(*editor, loading.path, loading.page);
+                #[cfg(not(target_arch = "wasm32"))]
+                if std::mem::take(&mut self.read_text_after_opening) {
+                    self.open_the_ocr_panel();
+                }
                 if loading.changed_protection {
                     self.protection_changed = true;
                     self.editor.say(Message::Plain(

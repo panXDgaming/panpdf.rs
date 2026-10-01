@@ -20,6 +20,12 @@ pub(crate) enum Offer {
     AnyPdf,
     Pictures,
     ForTheChat,
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(dead_code, reason = "the tools room is not built for the browser")
+    )]
+    Extensions(&'static [&'static str]),
+    Ending(&'static str),
 }
 
 impl Offer {
@@ -33,6 +39,8 @@ impl Offer {
             Self::AnyPdf => is("pdf"),
             Self::Pictures => is("jpg") || is("jpeg") || is("png"),
             Self::ForTheChat => Self::Pictures.takes(path) || Self::AnyPdf.takes(path),
+            Self::Extensions(wanted) => wanted.iter().any(|ending| is(ending)),
+            Self::Ending(ending) => is(ending),
         }
     }
 }
@@ -96,10 +104,10 @@ impl Chooser {
         spread: usize,
         ending: &'static str,
     ) -> Self {
-        let offer = if ending == "pdf" {
-            Offer::AnyPdf
-        } else {
-            Offer::Pictures
+        let offer = match ending {
+            "pdf" => Offer::AnyPdf,
+            "png" | "jpg" => Offer::Pictures,
+            other => Offer::Ending(other),
         };
         Self {
             naming: Some(suggested.to_owned()),
@@ -139,21 +147,23 @@ impl Chooser {
         self.picked = None;
     }
 
-    pub(crate) fn show(&mut self, ctx: &egui::Context, lang: Lang, title: Home) -> Chose {
-        if let Some(chose) = self.ask_the_desktop(ctx, lang, &title) {
+    pub(crate) fn show(&mut self, ctx: &egui::Context, lang: Lang, title: &str) -> Chose {
+        if let Some(chose) = self.ask_the_desktop(ctx, lang, title) {
             return chose;
         }
         self.show_own(ctx, lang, title)
     }
 
-    fn ask_the_desktop(&mut self, ctx: &egui::Context, lang: Lang, title: &Home) -> Option<Chose> {
+    fn ask_the_desktop(&mut self, ctx: &egui::Context, lang: Lang, title: &str) -> Option<Chose> {
         if matches!(self.system, System::Untried) {
             let question = crate::system_dialog::Question {
-                title: Message::Home(title.clone()).say(lang),
+                title: title.to_owned(),
                 folder: std::path::absolute(&self.folder).unwrap_or_else(|_| self.folder.clone()),
                 kind: match self.offer {
                     Offer::Pdfs | Offer::AnyPdf => crate::system_dialog::Kind::Pdfs,
                     Offer::Pictures | Offer::ForTheChat => crate::system_dialog::Kind::Pictures,
+                    Offer::Extensions(endings) => crate::system_dialog::Kind::Endings(endings),
+                    Offer::Ending(ending) => crate::system_dialog::Kind::Ending(ending),
                 },
                 naming: self
                     .naming
@@ -201,14 +211,14 @@ impl Chooser {
         None
     }
 
-    fn show_own(&mut self, ctx: &egui::Context, lang: Lang, title: Home) -> Chose {
+    fn show_own(&mut self, ctx: &egui::Context, lang: Lang, title: &str) -> Chose {
         let say = |home: Home| Message::Home(home).say(lang);
         let mut chose = Chose::Nothing;
         let mut go = None;
         let mut naming = self.naming.take();
         let modal = egui::Modal::new(egui::Id::new("open-a-pdf")).show(ctx, |ui| {
             ui.set_width(560.0);
-            ui.heading(say(title));
+            ui.heading(title);
             ui.add_space(6.0);
             ui.horizontal(|ui| {
                 let up = self.folder.parent().map(Path::to_path_buf);
@@ -245,6 +255,7 @@ impl Chooser {
                         ui.label(say(match self.offer {
                             Offer::Pdfs | Offer::AnyPdf => Home::NoPdfHere,
                             Offer::Pictures | Offer::ForTheChat => Home::NoPictureHere,
+                            Offer::Extensions(_) | Offer::Ending(_) => Home::NoFileHere,
                         }));
                     }
                     for entry in &self.entries {

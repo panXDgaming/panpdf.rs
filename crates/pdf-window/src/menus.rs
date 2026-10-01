@@ -1,7 +1,11 @@
 use eframe::egui;
 use egui::containers::menu::SubMenuButton;
 
+#[cfg(not(target_arch = "wasm32"))]
+use pdf_app::wording::Tools;
 use pdf_app::wording::{Command, Lang, Message};
+#[cfg(not(target_arch = "wasm32"))]
+use pdf_convert::{Group, Tool as Converter};
 
 use crate::window_state::{Tool, Window, set_dark};
 
@@ -27,6 +31,46 @@ const EDIT_MENU_WITH_KEYS: [Command; 8] = [
 ];
 
 const VIEW_MENU_WITH_KEYS: [Command; 3] = [Command::ZoomIn, Command::ZoomOut, Command::ShowFrames];
+
+#[cfg(not(target_arch = "wasm32"))]
+const EXPORT_TO_OFFICE: [Converter; 3] = [
+    Converter::PdfToWord,
+    Converter::PdfToExcel,
+    Converter::PdfToPowerPoint,
+];
+
+#[cfg(not(target_arch = "wasm32"))]
+const EXPORT_TO_THE_WEB: [Converter; 3] = [
+    Converter::PdfToHtml,
+    Converter::PdfToMarkdown,
+    Converter::PdfToText,
+];
+
+#[cfg(not(target_arch = "wasm32"))]
+const EXPORT_TO_ARCHIVE: [Converter; 1] = [Converter::PdfToPdfA];
+
+#[cfg(not(target_arch = "wasm32"))]
+const CREATE_FROM_DOCUMENTS: [Converter; 4] = [
+    Converter::WordToPdf,
+    Converter::ExcelToPdf,
+    Converter::PowerPointToPdf,
+    Converter::HtmlToPdf,
+];
+
+#[cfg(not(target_arch = "wasm32"))]
+const CREATE_FROM_PHOTOS: [Converter; 1] = [Converter::ScanToPdf];
+
+#[cfg(not(target_arch = "wasm32"))]
+const OPTIMIZE: [Converter; 2] = [Converter::Compress, Converter::Repair];
+
+#[cfg(not(target_arch = "wasm32"))]
+const SECURITY: [Converter; 5] = [
+    Converter::Protect,
+    Converter::Unlock,
+    Converter::Sign,
+    Converter::Redact,
+    Converter::Compare,
+];
 
 pub(crate) fn menus_shown(home: bool) -> Vec<Command> {
     let mut shown = vec![Command::File];
@@ -83,11 +127,12 @@ impl Window {
         let lang = self.lang;
         let say = |command| Message::Command(command).say(lang);
         let idle = !self.editor.is_busy() && self.loading.is_none();
-        let with_document = self.has_document() && !self.home;
+        let covered = self.the_tools_room_is_open();
+        let with_document = self.has_document() && !self.home && !covered;
         let working = idle && with_document;
         egui::Panel::top("menu").show(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
-                for menu in menus_shown(self.home) {
+                for menu in menus_shown(self.home || covered) {
                     ui.menu_button(say(menu), |ui| match menu {
                         Command::File => self.file_menu(ui, (idle, working, with_document)),
                         Command::Edit => self.edit_menu(ui, working),
@@ -144,20 +189,41 @@ impl Window {
             ui.close();
         }
         ui.separator();
-        ui.add_enabled_ui(working, |ui| {
+        let exporting = idle && self.has_document();
+        ui.add_enabled_ui(exporting, |ui| {
             ui.menu_button(say(Command::Export), |ui| {
-                if ui.button(say(Command::PagesToPictures)).clicked() {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    self.tool_entries(ui, &EXPORT_TO_OFFICE);
+                    ui.separator();
+                    self.tool_entries(ui, &EXPORT_TO_THE_WEB);
+                    ui.separator();
+                }
+                let pictures = egui::Button::new(say(Command::PagesToPictures));
+                if ui.add_enabled(working, pictures).clicked() {
                     self.open_the_export_panel();
                     ui.close();
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    ui.separator();
+                    self.tool_entries(ui, &EXPORT_TO_ARCHIVE);
                 }
             });
         });
         ui.add_enabled_ui(idle, |ui| {
             ui.menu_button(say(Command::CreateAPdf), |ui| {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    self.tool_entries(ui, &CREATE_FROM_DOCUMENTS);
+                    ui.separator();
+                }
                 if ui.button(say(Command::PicturesToPdf)).clicked() {
                     self.choose_pictures(None);
                     ui.close();
                 }
+                #[cfg(not(target_arch = "wasm32"))]
+                self.tool_entries(ui, &CREATE_FROM_PHOTOS);
             });
         });
         ui.separator();
@@ -326,6 +392,27 @@ impl Window {
         let say = |command| Message::Command(command).say(lang);
         #[cfg(not(target_arch = "wasm32"))]
         {
+            let idle = !self.editor.is_busy() && self.loading.is_none();
+            let all = egui::Button::new(Tools::AllTools.say(lang));
+            if ui.add_enabled(idle, all).clicked() {
+                self.open_the_tools(None);
+                ui.close();
+            }
+            ui.separator();
+            for (group, these) in [
+                (Group::Optimize, &OPTIMIZE[..]),
+                (Group::Security, &SECURITY[..]),
+            ] {
+                ui.add_enabled_ui(idle, |ui| {
+                    ui.menu_button(Tools::GroupName(group).say(lang), |ui| {
+                        self.tool_entries(ui, these);
+                    });
+                });
+            }
+            ui.separator();
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
             let assistant = menu_item(&ctx, lang, Command::AiAssistant).selected(self.ai.open);
             if ui.add_enabled(with_document, assistant).clicked() {
                 self.toggle_the_assistant(&ctx);
@@ -407,6 +494,28 @@ impl Window {
                     let _ = ui.radio_value(&mut self.lang, language, named);
                 }
             });
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn tool_entries(&mut self, ui: &mut egui::Ui, these: &[Converter]) {
+        let lang = self.lang;
+        for tool in these {
+            if ui.button(Tools::Entry(*tool).say(lang)).clicked() {
+                self.open_the_tools(Some(*tool));
+                ui.close();
+            }
+        }
+    }
+
+    fn the_tools_room_is_open(&self) -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.tools.is_some()
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            false
         }
     }
 

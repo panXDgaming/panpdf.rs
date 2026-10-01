@@ -8,6 +8,8 @@ use std::sync::mpsc::{Receiver, TryRecvError, channel};
 pub(crate) enum Kind {
     Pdfs,
     Pictures,
+    Endings(&'static [&'static str]),
+    Ending(&'static str),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -95,10 +97,38 @@ fn programs(_question: &Question) -> Vec<(String, Vec<String>)> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn patterns(kind: Kind) -> &'static str {
+fn patterns(kind: Kind) -> String {
+    let both = |endings: &[&str]| {
+        endings
+            .iter()
+            .flat_map(|ending| {
+                [
+                    format!("*.{}", ending.to_ascii_lowercase()),
+                    format!("*.{}", ending.to_ascii_uppercase()),
+                ]
+            })
+            .collect::<Vec<String>>()
+            .join(" ")
+    };
     match kind {
-        Kind::Pdfs => "*.pdf *.PDF",
-        Kind::Pictures => "*.png *.jpg *.jpeg *.PNG *.JPG *.JPEG",
+        Kind::Pdfs => "*.pdf *.PDF".to_owned(),
+        Kind::Pictures => "*.png *.jpg *.jpeg *.PNG *.JPG *.JPEG".to_owned(),
+        Kind::Endings(endings) => both(endings),
+        Kind::Ending(ending) => both(&[ending]),
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn kind_name(kind: Kind) -> String {
+    match kind {
+        Kind::Pdfs => "PDF".to_owned(),
+        Kind::Pictures => "PNG, JPEG".to_owned(),
+        Kind::Endings(endings) => endings
+            .iter()
+            .map(|ending| ending.to_ascii_uppercase())
+            .collect::<Vec<String>>()
+            .join(", "),
+        Kind::Ending(ending) => ending.to_ascii_uppercase(),
     }
 }
 
@@ -117,12 +147,9 @@ pub(crate) fn zenity(question: &Question) -> Vec<String> {
         format!("--title={}", question.title),
         format!("--filename={}", start(question)),
     ];
-    let name = match question.kind {
-        Kind::Pdfs => "PDF",
-        Kind::Pictures => "PNG, JPEG",
-    };
     arguments.push(format!(
-        "--file-filter={name} | {}",
+        "--file-filter={} | {}",
+        kind_name(question.kind),
         patterns(question.kind)
     ));
     if question.naming.is_some() {

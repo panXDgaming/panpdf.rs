@@ -183,10 +183,11 @@ impl Window {
                 pdf_app::wording::Home::FilesForTheChat
             }
         };
-        match chooser.show(ctx, self.lang, title) {
+        match chooser.show(ctx, self.lang, &Message::Home(title).say(self.lang)) {
             Chose::Nothing => {}
             Chose::Cancelled => {
                 self.chooser = None;
+                self.forget_the_wish_to_read_text();
                 self.saving_then_leaving = None;
                 self.choosing_for = crate::page_actions::Choosing::Open;
             }
@@ -265,6 +266,28 @@ impl Window {
         });
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    fn the_tools_tile(&mut self, ui: &mut egui::Ui, wide: f32, idle: bool) {
+        let words = |sentence: pdf_app::wording::Tools| sentence.say(self.lang);
+        if action_tile(
+            ui,
+            wide,
+            Icon::Tools,
+            &words(pdf_app::wording::Tools::HomeTile),
+            &words(pdf_app::wording::Tools::HomeTileHelp),
+            idle,
+        ) {
+            self.open_the_tools(None);
+        }
+    }
+
+    pub(crate) fn forget_the_wish_to_read_text(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.read_text_after_opening = false;
+        }
+    }
+
     fn home_column(&mut self, ui: &mut egui::Ui, idle: bool, say: &dyn Fn(Home) -> String) {
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new("PanPDF").size(26.0).strong());
@@ -324,6 +347,12 @@ impl Window {
                 self.asking_to_open = true;
             }
         });
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            ui.add_space(between);
+            let wide = 2.0 * tile + between + ui.spacing().item_spacing.x;
+            self.the_tools_tile(ui, wide, idle);
+        }
         ui.add_space(28.0);
         ui.label(
             egui::RichText::new(say(Home::Recent))

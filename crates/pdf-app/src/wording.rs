@@ -2,11 +2,13 @@ mod controls;
 mod edits;
 mod facts;
 mod home;
+mod tools;
 
 pub use controls::Control;
 pub use edits::{BlockMove, Done, Hidden, Layout, LayoutWhy, PictureMove, Refusal, Side, StampWhy};
 pub use facts::Fact;
 pub use home::Home;
+pub use tools::Tools;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Lang {

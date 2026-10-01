@@ -59,6 +59,18 @@ mod status_line;
 mod system_dialog;
 mod take_out;
 mod text;
+#[cfg(not(target_arch = "wasm32"))]
+mod tools_marks;
+#[cfg(not(target_arch = "wasm32"))]
+mod tools_page;
+#[cfg(not(target_arch = "wasm32"))]
+mod tools_room;
+#[cfg(not(target_arch = "wasm32"))]
+mod tools_run;
+#[cfg(not(target_arch = "wasm32"))]
+mod tools_screens;
+#[cfg(not(target_arch = "wasm32"))]
+mod tools_settings;
 mod trace;
 mod unlock;
 mod window_state;

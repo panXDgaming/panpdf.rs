@@ -29,6 +29,7 @@ pub mod recent;
 pub mod speed;
 pub mod strip;
 pub mod tiles;
+pub mod tools;
 pub mod trouble;
 pub mod view;
 pub mod wording;
