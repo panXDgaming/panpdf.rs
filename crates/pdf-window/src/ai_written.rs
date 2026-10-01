@@ -99,13 +99,8 @@ fn draw_block(ui: &mut egui::Ui, block: &Block, place: &mut Place) {
 fn quoted(ui: &mut egui::Ui, blocks: &[Block], place: &mut Place) {
     let colour = ui.visuals().weak_text_color().gamma_multiply(0.6);
     let step = body(ui);
-    ui.horizontal(|ui| {
-        let (bar, _) = ui.allocate_exact_size(
-            egui::vec2(2.0, ui.available_height().max(step)),
-            egui::Sense::hover(),
-        );
-        ui.painter().rect_filled(bar, 1.0, colour);
-        ui.add_space(step * QUOTE_INDENT);
+    let shown = ui.horizontal(|ui| {
+        ui.add_space(step * QUOTE_INDENT + 2.0);
         ui.vertical(|ui| {
             let mut inside = Place {
                 salt: place.salt,
@@ -117,6 +112,12 @@ fn quoted(ui: &mut egui::Ui, blocks: &[Block], place: &mut Place) {
             place.fences = inside.fences;
         });
     });
+    let rect = shown.response.rect;
+    let bar = egui::Rect::from_min_max(
+        rect.left_top(),
+        egui::pos2(rect.left() + 2.0, rect.bottom()),
+    );
+    ui.painter().rect_filled(bar, 1.0, colour);
 }
 
 fn listed(ui: &mut egui::Ui, list: &List, place: &mut Place) {
@@ -188,7 +189,7 @@ fn set_cell(ui: &mut egui::Ui, cell: &[Inline], align: Option<Align>, heading: b
             strong: heading,
             ..Style::plain(ui)
         };
-        run(ui, cell, style, lang);
+        run(ui, cell, style, lang, None);
     });
 }
 
@@ -277,48 +278,94 @@ impl Style {
     }
 }
 
-fn lines_of(ui: &mut egui::Ui, inlines: &[Inline], style: Style, lang: Lang) {
-    let mut line: Vec<Inline> = Vec::new();
+fn split_lines(inlines: &[Inline]) -> Vec<Vec<Inline>> {
+    let mut lines: Vec<Vec<Inline>> = vec![Vec::new()];
     for piece in inlines {
-        if matches!(piece, Inline::Hard) {
-            wrapped(ui, &line, style, lang);
-            line.clear();
-        } else {
-            line.push(piece.clone());
+        match piece {
+            Inline::Hard => lines.push(Vec::new()),
+            Inline::Emphasis(inside) => split_inside(&mut lines, inside, Inline::Emphasis),
+            Inline::Strong(inside) => split_inside(&mut lines, inside, Inline::Strong),
+            Inline::Strike(inside) => split_inside(&mut lines, inside, Inline::Strike),
+            Inline::Link { to, text } => split_inside(&mut lines, text, |text| Inline::Link {
+                to: to.clone(),
+                text,
+            }),
+            other => {
+                if let Some(line) = lines.last_mut() {
+                    line.push(other.clone());
+                }
+            }
         }
     }
-    wrapped(ui, &line, style, lang);
+    lines
+}
+
+fn split_inside(
+    lines: &mut Vec<Vec<Inline>>,
+    inside: &[Inline],
+    make: impl Fn(Vec<Inline>) -> Inline,
+) {
+    for (at, part) in split_lines(inside).into_iter().enumerate() {
+        if at > 0 {
+            lines.push(Vec::new());
+        }
+        if !part.is_empty()
+            && let Some(line) = lines.last_mut()
+        {
+            line.push(make(part));
+        }
+    }
+}
+
+fn lines_of(ui: &mut egui::Ui, inlines: &[Inline], style: Style, lang: Lang) {
+    let mut lines = split_lines(inlines);
+    while lines.len() > 1 && lines.last().is_some_and(Vec::is_empty) {
+        lines.pop();
+    }
+    for line in &lines {
+        wrapped(ui, line, style, lang);
+    }
 }
 
 fn wrapped(ui: &mut egui::Ui, inlines: &[Inline], style: Style, lang: Lang) {
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
-        run(ui, inlines, style, lang);
+        run(ui, inlines, style, lang, None);
     });
 }
 
-fn run(ui: &mut egui::Ui, inlines: &[Inline], style: Style, lang: Lang) {
+fn words(ui: &mut egui::Ui, rich: egui::RichText, address: Option<&str>) {
+    let Some(to) = address else {
+        ui.add(egui::Label::new(rich).selectable(true).wrap());
+        return;
+    };
+    let response = ui
+        .add(egui::Label::new(rich).sense(egui::Sense::click()).wrap())
+        .on_hover_text(to);
+    if response.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    if response.clicked() && web_address(to) {
+        ui.ctx().open_url(egui::OpenUrl::new_tab(to));
+    }
+}
+
+fn run(ui: &mut egui::Ui, inlines: &[Inline], style: Style, lang: Lang, address: Option<&str>) {
     for piece in inlines {
         match piece {
-            Inline::Text(text) => {
-                ui.add(egui::Label::new(style.apply(text)).selectable(true).wrap());
-            }
+            Inline::Text(text) => words(ui, style.apply(text), address),
             Inline::Soft | Inline::Hard => {
                 ui.add(egui::Label::new(style.apply(" ")).selectable(false));
             }
-            Inline::Code(text) => {
-                ui.add(
-                    egui::Label::new(
-                        Style {
-                            code: true,
-                            ..style
-                        }
-                        .apply(text),
-                    )
-                    .selectable(true)
-                    .wrap(),
-                );
-            }
+            Inline::Code(text) => words(
+                ui,
+                Style {
+                    code: true,
+                    ..style
+                }
+                .apply(text),
+                address,
+            ),
             Inline::Emphasis(inside) => run(
                 ui,
                 inside,
@@ -327,6 +374,7 @@ fn run(ui: &mut egui::Ui, inlines: &[Inline], style: Style, lang: Lang) {
                     ..style
                 },
                 lang,
+                address,
             ),
             Inline::Strong(inside) => run(
                 ui,
@@ -336,6 +384,7 @@ fn run(ui: &mut egui::Ui, inlines: &[Inline], style: Style, lang: Lang) {
                     ..style
                 },
                 lang,
+                address,
             ),
             Inline::Strike(inside) => run(
                 ui,
@@ -345,28 +394,14 @@ fn run(ui: &mut egui::Ui, inlines: &[Inline], style: Style, lang: Lang) {
                     ..style
                 },
                 lang,
+                address,
             ),
             Inline::Link { to, text } => {
-                let colour = ui.visuals().hyperlink_color;
                 let style = Style {
-                    link: Some(colour),
+                    link: Some(ui.visuals().hyperlink_color),
                     ..style
                 };
-                let from = ui.cursor().min;
-                run(ui, text, style, lang);
-                let to = to.clone();
-                let rect = egui::Rect::from_min_max(from, ui.cursor().min);
-                let clicked = ui
-                    .interact(
-                        rect,
-                        egui::Id::new(&to).with(from.x.to_bits()),
-                        egui::Sense::click(),
-                    )
-                    .on_hover_text(&to)
-                    .clicked();
-                if clicked && web_address(&to) {
-                    ui.ctx().open_url(egui::OpenUrl::new_tab(to));
-                }
+                run(ui, text, style, lang, Some(to));
             }
             Inline::Image { at, text } => {
                 let shown = if text.is_empty() {
@@ -374,18 +409,28 @@ fn run(ui: &mut egui::Ui, inlines: &[Inline], style: Style, lang: Lang) {
                 } else {
                     pdf_agent::markup::tree::plain(text)
                 };
-                ui.add(
-                    egui::Label::new(
-                        Style {
-                            italic: true,
-                            ..style
-                        }
-                        .apply(&format!("\u{1f5bc} {shown}")),
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    let (rect, _) =
+                        ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
+                    crate::icons::Icon::Picture.draw(
+                        ui.painter(),
+                        rect,
+                        ui.visuals().weak_text_color(),
+                    );
+                    ui.add(
+                        egui::Label::new(
+                            Style {
+                                italic: true,
+                                ..style
+                            }
+                            .apply(&shown),
+                        )
+                        .selectable(true)
+                        .wrap(),
                     )
-                    .selectable(true)
-                    .wrap(),
-                )
-                .on_hover_text(at);
+                    .on_hover_text(at);
+                });
             }
         }
     }
@@ -398,7 +443,11 @@ fn web_address(to: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::web_address;
+    use eframe::egui;
+    use pdf_agent::markup::tree::Inline;
+    use pdf_app::wording::Lang;
+
+    use super::{split_lines, web_address, written};
 
     #[test]
     fn only_a_page_on_the_web_is_opened() {
@@ -410,5 +459,175 @@ mod tests {
         assert!(!web_address("/home/someone/.ssh/id_rsa"));
         assert!(!web_address("mailto:somebody@example.org"));
         assert!(!web_address(""));
+    }
+
+    fn text(said: &str) -> Inline {
+        Inline::Text(said.to_owned())
+    }
+
+    #[test]
+    fn a_hard_break_inside_strong_text_still_breaks_the_line() {
+        let lines = split_lines(&[Inline::Strong(vec![text("one"), Inline::Hard, text("two")])]);
+        assert_eq!(
+            lines,
+            vec![
+                vec![Inline::Strong(vec![text("one")])],
+                vec![Inline::Strong(vec![text("two")])],
+            ]
+        );
+    }
+
+    #[test]
+    fn a_hard_break_deep_inside_marks_and_a_link_breaks_each_piece_of_it() {
+        let to = "https://example.org".to_owned();
+        let lines = split_lines(&[
+            text("a"),
+            Inline::Emphasis(vec![Inline::Link {
+                to: to.clone(),
+                text: vec![text("b"), Inline::Hard, text("c")],
+            }]),
+            Inline::Hard,
+            text("d"),
+        ]);
+        assert_eq!(
+            lines,
+            vec![
+                vec![
+                    text("a"),
+                    Inline::Emphasis(vec![Inline::Link {
+                        to: to.clone(),
+                        text: vec![text("b")]
+                    }])
+                ],
+                vec![Inline::Emphasis(vec![Inline::Link {
+                    to,
+                    text: vec![text("c")]
+                }])],
+                vec![text("d")],
+            ]
+        );
+    }
+
+    #[test]
+    fn lines_with_no_break_stay_one_line_and_a_trailing_break_is_empty() {
+        assert_eq!(
+            split_lines(&[text("a"), Inline::Soft, text("b")]),
+            vec![vec![text("a"), Inline::Soft, text("b")]]
+        );
+        assert_eq!(
+            split_lines(&[text("a"), Inline::Hard]),
+            vec![vec![text("a")], Vec::new()]
+        );
+        assert_eq!(split_lines(&[]), vec![Vec::<Inline>::new()]);
+    }
+
+    fn frame(events: Vec<egui::Event>) -> egui::RawInput {
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(400.0, 300.0),
+            )),
+            events,
+            ..egui::RawInput::default()
+        }
+    }
+
+    fn opened_after_clicking(source: &str, along: f32) -> Vec<String> {
+        let ctx = egui::Context::default();
+        let draw = |raw: egui::RawInput| {
+            let mut seen = (egui::Rect::NOTHING, 14.0);
+            let output = ctx.run_ui(raw, |ui| {
+                let before = ui.cursor().min;
+                written(ui, source, "test", Lang::English);
+                seen = (
+                    egui::Rect::from_min_max(before, ui.min_rect().max),
+                    egui::TextStyle::Body.resolve(ui.style()).size,
+                );
+            });
+            (output, seen)
+        };
+        let (_, (start, size)) = draw(frame(Vec::new()));
+        let at = egui::pos2(start.left() + along * size, start.top() + size * 0.7);
+        let _ = draw(frame(vec![egui::Event::PointerMoved(at)]));
+        let press = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let _ = draw(frame(vec![press(true)]));
+        let (output, _) = draw(frame(vec![press(false)]));
+        output
+            .platform_output
+            .commands
+            .into_iter()
+            .filter_map(|command| match command {
+                egui::OutputCommand::OpenUrl(open) => Some(open.url),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn clicking_the_words_of_a_link_opens_its_page() {
+        let opened = opened_after_clicking("see [the docs](https://example.org/x) now", 5.0);
+        assert_eq!(opened, ["https://example.org/x"]);
+    }
+
+    #[test]
+    fn clicking_the_words_of_a_link_that_is_in_bold_opens_its_page() {
+        let opened = opened_after_clicking("**[docs](https://example.org/b)** here", 1.0);
+        assert_eq!(opened, ["https://example.org/b"]);
+    }
+
+    #[test]
+    fn clicking_text_that_is_not_a_link_opens_nothing() {
+        let opened = opened_after_clicking("see [the docs](https://example.org/x) now", 1.0);
+        assert!(opened.is_empty(), "{opened:?}");
+    }
+
+    #[test]
+    fn a_link_to_a_file_is_not_opened_whatever_is_clicked() {
+        let opened = opened_after_clicking("[secrets](file:///etc/shadow)", 1.0);
+        assert!(opened.is_empty(), "{opened:?}");
+    }
+
+    fn bars_beside(source: &str) -> (egui::Rect, Vec<egui::Rect>) {
+        let ctx = egui::Context::default();
+        let mut whole = egui::Rect::NOTHING;
+        let output = ctx.run_ui(frame(Vec::new()), |ui| {
+            let before = ui.cursor().min;
+            written(ui, source, "bars", Lang::English);
+            whole = egui::Rect::from_min_max(before, ui.min_rect().max);
+        });
+        let mut bars = Vec::new();
+        for clipped in output.shapes {
+            if let egui::epaint::Shape::Rect(rect) = clipped.shape
+                && (rect.rect.width() - 2.0).abs() < 0.01
+            {
+                bars.push(rect.rect);
+            }
+        }
+        (whole, bars)
+    }
+
+    #[test]
+    fn a_quote_of_several_paragraphs_has_a_rule_as_tall_as_all_of_it() {
+        let (whole, bars) =
+            bars_beside("> first paragraph\n>\n> second paragraph\n>\n> third paragraph");
+        assert_eq!(bars.len(), 1, "{bars:?}");
+        assert!(
+            bars[0].height() >= whole.height() - 1.0,
+            "the rule is {} high beside {} of quote",
+            bars[0].height(),
+            whole.height()
+        );
+    }
+
+    #[test]
+    fn a_one_line_quote_has_a_one_line_rule() {
+        let (whole, bars) = bars_beside("> short");
+        assert_eq!(bars.len(), 1);
+        assert!((bars[0].height() - whole.height()).abs() < 2.0);
     }
 }

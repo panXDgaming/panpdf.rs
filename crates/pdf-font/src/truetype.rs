@@ -306,7 +306,9 @@ impl TrueTypeFont {
             let text = self.data.get(start..start.checked_add(bytes)?)?;
             let decoded = match platform {
                 0 | 3 => text
-                    .chunks_exact(2)
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
                     .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
                     .map(|unit| u8::try_from(unit).ok().map(char::from))
                     .collect::<Option<String>>(),

@@ -381,12 +381,165 @@ dependencies = [
 ]
 
 [[package]]
+name = "compare-pdf"
+version = "0.1.0"
+dependencies = [
+ "convert-cli",
+ "convert-pdftool",
+ "convert-structure",
+ "pdf-content",
+ "pdf-edit",
+ "pdf-render",
+]
+
+[[package]]
+name = "compress-pdf"
+version = "0.1.0"
+dependencies = [
+ "convert-files",
+ "convert-pdfdoc",
+ "convert-raster",
+ "pdf-bytes",
+ "pdf-content",
+ "pdf-paint",
+ "pdf-session",
+]
+
+[[package]]
 name = "concurrent-queue"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ca0197aee26d1ae37445ee532fefce43251d24cc7c166799f4d46817f1d3973"
 dependencies = [
  "crossbeam-utils",
+]
+
+[[package]]
+name = "convert-cli"
+version = "0.1.0"
+dependencies = [
+ "convert-structure",
+ "convert-zip",
+ "pdf-content",
+]
+
+[[package]]
+name = "convert-drawingml"
+version = "0.1.0"
+dependencies = [
+ "convert-office-read",
+ "convert-pdf-canvas",
+]
+
+[[package]]
+name = "convert-files"
+version = "0.1.0"
+dependencies = [
+ "convert-zip",
+]
+
+[[package]]
+name = "convert-gif"
+version = "0.1.0"
+
+[[package]]
+name = "convert-layout"
+version = "0.1.0"
+dependencies = [
+ "convert-pdf-canvas",
+ "convert-svg",
+ "pdf-edit",
+ "pdf-font",
+]
+
+[[package]]
+name = "convert-office-read"
+version = "0.1.0"
+dependencies = [
+ "convert-zip",
+ "pdf-syntax",
+]
+
+[[package]]
+name = "convert-ooxml"
+version = "0.1.0"
+dependencies = [
+ "convert-structure",
+ "convert-xml",
+ "convert-zip",
+]
+
+[[package]]
+name = "convert-pdf-canvas"
+version = "0.1.0"
+dependencies = [
+ "convert-gif",
+ "pdf-font",
+ "pdf-syntax",
+]
+
+[[package]]
+name = "convert-pdfdoc"
+version = "0.1.0"
+dependencies = [
+ "pdf-bytes",
+ "pdf-security",
+ "pdf-syntax",
+]
+
+[[package]]
+name = "convert-pdftool"
+version = "0.1.0"
+
+[[package]]
+name = "convert-raster"
+version = "0.1.0"
+dependencies = [
+ "pdf-bytes",
+ "pdf-edit",
+ "pdf-paint",
+ "pdf-render",
+ "pdf-syntax",
+]
+
+[[package]]
+name = "convert-structure"
+version = "0.1.0"
+dependencies = [
+ "pdf-bytes",
+ "pdf-content",
+ "pdf-edit",
+ "pdf-paint",
+ "pdf-render",
+ "pdf-semantics",
+ "pdf-session",
+ "pdf-syntax",
+]
+
+[[package]]
+name = "convert-svg"
+version = "0.1.0"
+dependencies = [
+ "convert-pdf-canvas",
+]
+
+[[package]]
+name = "convert-wasm"
+version = "0.1.0"
+dependencies = [
+ "convert-structure",
+ "convert-zip",
+]
+
+[[package]]
+name = "convert-xml"
+version = "0.1.0"
+
+[[package]]
+name = "convert-zip"
+version = "0.1.0"
+dependencies = [
+ "pdf-syntax",
 ]
 
 [[package]]
@@ -754,6 +907,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1a05365e3b1c6d1650318537c7460c6923f1abdd272ad6842baa2b509957a06"
 dependencies = [
  "num-traits",
+]
+
+[[package]]
+name = "excel-to-pdf"
+version = "0.1.0"
+dependencies = [
+ "convert-cli",
+ "convert-drawingml",
+ "convert-office-read",
+ "convert-pdf-canvas",
+ "convert-structure",
+ "convert-wasm",
 ]
 
 [[package]]
@@ -1136,6 +1301,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dfa686283ad6dd069f105e5ab091b04c62850d3e4cf5d67debad1933f55023df"
 
 [[package]]
+name = "html-to-pdf"
+version = "0.1.0"
+dependencies = [
+ "convert-cli",
+ "convert-gif",
+ "convert-layout",
+ "convert-structure",
+ "convert-svg",
+ "convert-wasm",
+]
+
+[[package]]
 name = "hybrid-array"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1307,6 +1484,21 @@ dependencies = [
  "num-traits",
  "png",
  "tiff",
+]
+
+[[package]]
+name = "image-to-pdf"
+version = "0.1.0"
+dependencies = [
+ "convert-files",
+ "convert-gif",
+ "convert-pdfdoc",
+ "convert-raster",
+ "pdf-bytes",
+ "pdf-content",
+ "pdf-edit",
+ "pdf-paint",
+ "pdf-session",
 ]
 
 [[package]]
@@ -1994,6 +2186,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "ocr-pdf"
+version = "0.1.0"
+dependencies = [
+ "convert-files",
+ "convert-pdfdoc",
+ "pdf-bytes",
+ "pdf-content",
+ "pdf-edit",
+ "pdf-ocr",
+ "pdf-paint",
+ "pdf-render",
+ "pdf-session",
+ "pdf-syntax",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2048,11 +2256,13 @@ dependencies = [
  "pdf-bytes",
  "pdf-cli",
  "pdf-content",
+ "pdf-convert",
  "pdf-edit",
  "pdf-paint",
  "pdf-render",
  "pdf-semantics",
  "pdf-session",
+ "pdf-syntax",
 ]
 
 [[package]]
@@ -2063,6 +2273,7 @@ dependencies = [
  "pdf-bytes",
  "pdf-cli",
  "pdf-content",
+ "pdf-convert",
  "pdf-edit",
  "pdf-ocr",
  "pdf-paint",
@@ -2103,6 +2314,42 @@ dependencies = [
  "pdf-font",
  "pdf-security",
  "pdf-syntax",
+]
+
+[[package]]
+name = "pdf-convert"
+version = "0.1.0"
+dependencies = [
+ "compare-pdf",
+ "compress-pdf",
+ "convert-files",
+ "convert-pdfdoc",
+ "convert-pdftool",
+ "convert-raster",
+ "convert-structure",
+ "excel-to-pdf",
+ "html-to-pdf",
+ "image-to-pdf",
+ "ocr-pdf",
+ "pdf-bytes",
+ "pdf-content",
+ "pdf-session",
+ "pdf-to-excel",
+ "pdf-to-html",
+ "pdf-to-image",
+ "pdf-to-markdown",
+ "pdf-to-pdfa",
+ "pdf-to-powerpoint",
+ "pdf-to-text",
+ "pdf-to-word",
+ "powerpoint-to-pdf",
+ "protect-pdf",
+ "redact-pdf",
+ "repair-pdf",
+ "scan-to-pdf",
+ "sign-pdf",
+ "unlock-pdf",
+ "word-to-pdf",
 ]
 
 [[package]]
@@ -2233,6 +2480,92 @@ dependencies = [
 ]
 
 [[package]]
+name = "pdf-to-excel"
+version = "0.1.0"
+dependencies = [
+ "convert-cli",
+ "convert-ooxml",
+ "convert-structure",
+ "convert-wasm",
+ "convert-xml",
+ "convert-zip",
+]
+
+[[package]]
+name = "pdf-to-html"
+version = "0.1.0"
+dependencies = [
+ "convert-cli",
+ "convert-structure",
+ "convert-wasm",
+ "convert-xml",
+]
+
+[[package]]
+name = "pdf-to-image"
+version = "0.1.0"
+dependencies = [
+ "convert-cli",
+ "convert-files",
+ "convert-raster",
+ "pdf-bytes",
+ "pdf-content",
+ "pdf-paint",
+ "pdf-render",
+ "pdf-session",
+]
+
+[[package]]
+name = "pdf-to-markdown"
+version = "0.1.0"
+dependencies = [
+ "convert-cli",
+ "convert-structure",
+ "convert-wasm",
+]
+
+[[package]]
+name = "pdf-to-pdfa"
+version = "0.1.0"
+dependencies = [
+ "convert-pdfdoc",
+ "convert-pdftool",
+]
+
+[[package]]
+name = "pdf-to-powerpoint"
+version = "0.1.0"
+dependencies = [
+ "convert-cli",
+ "convert-ooxml",
+ "convert-structure",
+ "convert-wasm",
+ "convert-xml",
+ "convert-zip",
+]
+
+[[package]]
+name = "pdf-to-text"
+version = "0.1.0"
+dependencies = [
+ "convert-cli",
+ "convert-structure",
+ "convert-wasm",
+]
+
+[[package]]
+name = "pdf-to-word"
+version = "0.1.0"
+dependencies = [
+ "convert-cli",
+ "convert-ooxml",
+ "convert-structure",
+ "convert-wasm",
+ "convert-xml",
+ "convert-zip",
+]
+
+[[package]]
 name = "pdf-window"
 version = "0.1.0"
 dependencies = [
@@ -2243,6 +2576,7 @@ dependencies = [
  "pdf-bytes",
  "pdf-cli",
  "pdf-content",
+ "pdf-convert",
  "pdf-edit",
  "pdf-heap",
  "pdf-ocr",
@@ -2383,6 +2717,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "powerpoint-to-pdf"
+version = "0.1.0"
+dependencies = [
+ "convert-cli",
+ "convert-drawingml",
+ "convert-office-read",
+ "convert-pdf-canvas",
+ "convert-structure",
+ "convert-wasm",
+]
+
+[[package]]
 name = "presser"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2411,6 +2757,15 @@ name = "profiling"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d595e54a326bc53c1c197b32d295e14b169e3cfeaa8dc82b529f947fba6bcf5"
+
+[[package]]
+name = "protect-pdf"
+version = "0.1.0"
+dependencies = [
+ "convert-pdfdoc",
+ "convert-pdftool",
+ "pdf-security",
+]
 
 [[package]]
 name = "pxfm"
@@ -2498,6 +2853,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "redact-pdf"
+version = "0.1.0"
+dependencies = [
+ "convert-cli",
+ "convert-pdfdoc",
+ "convert-pdftool",
+ "pdf-bytes",
+ "pdf-content",
+ "pdf-edit",
+ "pdf-paint",
+ "pdf-render",
+ "pdf-session",
+]
+
+[[package]]
 name = "redox_syscall"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2529,6 +2899,14 @@ name = "renderdoc-sys"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19b30a45b0cd0bcca8037f3d0dc3421eaf95327a17cad11964fb8179b4fc4832"
+
+[[package]]
+name = "repair-pdf"
+version = "0.1.0"
+dependencies = [
+ "convert-pdfdoc",
+ "convert-pdftool",
+]
 
 [[package]]
 name = "rustc-hash"
@@ -2611,6 +2989,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "scan-to-pdf"
+version = "0.1.0"
+dependencies = [
+ "convert-files",
+ "convert-raster",
+ "image-to-pdf",
+]
+
+[[package]]
 name = "scoped-tls"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2669,6 +3056,20 @@ name = "shlex"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
+
+[[package]]
+name = "sign-pdf"
+version = "0.1.0"
+dependencies = [
+ "convert-cli",
+ "convert-pdfdoc",
+ "convert-pdftool",
+ "pdf-bytes",
+ "pdf-content",
+ "pdf-edit",
+ "pdf-paint",
+ "pdf-session",
+]
 
 [[package]]
 name = "simd-adler32"
@@ -3041,6 +3442,14 @@ name = "unicode-width"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4ac048d71ede7ee76d585517add45da530660ef4390e49b098733c6e897f254"
+
+[[package]]
+name = "unlock-pdf"
+version = "0.1.0"
+dependencies = [
+ "convert-pdfdoc",
+ "convert-pdftool",
+]
 
 [[package]]
 name = "url"
@@ -3878,6 +4287,17 @@ name = "wit-bindgen"
 version = "0.57.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
+
+[[package]]
+name = "word-to-pdf"
+version = "0.1.0"
+dependencies = [
+ "convert-cli",
+ "convert-layout",
+ "convert-office-read",
+ "convert-structure",
+ "convert-wasm",
+]
 
 [[package]]
 name = "writeable"

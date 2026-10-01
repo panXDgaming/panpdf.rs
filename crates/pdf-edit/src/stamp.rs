@@ -225,10 +225,8 @@ fn frame_for(crop: [f64; 4], stamp: &Stamp, width: f64) -> Result<[f64; 4], Spik
 }
 
 fn width_of(page: &PlannerPage<'_>, new: &NewText<'_>) -> Result<f64, SpikeError> {
-    let face = crate::new_text::face_for(page, new)?;
-    let embeddable = crate::new_font::Embeddable::of(&face.program)
-        .ok_or_else(|| refused("the face chosen cannot be embedded yet"))?;
-    let paragraphs = crate::new_text::shape(new.text, &face, embeddable, new.size)?;
+    let faces = crate::new_text::faces_for(page, new)?;
+    let paragraphs = crate::new_text::shape(new.text, &faces, new.size)?;
     Ok(paragraphs
         .iter()
         .flatten()

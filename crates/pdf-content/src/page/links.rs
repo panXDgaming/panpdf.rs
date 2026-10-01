@@ -282,12 +282,7 @@ impl LinkResolver {
             .ok_or_else(|| PageContentError::new(PageContentErrorKind::InvalidAnnotationRect))?;
         let quad_points = entry(entries, source, b"/QuadPoints")
             .and_then(|value| self.numbers(&annotation, value))
-            .map(|numbers| {
-                numbers
-                    .chunks_exact(8)
-                    .filter_map(|quad| <[f64; 8]>::try_from(quad).ok())
-                    .collect()
-            })
+            .map(|numbers| numbers.as_chunks::<8>().0.to_vec())
             .unwrap_or_default();
         let flags = entry(entries, source, b"/F")
             .and_then(|value| self.follow(&annotation, value).ok())
@@ -496,7 +491,7 @@ impl LinkResolver {
                 .and_then(|value| self.follow(&node, value).ok())
                 && let ObjectKind::Array(pairs) = names.value.kind()
             {
-                for pair in pairs.chunks_exact(2) {
+                for pair in pairs.as_chunks::<2>().0 {
                     let Some(key) = self
                         .string(&names, &pair[0])
                         .or_else(|| name(&names.source, &pair[0]))
@@ -555,7 +550,7 @@ impl LinkResolver {
                 .and_then(|value| self.follow(&node, value).ok())
                 && let ObjectKind::Array(pairs) = names.value.kind()
             {
-                for pair in pairs.chunks_exact(2) {
+                for pair in pairs.as_chunks::<2>().0 {
                     let Some(written) = self
                         .string(&names, &pair[0])
                         .or_else(|| name(&names.source, &pair[0]))

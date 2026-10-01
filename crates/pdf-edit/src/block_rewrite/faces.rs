@@ -177,26 +177,7 @@ impl<'p> NewFaces<'p> {
     }
 
     fn kindred(&self, chosen: &Chosen, character: char) -> Option<pdf_content::SubstitutedFace> {
-        let fonts = self.fonts?;
-        let serif = |name: &str| {
-            let name = name.to_lowercase();
-            name.contains("serif") && !name.contains("sans")
-        };
-        let wanted_serif = serif(&chosen.family);
-        let mut names: Vec<&str> = pdf_content::coverage_faces(character).to_vec();
-        names.sort_by_key(|name| serif(name) != wanted_serif);
-        for name in names {
-            let mut request = chosen.request.clone();
-            name.clone_into(&mut request.family);
-            request.base_font = name.replace(' ', "").into_bytes();
-            if let Some(face) = fonts.primary_face(&request).filter(|face| {
-                pdf_content::outline_match::is_same_family(face, name)
-                    && face.program.glyph_for_char(character).is_some()
-            }) {
-                return Some(face);
-            }
-        }
-        fonts.fallback_face(&chosen.request, character)
+        kindred_face(self.fonts?, &chosen.request, &chosen.family, character)
     }
 
     pub(super) fn programs(&self) -> Vec<Arc<GlyphProgram>> {
@@ -613,6 +594,33 @@ impl<'p> NewFaces<'p> {
         }
         Ok(())
     }
+}
+
+pub(crate) fn kindred_face(
+    fonts: &Arc<dyn pdf_content::FontProvider>,
+    request: &pdf_content::FontRequest,
+    family: &str,
+    character: char,
+) -> Option<pdf_content::SubstitutedFace> {
+    let serif = |name: &str| {
+        let name = name.to_lowercase();
+        name.contains("serif") && !name.contains("sans")
+    };
+    let wanted_serif = serif(family);
+    let mut names: Vec<&str> = pdf_content::coverage_faces(character).to_vec();
+    names.sort_by_key(|name| serif(name) != wanted_serif);
+    for name in names {
+        let mut request = request.clone();
+        name.clone_into(&mut request.family);
+        request.base_font = name.replace(' ', "").into_bytes();
+        if let Some(face) = fonts.primary_face(&request).filter(|face| {
+            pdf_content::outline_match::is_same_family(face, name)
+                && face.program.glyph_for_char(character).is_some()
+        }) {
+            return Some(face);
+        }
+    }
+    fonts.fallback_face(request, character)
 }
 
 fn unwidened(request: &pdf_content::FontRequest) -> Option<String> {

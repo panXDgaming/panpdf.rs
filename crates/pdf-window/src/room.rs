@@ -84,8 +84,6 @@ pub(crate) const fn tool_width(labels: bool) -> f32 {
 pub(crate) struct Bar {
     pub(crate) buttons: usize,
     pub(crate) rules: usize,
-    pub(crate) choices: f32,
-    pub(crate) readouts: f32,
     pub(crate) slack: f32,
 }
 
@@ -101,12 +99,7 @@ impl Bar {
             reason = "a toolbar has a handful of rules"
         )]
         let rules = self.rules as f32;
-        buttons * (tool_width(labels) + GAP)
-            + rules * RULE_WIDTH
-            + self.choices
-            + self.readouts
-            + self.slack
-            + EDGE
+        buttons * (tool_width(labels) + GAP) + rules * RULE_WIDTH + self.slack + EDGE
     }
 }
 
@@ -336,6 +329,8 @@ pub(crate) fn dragged_to(width: f32, window_width: f32) -> Dragged {
 pub(crate) struct View {
     pub(crate) pages_folded: bool,
     pub(crate) pages_width: f32,
+    pub(crate) dark: Option<bool>,
+    pub(crate) frames: bool,
 }
 
 impl Default for View {
@@ -343,16 +338,24 @@ impl Default for View {
         Self {
             pages_folded: false,
             pages_width: PANEL_WIDTH,
+            dark: None,
+            frames: false,
         }
     }
 }
 
 impl View {
     pub(crate) fn write(self) -> String {
+        let theme = match self.dark {
+            Some(true) => "theme dark\n",
+            Some(false) => "theme light\n",
+            None => "",
+        };
         format!(
-            "pages-folded {}\npages-width {:.0}\n",
+            "pages-folded {}\npages-width {:.0}\nframes {}\n{theme}",
             u8::from(self.pages_folded),
-            self.pages_width
+            self.pages_width,
+            u8::from(self.frames)
         )
     }
 
@@ -362,6 +365,9 @@ impl View {
             let mut words = line.split_whitespace();
             match (words.next(), words.next()) {
                 (Some("pages-folded"), Some(value)) => view.pages_folded = value == "1",
+                (Some("frames"), Some(value)) => view.frames = value == "1",
+                (Some("theme"), Some("dark")) => view.dark = Some(true),
+                (Some("theme"), Some("light")) => view.dark = Some(false),
                 (Some("pages-width"), Some(value)) => {
                     if let Ok(width) = value.parse::<f32>()
                         && width.is_finite()
@@ -398,10 +404,8 @@ mod tests {
 
     fn plain_bar() -> Bar {
         Bar {
-            buttons: 20,
-            rules: 5,
-            choices: 0.0,
-            readouts: 90.0,
+            buttons: 18,
+            rules: 4,
             slack: 8.0,
         }
     }
@@ -412,18 +416,25 @@ mod tests {
         let with = bar.width(true);
         let without = bar.width(false);
         assert!(
-            (1290.0..1330.0).contains(&with),
-            "twenty buttons with words need about 1310 points, not {with}"
+            (1070.0..1110.0).contains(&with),
+            "eighteen buttons with words need about 1090 points, not {with}"
         );
         assert!(
-            (890.0..930.0).contains(&without),
-            "and about 910 without them, not {without}"
+            (710.0..750.0).contains(&without),
+            "and about 730 without them, not {without}"
         );
         assert!(
             labels_fit(1680.0, &bar, true),
             "a maximised window keeps them"
         );
-        assert!(!labels_fit(1250.0, &bar, true), "the opening size cannot");
+        assert!(
+            labels_fit(PREFERRED[0], &bar, true),
+            "the opening size keeps them"
+        );
+        assert!(
+            labels_fit(PREFERRED[0], &bar, false),
+            "and gets them back after losing them"
+        );
         assert!(!labels_fit(683.0, &bar, true), "half a laptop is not close");
     }
 
@@ -436,25 +447,6 @@ mod tests {
         assert!(!labels_fit(needed, &bar, false), "hysteresis, not a knife");
         assert!(!labels_fit(needed + LABEL_ROOM - 1.0, &bar, false));
         assert!(labels_fit(needed + LABEL_ROOM, &bar, false));
-    }
-
-    #[test]
-    fn putting_a_tool_down_brings_the_words_back_at_the_same_window_size() {
-        let room = 1680.0;
-        let bare = plain_bar();
-        assert!(labels_fit(room, &bare, true), "a maximised window has room");
-        let with_shape = Bar {
-            choices: 620.0,
-            ..bare
-        };
-        assert!(
-            !labels_fit(room, &with_shape, true),
-            "the Shape tool's choices take the words' room"
-        );
-        assert!(
-            labels_fit(room, &bare, false),
-            "the words come back once the choices go"
-        );
     }
 
     #[test]
@@ -738,17 +730,31 @@ mod tests {
         let view = View {
             pages_folded: true,
             pages_width: 231.0,
+            dark: Some(true),
+            frames: true,
         };
         assert_eq!(View::read(&view.write()), view);
         let open = View {
             pages_folded: false,
             pages_width: 164.0,
+            dark: Some(false),
+            frames: false,
         };
         assert_eq!(View::read(&open.write()), open);
+        let undecided = View { dark: None, ..open };
+        assert_eq!(View::read(&undecided.write()), undecided);
+        assert!(
+            !undecided.write().contains("theme"),
+            "a person who never chose is not written down as having chosen"
+        );
         assert_eq!(View::read(""), View::default());
+        assert!(!View::default().frames, "frames stay quiet until asked for");
         assert_eq!(View::read("moon-phase waxing\n"), View::default());
         assert_eq!(View::read("pages-width nonsense\n"), View::default());
         assert_eq!(View::read("pages-width -5\n"), View::default());
+        assert_eq!(View::read("theme purple\n"), View::default());
+        assert_eq!(View::read("theme dark\n").dark, Some(true));
+        assert_eq!(View::read("theme light\n").dark, Some(false));
     }
 
     #[test]

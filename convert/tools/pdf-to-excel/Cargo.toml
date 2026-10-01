@@ -1,0 +1,31 @@
+[package]
+name = "pdf-to-excel"
+description = "PDF to Excel (.xlsx): the tables of a PDF as sheets"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "pdf-to-excel"
+path = "src/main.rs"
+
+[dependencies]
+convert-structure.workspace = true
+convert-ooxml.workspace = true
+convert-xml.workspace = true
+convert-zip.workspace = true
+convert-wasm.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+convert-cli.workspace = true
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

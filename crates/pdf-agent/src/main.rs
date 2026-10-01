@@ -6,17 +6,20 @@ fn main() {
         return;
     }
     let mut server = pdf_agent::protocol::Server::default();
-    let input = std::io::stdin().lock();
+    let mut input = std::io::stdin().lock();
     let mut output = std::io::stdout().lock();
-    for line in input.lines() {
-        let line = match line {
-            Ok(line) => line,
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        match input.read_until(b'\n', &mut line) {
+            Ok(0) => break,
+            Ok(_) => {}
             Err(error) => {
                 eprintln!("panpdf-mcp: standard input: {error}");
                 break;
             }
-        };
-        if let Some(reply) = server.answer_line(&line)
+        }
+        if let Some(reply) = server.answer_bytes(&line)
             && (writeln!(output, "{reply}").is_err() || output.flush().is_err())
         {
             break;

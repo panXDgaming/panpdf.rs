@@ -1,0 +1,77 @@
+[package]
+name = "pdf-convert"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[features]
+default = []
+run = [
+    "dep:pdf-content",
+    "dep:convert-files",
+    "dep:convert-pdfdoc",
+    "dep:convert-pdftool",
+    "dep:convert-structure",
+    "dep:compare-pdf",
+    "dep:compress-pdf",
+    "dep:excel-to-pdf",
+    "dep:html-to-pdf",
+    "dep:image-to-pdf",
+    "dep:ocr-pdf",
+    "dep:pdf-to-excel",
+    "dep:pdf-to-html",
+    "dep:pdf-to-image",
+    "dep:pdf-to-markdown",
+    "dep:pdf-to-pdfa",
+    "dep:pdf-to-powerpoint",
+    "dep:pdf-to-text",
+    "dep:pdf-to-word",
+    "dep:powerpoint-to-pdf",
+    "dep:protect-pdf",
+    "dep:redact-pdf",
+    "dep:repair-pdf",
+    "dep:scan-to-pdf",
+    "dep:sign-pdf",
+    "dep:unlock-pdf",
+    "dep:word-to-pdf",
+]
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+pdf-content = { workspace = true, optional = true }
+convert-files = { workspace = true, optional = true }
+convert-pdfdoc = { workspace = true, optional = true }
+convert-pdftool = { workspace = true, optional = true }
+convert-structure = { workspace = true, optional = true }
+compare-pdf = { path = "../../convert/tools/compare-pdf", optional = true }
+compress-pdf = { path = "../../convert/tools/compress-pdf", optional = true }
+excel-to-pdf = { path = "../../convert/tools/excel-to-pdf", optional = true }
+html-to-pdf = { path = "../../convert/tools/html-to-pdf", optional = true }
+image-to-pdf = { path = "../../convert/tools/image-to-pdf", optional = true }
+ocr-pdf = { path = "../../convert/tools/ocr-pdf", optional = true }
+pdf-to-excel = { path = "../../convert/tools/pdf-to-excel", optional = true }
+pdf-to-html = { path = "../../convert/tools/pdf-to-html", optional = true }
+pdf-to-image = { path = "../../convert/tools/pdf-to-image", optional = true }
+pdf-to-markdown = { path = "../../convert/tools/pdf-to-markdown", optional = true }
+pdf-to-pdfa = { path = "../../convert/tools/pdf-to-pdfa", optional = true }
+pdf-to-powerpoint = { path = "../../convert/tools/pdf-to-powerpoint", optional = true }
+pdf-to-text = { path = "../../convert/tools/pdf-to-text", optional = true }
+pdf-to-word = { path = "../../convert/tools/pdf-to-word", optional = true }
+powerpoint-to-pdf = { path = "../../convert/tools/powerpoint-to-pdf", optional = true }
+protect-pdf = { path = "../../convert/tools/protect-pdf", optional = true }
+redact-pdf = { path = "../../convert/tools/redact-pdf", optional = true }
+repair-pdf = { path = "../../convert/tools/repair-pdf", optional = true }
+scan-to-pdf = { path = "../../convert/tools/scan-to-pdf", optional = true }
+sign-pdf = { path = "../../convert/tools/sign-pdf", optional = true }
+unlock-pdf = { path = "../../convert/tools/unlock-pdf", optional = true }
+word-to-pdf = { path = "../../convert/tools/word-to-pdf", optional = true }
+
+[dev-dependencies]
+convert-raster.workspace = true
+pdf-bytes.workspace = true
+pdf-session.workspace = true
+
+[lints]
+workspace = true

@@ -1,8 +1,8 @@
-use pdf_agent::connect::{Attachment, AttachmentKind, Said, Turn};
+use pdf_agent::connect::{Attachment, AttachmentKind, Turn};
 use pdf_app::ai_recall::{Way, distinct};
 use pdf_app::wording::Message;
 
-use super::{AiState, PendingAttachment};
+use super::{AiState, PendingAttachment, Preparing, go_on};
 
 pub(super) struct Rewound {
     at: usize,
@@ -47,6 +47,7 @@ impl AiState {
             .collect();
         self.recall.forget();
         self.notice = None;
+        self.drawn.clear();
         self.send_now = and_ask;
     }
 
@@ -67,37 +68,28 @@ impl AiState {
         let at = self
             .turns
             .iter()
-            .rposition(|turn| turn.said() == Said::Person)?;
+            .rposition(|turn| matches!(turn, Turn::Person { .. }))?;
         (at + 1 < self.turns.len()).then_some(at)
     }
 
     fn asked_before(&mut self) -> Vec<String> {
-        let here: Vec<String> = self
-            .turns
-            .iter()
-            .rev()
-            .filter_map(|turn| match turn {
-                Turn::Person { text, .. } => Some(text.clone()),
-                _ => None,
-            })
-            .collect();
         let chat_id = self.chat_id.clone();
-        let elsewhere: Vec<String> = self
-            .the_chats()
+        let others = self.the_chats();
+        let questions = |turns: &[Turn]| -> Vec<String> {
+            turns
+                .iter()
+                .rev()
+                .filter_map(|turn| match turn {
+                    Turn::Person { text, .. } if *text != go_on() => Some(text.clone()),
+                    _ => None,
+                })
+                .collect()
+        };
+        let elsewhere = others
             .iter()
             .filter(|chat| chat.id != chat_id)
-            .flat_map(|chat| {
-                chat.turns
-                    .iter()
-                    .rev()
-                    .filter_map(|turn| match turn {
-                        Turn::Person { text, .. } => Some(text.clone()),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .collect();
-        distinct(here.into_iter().chain(elsewhere))
+            .flat_map(|chat| questions(&chat.turns));
+        distinct(questions(&self.turns).into_iter().chain(elsewhere))
     }
 
     pub(super) fn recall_key(&mut self, way: Way, caret_at_start: bool) -> bool {
@@ -110,36 +102,36 @@ impl AiState {
             None => false,
         }
     }
-
-    pub(super) fn the_whole_chat(&self, lang: pdf_app::wording::Lang) -> String {
-        let you = Message::AiYou.say(lang);
-        let you = you.as_str();
-        let answered_by = if self.model.is_empty() {
-            Message::AiResponse.say(lang)
-        } else {
-            self.model.clone()
-        };
-        let mut out = String::new();
-        for turn in &self.turns {
-            let (who, text) = match turn {
-                Turn::Person { text, .. } => (you, text.as_str()),
-                Turn::Model { text, .. } if !text.trim().is_empty() => {
-                    (answered_by.as_str(), text.as_str())
-                }
-                _ => continue,
-            };
-            if !out.is_empty() {
-                out.push_str("\n\n");
-            }
-            out.push_str(who);
-            out.push_str(":\n");
-            out.push_str(text.trim());
-        }
-        out
-    }
 }
 
-fn pending_again(attachment: Attachment) -> PendingAttachment {
+pub(super) fn whole_chat(turns: &[Turn], model: &str, lang: pdf_app::wording::Lang) -> String {
+    let you = Message::AiYou.say(lang);
+    let you = you.as_str();
+    let answered_by = if model.is_empty() {
+        Message::AiResponse.say(lang)
+    } else {
+        model.to_owned()
+    };
+    let mut out = String::new();
+    for turn in turns {
+        let (who, text) = match turn {
+            Turn::Person { text, .. } => (you, text.as_str()),
+            Turn::Model { text, .. } if !text.trim().is_empty() => {
+                (answered_by.as_str(), text.as_str())
+            }
+            _ => continue,
+        };
+        if !out.is_empty() {
+            out.push_str("\n\n");
+        }
+        out.push_str(who);
+        out.push_str(":\n");
+        out.push_str(text.trim());
+    }
+    out
+}
+
+pub(super) fn pending_again(attachment: Attachment) -> PendingAttachment {
     let kind = match attachment.kind {
         AttachmentKind::Image { .. } => pdf_agent::attach::Kind::Picture,
         AttachmentKind::Text => pdf_agent::attach::Kind::Text,
@@ -148,6 +140,6 @@ fn pending_again(attachment: Attachment) -> PendingAttachment {
         name: attachment.name.clone(),
         bytes: attachment.bytes.len(),
         kind,
-        outcome: Ok(vec![attachment]),
+        state: Preparing::Done(Ok(vec![attachment])),
     }
 }

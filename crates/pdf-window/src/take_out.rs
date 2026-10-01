@@ -5,6 +5,7 @@ use eframe::egui;
 
 use pdf_app::wording::{Command, Message};
 
+use crate::dialog;
 use crate::page_actions::Choosing;
 use crate::window_state::Window;
 
@@ -94,67 +95,58 @@ impl Window {
         let pieces = split_pieces(choices, count);
         let (mut close, mut go_on) = (false, false);
         let title = Message::Command(Command::SplitDocument).say(lang);
-        let modal = egui::Modal::new(egui::Id::new("split-dialog")).show(ctx, |ui| {
-            ui.set_width(420.0);
-            ui.heading(title.trim_end_matches('\u{2026}'));
-            ui.label(
-                egui::RichText::new(Message::SplitWhy.say(lang))
-                    .size(11.0)
-                    .color(ui.visuals().weak_text_color()),
+        let why = Message::SplitWhy.say(lang);
+        let shut = Message::Close.say(lang);
+        let spec = dialog::Spec {
+            id: "split-dialog",
+            width: 420.0,
+        };
+        let modal = dialog::modal(ctx, &spec, |ui| {
+            close = dialog::header(
+                ui,
+                title.trim_end_matches('\u{2026}'),
+                Some(&why),
+                Some(&shut),
             );
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.radio_value(&mut choices.by_count, true, Message::SplitEvery.say(lang));
-                let size = ui.add(egui::DragValue::new(&mut choices.size).range(1..=count.max(1)));
-                if size.changed() {
-                    choices.by_count = true;
-                }
-                ui.label(Message::SplitEveryPages.say(lang));
-            });
-            ui.horizontal(|ui| {
-                ui.radio_value(
-                    &mut choices.by_count,
-                    false,
-                    Message::SplitAtPages.say(lang),
-                );
-                let typed = ui.add(
+            let modes = [
+                (true, Message::SplitBySize.say(lang)),
+                (false, Message::SplitAtPages.say(lang)),
+            ];
+            dialog::segments(ui, "split-mode", &mut choices.by_count, &modes);
+            ui.add_space(10.0);
+            if choices.by_count {
+                ui.horizontal(|ui| {
+                    ui.label(Message::SplitEvery.say(lang));
+                    ui.add_space(4.0);
+                    ui.add(egui::DragValue::new(&mut choices.size).range(1..=count.max(1)));
+                    ui.add_space(4.0);
+                    ui.label(Message::SplitEveryPages.say(lang));
+                });
+            } else {
+                ui.add(
                     egui::TextEdit::singleline(&mut choices.starts)
                         .hint_text("5, 12")
-                        .desired_width(120.0),
+                        .desired_width(f32::INFINITY),
                 );
-                if typed.changed() {
-                    choices.by_count = false;
-                }
-            });
-            ui.separator();
+                ui.add_space(4.0);
+                dialog::small(ui, &Message::SplitStartsHint.say(lang));
+            }
+            ui.add_space(10.0);
             match &pieces {
                 Ok(pieces) => {
-                    ui.label(
-                        Message::SplitInto {
-                            pages: count,
-                            files: pieces.len(),
-                        }
-                        .say(lang),
-                    );
+                    let said = Message::SplitInto {
+                        pages: count,
+                        files: pieces.len(),
+                    };
+                    dialog::note(ui, dialog::Tone::Calm, &said.say(lang));
                 }
-                Err(why) => {
-                    let said = why.say(lang);
-                    ui.label(egui::RichText::new(said).color(ui.visuals().warn_fg_color));
-                }
+                Err(why) => dialog::note(ui, dialog::Tone::Warning, &why.say(lang)),
             }
-            ui.separator();
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            dialog::footer(ui, |ui| {
                 let ready = pieces.as_ref().is_ok_and(|pieces| pieces.len() > 1);
-                let on = egui::Button::new(Message::SplitWhere.say(lang));
-                if ui.add_enabled(ready, on).clicked() {
-                    go_on = true;
-                }
-                if ui
-                    .button(Message::Home(pdf_app::wording::Home::Cancel).say(lang))
-                    .clicked()
-                {
-                    close = true;
-                }
+                go_on = dialog::primary(ui, &Message::SplitWhere.say(lang), ready).clicked();
+                let cancel = Message::Home(pdf_app::wording::Home::Cancel).say(lang);
+                close |= dialog::secondary(ui, &cancel).clicked();
             });
         });
         if modal.should_close() {

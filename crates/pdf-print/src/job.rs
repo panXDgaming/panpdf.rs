@@ -47,14 +47,18 @@ impl SheetsPdf {
         let number = self.offsets.len() + 1;
         let grey = image
             .rgb
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .all(|pixel| pixel[0] == pixel[1] && pixel[1] == pixel[2]);
         let (space, samples) = if grey {
             (
                 "/DeviceGray",
                 image
                     .rgb
-                    .chunks_exact(3)
+                    .as_chunks::<3>()
+                    .0
+                    .iter()
                     .map(|pixel| pixel[0])
                     .collect::<Vec<u8>>(),
             )

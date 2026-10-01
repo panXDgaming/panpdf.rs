@@ -109,7 +109,9 @@ fn fixture_page(
 ) -> ByteStore {
     let program: Vec<u8> = SQUARE_CFF
         .as_bytes()
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
         .collect();
     let objects = [
@@ -182,7 +184,9 @@ fn spaced_fixture_program(
 ) -> ByteStore {
     let program: Vec<u8> = program
         .as_bytes()
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
         .collect();
     let objects = [

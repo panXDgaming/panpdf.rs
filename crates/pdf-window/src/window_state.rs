@@ -27,7 +27,6 @@ pub(crate) enum Opened {
 }
 
 pub(crate) fn install_look(ctx: &egui::Context) {
-    set_dark(ctx, false);
     ctx.options_mut(|options| options.zoom_with_keyboard = false);
     ctx.all_styles_mut(|style| {
         style.spacing.item_spacing = egui::vec2(2.0, 4.0);
@@ -43,9 +42,18 @@ pub(crate) fn set_dark(ctx: &egui::Context, dark: bool) {
     });
 }
 
+pub(crate) fn take_the_theme(ctx: &egui::Context, chosen: Option<bool>) -> bool {
+    ctx.options_mut(|options| options.fallback_theme = egui::Theme::Light);
+    match chosen {
+        Some(dark) => set_dark(ctx, dark),
+        None => ctx.set_theme(egui::ThemePreference::System),
+    }
+    ctx.theme() == egui::Theme::Dark
+}
+
 pub(crate) const fn desk(dark: bool) -> egui::Color32 {
     if dark {
-        egui::Color32::from_rgb(0x2a, 0x2b, 0x2e)
+        egui::Color32::from_rgb(0x0f, 0x10, 0x12)
     } else {
         egui::Color32::from_rgb(0xe6, 0xe8, 0xeb)
     }
@@ -216,11 +224,18 @@ pub(crate) struct PrintDraft {
         String,
         std::sync::mpsc::Receiver<Result<pdf_print::SheetImage, String>>,
     )>,
-    pub(crate) printers: Result<(Vec<pdf_print::service::Printer>, Option<String>), String>,
+    pub(crate) printers: Option<Printers>,
+    pub(crate) looking: Option<std::sync::mpsc::Receiver<Printers>>,
     pub(crate) capabilities: Option<(String, Result<pdf_print::service::Capabilities, String>)>,
+    pub(crate) asking: Option<(
+        String,
+        std::sync::mpsc::Receiver<Result<pdf_print::service::Capabilities, String>>,
+    )>,
     pub(crate) job: Option<PrintJob>,
     pub(crate) failed: Option<String>,
 }
+
+pub(crate) type Printers = Result<(Vec<pdf_print::service::Printer>, Option<String>), String>;
 
 pub(crate) struct PrintJob {
     pub(crate) stop: Arc<std::sync::atomic::AtomicBool>,
@@ -301,6 +316,12 @@ pub(crate) struct StampDraft {
 }
 
 pub(crate) type SeenStamp = Result<(String, Option<[f64; 4]>), pdf_app::wording::Message>;
+
+pub(crate) struct Renaming {
+    pub(crate) bookmark: Option<pdf_syntax::Reference>,
+    pub(crate) title: String,
+    pub(crate) page: usize,
+}
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) enum LinkTab {
@@ -466,6 +487,8 @@ pub(crate) struct Replacing {
     pub(crate) done: usize,
     pub(crate) refused: usize,
     pub(crate) confirmed: bool,
+    pub(crate) pending: Option<u64>,
+    pub(crate) skipped: Vec<(usize, (usize, usize))>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -835,6 +858,16 @@ pub(crate) struct Framed {
     pub(crate) drawings: bool,
 }
 
+impl Framed {
+    pub(crate) const fn none() -> Self {
+        Self {
+            text: false,
+            pictures: false,
+            drawings: false,
+        }
+    }
+}
+
 impl Default for Framed {
     fn default() -> Self {
         Self {
@@ -890,7 +923,12 @@ pub(crate) struct Window {
     pub(crate) ai: crate::ai_panel::AiState,
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) agents_open: bool,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) tools: Option<crate::tools_room::Room>,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) read_text_after_opening: bool,
     pub(crate) dark: bool,
+    pub(crate) dark_chosen: bool,
     pub(crate) asking_to_open: bool,
     pub(crate) restriction_answered: bool,
     pub(crate) lang: Lang,
@@ -916,9 +954,13 @@ pub(crate) struct Window {
     pub(crate) chosen: Chosen,
     pub(crate) context: Option<egui::Pos2>,
     pub(crate) toolbar_area: Option<egui::Rect>,
+    pub(crate) toolbar_width: f32,
     pub(crate) held_still: Option<(egui::Pos2, f64)>,
     pub(crate) running: Option<Running>,
-    pub(crate) title: String,
+    pub(crate) system_title: String,
+    pub(crate) status_line: crate::status_line::StatusLine,
+    pub(crate) saving_then_leaving: Option<Leaving>,
+    pub(crate) save_after_the_field: bool,
     pub(crate) destination: PathBuf,
     pub(crate) drag: Option<Drag>,
     pub(crate) tool: Tool,
@@ -933,7 +975,6 @@ pub(crate) struct Window {
     pub(crate) marker: Pen,
     pub(crate) shape: Shape,
     pub(crate) form_tool: FormTool,
-    pub(crate) toolbar_choices: f32,
     pub(crate) toolbar_slack: f32,
     pub(crate) screen_fitted: bool,
     pub(crate) pages_folded: bool,
@@ -960,7 +1001,7 @@ pub(crate) struct Window {
     pub(crate) landing_link: Option<(usize, [f64; 4])>,
     pub(crate) show_contents: bool,
     pub(crate) chosen_bookmark: Option<pdf_syntax::Reference>,
-    pub(crate) renaming: Option<(Option<pdf_syntax::Reference>, String)>,
+    pub(crate) renaming: Option<Renaming>,
     pub(crate) properties_tab: PropertiesTab,
     pub(crate) field_draft_origin: Option<FieldDraft>,
     pub(crate) shape_fill: bool,
@@ -983,6 +1024,7 @@ pub(crate) struct Window {
     pub(crate) offset: egui::Vec2,
     pub(crate) view: egui::Vec2,
     pub(crate) view_corner: egui::Pos2,
+    pub(crate) canvas: egui::Rect,
     pub(crate) wanted_offset: Option<egui::Vec2>,
     pub(crate) laid: Vec<Laid>,
     pub(crate) focus: usize,
@@ -998,6 +1040,7 @@ pub(crate) struct Window {
     pub(crate) thumbs_wanted: Vec<usize>,
     pub(crate) home: bool,
     pub(crate) recent: Vec<pdf_app::recent::Recent>,
+    pub(crate) recent_keeping: crate::hub::Keeping,
     pub(crate) chooser: Option<crate::chooser::Chooser>,
     pub(crate) choosing_for: crate::page_actions::Choosing,
     pub(crate) chosen_pages: std::collections::BTreeSet<usize>,

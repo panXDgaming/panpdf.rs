@@ -3,6 +3,8 @@ use eframe::egui;
 use pdf_app::find::Found;
 use pdf_app::wording::{Command, Message};
 
+use crate::format::icon_button;
+use crate::icons::Icon;
 use crate::window_state::{Finding, Pointing, Replacing, Window};
 
 const PAGES_AT_ONCE: usize = 24;
@@ -47,18 +49,12 @@ impl Window {
                 finding.take_the_keyboard = true;
             }
             let any = finding.searched.count() > 0;
-            if ui
-                .add_enabled(any, egui::Button::new("◀"))
-                .on_hover_text(say(Message::Command(Command::FindPrevious)))
-                .clicked()
-            {
+            let back = say(Message::Command(Command::FindPrevious));
+            if icon_button(ui, Icon::Previous, &back, false, any).clicked() {
                 walk = Some(false);
             }
-            if ui
-                .add_enabled(any, egui::Button::new("▶"))
-                .on_hover_text(say(Message::Command(Command::FindNext)))
-                .clicked()
-            {
+            let onward = say(Message::Command(Command::FindNext));
+            if icon_button(ui, Icon::Next, &onward, false, any).clicked() {
                 walk = Some(true);
             }
             ui.label(count(finding, self.editor.page_count(), lang));
@@ -69,7 +65,7 @@ impl Window {
             {
                 show_replace = Some(!replacing);
             }
-            if ui.button("✕").on_hover_text(say(Message::Close)).clicked() {
+            if icon_button(ui, Icon::Close, &say(Message::Close), false, true).clicked() {
                 close = true;
             }
         });
@@ -187,36 +183,36 @@ impl Window {
             None => {}
         }
         if one {
-            self.replace_the_hit_in_hand();
+            let _ = self.replace_the_hit_in_hand();
         }
     }
 
-    fn replace_the_hit_in_hand(&mut self) -> bool {
+    fn replace_the_hit_in_hand(&mut self) -> Tried {
         if self.editor.is_busy() {
-            return false;
+            return Tried::Waiting;
         }
         let Some(finding) = self.finding.as_ref() else {
-            return false;
+            return Tried::Waiting;
         };
         let Some(replacement) = finding.replacement.clone() else {
-            return false;
+            return Tried::Waiting;
         };
         let Some(hit) = finding.searched.current() else {
-            return false;
+            return Tried::Waiting;
         };
         let (page, from, to) = (hit.page, hit.from, hit.to);
         if self.editor.leaf(page).is_none() {
-            return false;
+            return Tried::Waiting;
         }
         let job = self.editor.begin_replace(page, from, to, &replacement);
         if job.is_none() {
             self.editor.say(Message::NotReplaced(
                 Message::Command(Command::Replace).say(self.lang),
             ));
-            return false;
+            return Tried::Refused;
         }
         self.send(job);
-        true
+        Tried::Sent
     }
 
     fn ask_to_replace_them_all(&mut self) {
@@ -250,43 +246,87 @@ impl Window {
         let Some(finding) = self.finding.as_ref() else {
             return;
         };
-        let Some(replacing) = finding.replacing.clone() else {
+        let Some(replacing) = finding.replacing.as_ref() else {
             return;
         };
         if !replacing.confirmed || self.editor.is_busy() {
             return;
         }
+        self.settle_the_last_replacement();
+        let Some(finding) = self.finding.as_ref() else {
+            return;
+        };
+        let Some(replacing) = finding.replacing.clone() else {
+            return;
+        };
         let searched_all = finding.searched.pages_answered() >= self.editor.page_count();
         let done = replacing.done + replacing.refused;
-        if finding.searched.count() == 0 && searched_all || done >= replacing.wanted {
-            let said = Message::ReplacedAll {
-                done: replacing.done,
-                refused: replacing.refused,
-            };
-            self.editor.say(said);
-            if let Some(finding) = self.finding.as_mut() {
-                finding.replacing = None;
-            }
+        let nothing_left = finding.searched.count() == 0 && searched_all;
+        if nothing_left || done >= replacing.wanted {
+            self.finish_replacing(&replacing);
             return;
         }
         if finding.searched.count() == 0 {
             return;
         }
-        if self
-            .finding
-            .as_ref()
-            .and_then(|finding| finding.searched.current())
-            .is_none()
-        {
+        if finding.searched.current().is_none() {
             self.go_to_a_hit(true);
             return;
         }
-        let replaced = self.replace_the_hit_in_hand();
-        if let Some(finding) = self.finding.as_mut()
-            && let Some(replacing) = finding.replacing.as_mut()
-            && replaced
-        {
+        let here = self.focus;
+        let Some(finding) = self.finding.as_mut() else {
+            return;
+        };
+        if !step_past_the_refused(&mut finding.searched, here, &replacing.skipped) {
+            self.finish_replacing(&replacing);
+            return;
+        }
+        let epoch = self.editor.epoch();
+        let tried = self.replace_the_hit_in_hand();
+        let Some(finding) = self.finding.as_mut() else {
+            return;
+        };
+        let hit = finding.searched.current().map(|hit| (hit.page, hit.from));
+        let Some(replacing) = finding.replacing.as_mut() else {
+            return;
+        };
+        match tried {
+            Tried::Sent => replacing.pending = Some(epoch),
+            Tried::Refused => {
+                replacing.refused += 1;
+                replacing.skipped.extend(hit);
+            }
+            Tried::Waiting => {}
+        }
+    }
+
+    fn settle_the_last_replacement(&mut self) {
+        let epoch = self.editor.epoch();
+        let Some(finding) = self.finding.as_mut() else {
+            return;
+        };
+        let hit = finding.searched.current().map(|hit| (hit.page, hit.from));
+        let Some(replacing) = finding.replacing.as_mut() else {
+            return;
+        };
+        let Some(sent_at) = replacing.pending.take() else {
+            return;
+        };
+        if epoch != sent_at {
             replacing.done += 1;
+            return;
+        }
+        replacing.refused += 1;
+        replacing.skipped.extend(hit);
+    }
+
+    fn finish_replacing(&mut self, replacing: &Replacing) {
+        self.editor.say(Message::ReplacedAll {
+            done: replacing.done,
+            refused: replacing.refused,
+        });
+        if let Some(finding) = self.finding.as_mut() {
+            finding.replacing = None;
         }
     }
 
@@ -402,6 +442,34 @@ impl Window {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Tried {
+    Sent,
+    Refused,
+    Waiting,
+}
+
+fn step_past_the_refused(
+    found: &mut Found,
+    from: usize,
+    skipped: &[(usize, (usize, usize))],
+) -> bool {
+    let standing = |found: &Found| {
+        found
+            .current()
+            .is_some_and(|hit| !skipped.contains(&(hit.page, hit.from)))
+    };
+    for _ in 0..found.count() {
+        if standing(found) {
+            return true;
+        }
+        if found.walk(true, from).is_none() {
+            return false;
+        }
+    }
+    standing(found)
+}
+
 fn count(finding: &Finding, pages: usize, lang: pdf_app::wording::Lang) -> String {
     let found = finding.searched.count();
     let searching = finding.searched.pages_answered() < pages;
@@ -434,7 +502,49 @@ fn outwards(here: usize, pages: usize) -> Vec<usize> {
 
 #[cfg(test)]
 mod tests {
-    use super::outwards;
+    use super::{outwards, step_past_the_refused};
+    use pdf_app::find::{Found, Hit};
+
+    fn hit(page: usize, at: usize) -> Hit {
+        Hit {
+            page,
+            clusters: at..at + 1,
+            from: (at, 0),
+            to: (at, 3),
+            boxes: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn replace_all_walks_past_a_hit_that_cannot_be_replaced() {
+        let mut found = Found::default();
+        found.take(0, vec![hit(0, 1), hit(0, 2), hit(0, 3)]);
+        let first = found.walk(true, 0).map(|hit| (hit.page, hit.from));
+        assert_eq!(first, Some((0, (1, 0))));
+        let refused = [(0, (1, 0))];
+        assert!(step_past_the_refused(&mut found, 0, &refused));
+        let now = found.current().map(|hit| (hit.page, hit.from));
+        assert_eq!(
+            now,
+            Some((0, (2, 0))),
+            "the next one is tried, not the same"
+        );
+        assert!(step_past_the_refused(&mut found, 0, &refused));
+        assert_eq!(found.current().map(|hit| hit.from), Some((2, 0)));
+    }
+
+    #[test]
+    fn replace_all_stops_when_every_hit_left_was_refused() {
+        let mut found = Found::default();
+        found.take(0, vec![hit(0, 1)]);
+        found.take(1, vec![hit(1, 1)]);
+        let _ = found.walk(true, 0);
+        let all = [(0, (1, 0)), (1, (1, 0))];
+        assert!(
+            !step_past_the_refused(&mut found, 0, &all),
+            "nothing left to try is the end, not an endless loop"
+        );
+    }
 
     #[test]
     fn pages_are_searched_outwards_from_the_one_on_screen() {

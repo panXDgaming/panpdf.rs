@@ -13,9 +13,10 @@ use pdf_app::view::{block_position, stop_at, zoom_anchor};
 use pdf_app::wording::{Lang, Message, ObjectKind};
 
 use crate::input::history_keys;
+use crate::shortcuts;
 use crate::window_state::{
     CLOSEST, Caret, Chosen, FURTHEST, Pointing, Running, TextPositions, TypedKey, Typing, Window,
-    ZOOMS, desk, install_fonts, install_look,
+    ZOOMS, desk, install_fonts, install_look, take_the_theme,
 };
 use pdf_app::{Applied, EditJob, Editor};
 
@@ -38,6 +39,7 @@ fn made(
     crate::startup::stage("fonts", installing.elapsed());
     install_look(&context.egui_ctx);
     let mut window = Window::new(editor, opened, library);
+    window.dark = take_the_theme(&context.egui_ctx, window.dark_chosen.then_some(window.dark));
     let repaint = context.egui_ctx.clone();
     window.painter.set_waker(move || repaint.request_repaint());
     #[cfg(not(target_arch = "wasm32"))]
@@ -160,6 +162,55 @@ pub async fn start(canvas: web_sys::HtmlCanvasElement) -> Result<(), String> {
 }
 
 impl Window {
+    pub(crate) fn a_dialog_is_open(&self) -> bool {
+        self.leaving.is_some()
+            || self.loading.is_some()
+            || self.chooser.is_some()
+            || self.asks_for_a_password()
+            || self.asks_about_restrictions()
+            || self.print_draft.is_some()
+            || self.splitting.is_some()
+            || self.exporting.is_some()
+            || self.properties.is_some()
+    }
+
+    fn read_the_shortcuts(&mut self, ctx: &egui::Context) {
+        if self.a_dialog_is_open() {
+            return;
+        }
+        let with_document = self.has_document() && !self.home;
+        #[cfg(not(target_arch = "wasm32"))]
+        if with_document && ctx.input_mut(|input| input.consume_shortcut(&shortcuts::ASSISTANT)) {
+            self.toggle_the_assistant(ctx);
+        }
+        if self.assistant_is_typing(ctx) {
+            return;
+        }
+        if ctx.input_mut(|input| input.consume_shortcut(&shortcuts::NEW)) {
+            self.new_document(crate::chrome::A4);
+        }
+        if ctx.input_mut(|input| input.consume_shortcut(&shortcuts::OPEN)) && !self.editor.is_busy()
+        {
+            self.asking_to_open = true;
+        }
+        if !with_document {
+            return;
+        }
+        if ctx.input_mut(|input| input.consume_shortcut(&shortcuts::PROPERTIES)) {
+            self.open_the_properties();
+        }
+        self.keys(ctx);
+        if ctx.input_mut(|input| input.consume_shortcut(&shortcuts::SAVE_A_COPY)) {
+            self.save_a_copy_as();
+        }
+        if ctx.input_mut(|input| input.consume_shortcut(&shortcuts::SAVE)) {
+            self.save();
+        }
+        if ctx.input_mut(|input| input.consume_shortcut(&shortcuts::PRINT)) {
+            self.open_the_print_dialog();
+        }
+    }
+
     fn assistant_is_typing(&self, ctx: &egui::Context) -> bool {
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -193,6 +244,10 @@ impl Window {
             ai: crate::ai_panel::AiState::remembered(),
             #[cfg(not(target_arch = "wasm32"))]
             agents_open: false,
+            #[cfg(not(target_arch = "wasm32"))]
+            tools: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            read_text_after_opening: false,
             painter: Painter::new(),
             tiles: Ledger::new(),
             textures: BTreeMap::new(),
@@ -201,7 +256,10 @@ impl Window {
             spare: BTreeMap::new(),
             failed: BTreeMap::new(),
             library,
-            title: opened.display().to_string(),
+            system_title: String::new(),
+            status_line: crate::status_line::StatusLine::default(),
+            saving_then_leaving: None,
+            save_after_the_field: false,
             opened,
             untitled: false,
             properties: None,
@@ -209,17 +267,19 @@ impl Window {
             protection_changed: false,
             loading: None,
             zoom: 1.0,
-            dark: false,
+            dark: remembered.dark.unwrap_or(false),
+            dark_chosen: remembered.dark.is_some(),
             asking_to_open: false,
             restriction_answered: false,
             lang: Lang::default(),
             show_clusters: false,
-            show_frames: true,
+            show_frames: remembered.frames,
             framed: crate::window_state::Framed::default(),
             pointing: Pointing::Nothing,
             chosen: Chosen::default(),
             context: None,
             toolbar_area: None,
+            toolbar_width: crate::text::TOOLBAR_WIDTH,
             held_still: None,
             running: None,
             destination,
@@ -241,7 +301,6 @@ impl Window {
             pages_folded: remembered.pages_folded,
             pages_width: remembered.pages_width,
             pages_window_width: 0.0,
-            toolbar_choices: 0.0,
             toolbar_slack: 0.0,
             toolbar_compact: false,
             chosen_fields: None,
@@ -286,6 +345,7 @@ impl Window {
             offset: egui::Vec2::ZERO,
             view: egui::vec2(1000.0, 800.0),
             view_corner: egui::Pos2::ZERO,
+            canvas: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0)),
             wanted_offset: None,
             laid: Vec::new(),
             focus: 0,
@@ -301,6 +361,7 @@ impl Window {
             thumbs_wanted: Vec::new(),
             home: false,
             recent: Vec::new(),
+            recent_keeping: crate::hub::Keeping::default(),
             chooser: None,
             choosing_for: crate::page_actions::Choosing::Open,
             chosen_pages: std::collections::BTreeSet::new(),
@@ -367,6 +428,7 @@ impl Window {
     }
 
     fn close_the_frame(&mut self, ctx: &egui::Context, began: crate::moment::Moment) {
+        self.keep_the_window_title(ctx);
         self.show_the_drawing_speed(ctx);
         let took = began.elapsed();
         self.take_in_the_frames_cost(took);
@@ -466,7 +528,7 @@ impl Window {
         });
     }
 
-    fn collect(&mut self, ctx: &egui::Context) {
+    pub(crate) fn collect(&mut self, ctx: &egui::Context) {
         let Some(running) = &self.running else { return };
         if !running.handle.is_finished() {
             ctx.request_repaint();
@@ -483,27 +545,27 @@ impl Window {
             ));
             self.editor.say(Message::EditFailedUnexpectedly);
             self.editor.abandon_record("the edit thread panicked");
+            #[cfg(not(target_arch = "wasm32"))]
+            self.ai
+                .tools
+                .note_applied(&Applied::Refused(pdf_app::wording::Refusal::from(
+                    Message::EditFailedUnexpectedly.say(self.lang),
+                )));
+            self.save_after_the_field = false;
+            self.saving_then_leaving = None;
             return;
         };
-        self.took_back(outcome);
-    }
-
-    pub(crate) fn took_back(&mut self, outcome: pdf_app::EditOutcome) -> Applied {
-        let applied = self.editor.adopt(outcome);
-        #[cfg(not(target_arch = "wasm32"))]
-        if let Applied::Refused(refusal) = &applied {
-            crate::reporting::say(
-                pdf_app::trouble::Kind::Refused,
-                &Message::Refused(refusal.clone()).say(pdf_app::wording::Lang::English),
-            );
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            self.ai.tools.note_applied(&applied);
-            if self.editor.pages_redrawn() {
-                self.ai.tools.pages_moved();
+        let applied = self.took_back(outcome);
+        if std::mem::take(&mut self.save_after_the_field) {
+            if matches!(applied, Applied::Changed { .. }) && self.save() {
+                self.carry_on_after_saving(ctx);
+            } else {
+                self.saving_then_leaving = None;
             }
         }
+    }
+
+    fn follow_the_pages_redrawn(&mut self) {
         if self.editor.pages_redrawn() {
             if self.turning_to.is_none() {
                 self.chosen_pages.clear();
@@ -544,6 +606,32 @@ impl Window {
             self.renumber = None;
             self.page_preview = None;
         }
+    }
+
+    pub(crate) fn took_back(&mut self, outcome: pdf_app::EditOutcome) -> Applied {
+        #[cfg(not(target_arch = "wasm32"))]
+        let by_the_assistant = self.ai.tools.waits_for_an_edit();
+        #[cfg(target_arch = "wasm32")]
+        let by_the_assistant = false;
+        let applied = self.editor.adopt(outcome);
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Applied::Refused(refusal) = &applied {
+            crate::reporting::say(
+                pdf_app::trouble::Kind::Refused,
+                &Message::Refused(refusal.clone()).say(pdf_app::wording::Lang::English),
+            );
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.ai.tools.note_applied(&applied);
+            if self.editor.pages_redrawn() {
+                self.ai.tools.pages_moved();
+            }
+            if self.editor.pages_changed().is_some() {
+                self.ai.tools.pages_renumbered();
+            }
+        }
+        self.follow_the_pages_redrawn();
         if self.editor.pages_redrawn() {
             self.search_the_document_again();
         }
@@ -576,7 +664,11 @@ impl Window {
                 Applied::Refused(reason) => TextLanding::Refused(Message::Refused(reason.clone())),
                 _ => TextLanding::Unchanged,
             };
-            let refused = self.input.landed(landing);
+            let refused = if by_the_assistant {
+                0
+            } else {
+                self.input.landed(landing)
+            };
             if refused > 0 {
                 let said = Message::AndPressesRefused {
                     said: Box::new(self.editor.status().clone()),
@@ -1386,6 +1478,9 @@ impl eframe::App for Window {
         let ctx = ui.ctx().clone();
         self.hold_the_frame_rate(&ctx);
         self.frame += 1;
+        if !self.dark_chosen {
+            self.dark = ctx.theme() == egui::Theme::Dark;
+        }
         let began = crate::moment::Moment::now();
         self.fit_the_window_to_the_screen(&ctx);
         self.collect(&ctx);
@@ -1396,48 +1491,33 @@ impl eframe::App for Window {
         self.collect_writing(&ctx);
         self.collect_making(&ctx);
         self.take_in_what_was_drawn(&ctx);
+        #[cfg(not(target_arch = "wasm32"))]
+        self.keep_the_assistant_going(&ctx);
         self.guard_close(&ctx);
         if self.leaving.is_some() && self.loading.is_none() {
             self.pump();
         }
-        if !self.asks_for_a_password() {
-            self.read_the_new_document_key(&ctx);
-            self.read_the_properties_key(&ctx);
-        }
-        if self.leaving.is_none()
-            && self.loading.is_none()
-            && !self.home
-            && !self.asks_about_restrictions()
-            && !self.asks_for_a_password()
-            && self.print_draft.is_none()
-            && self.splitting.is_none()
-            && self.exporting.is_none()
-            && self.chooser.is_none()
-            && !self.assistant_is_typing(&ctx)
-        {
-            self.keys(&ctx);
-            if ctx.input_mut(|input| {
-                input.consume_key(
-                    egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
-                    egui::Key::S,
-                )
-            }) {
-                self.save_a_copy_as();
-            }
-            if ctx.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::S)) {
-                self.save();
-            }
-            if ctx.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::P)) {
-                self.open_the_print_dialog();
-            }
-        }
+        self.read_the_shortcuts(&ctx);
         if self.leaving.is_some() || self.loading.is_some() {
             ui.disable();
         }
         self.menu_bar(ui);
         self.choose_a_file(&ctx);
-        self.take_dropped_files(&ctx);
+        #[cfg(not(target_arch = "wasm32"))]
+        let given_to_a_tool = self.tools_take_the_drop(&ctx);
+        #[cfg(target_arch = "wasm32")]
+        let given_to_a_tool = false;
+        if !given_to_a_tool {
+            self.take_dropped_files(&ctx);
+        }
         self.ask_for_the_password(&ctx);
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.tools.is_some() {
+            self.tools_screen(ui);
+            self.confirm_leaving(&ctx);
+            self.close_the_frame(&ctx, began);
+            return;
+        }
         if self.home {
             self.status_bar(ui);
             self.home_screen(ui);
@@ -1445,8 +1525,9 @@ impl eframe::App for Window {
             self.close_the_frame(&ctx, began);
             return;
         }
-        self.keep_the_page_in_the_list();
+        self.keep_the_page_in_the_list(&ctx);
         self.toolbar(ui);
+        self.tool_options(ui);
         self.status_bar(ui);
         self.draft_bar(ui);
         self.page_panel(ui);
@@ -1486,6 +1567,7 @@ impl eframe::App for Window {
 
     #[cfg(not(target_arch = "wasm32"))]
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.flush_the_recent_list();
         self.log_the_drawing_speed();
         crate::memory::log_what_was_held();
     }
@@ -1547,6 +1629,90 @@ mod persistence_tests {
             window.editor.move_run(0, &anchor, 1.0, 0.0),
             Applied::Changed { .. }
         ));
+    }
+
+    fn press(window: &mut Window, key: egui::Key) {
+        let ctx = egui::Context::default();
+        let mut input = egui::RawInput {
+            modifiers: egui::Modifiers::COMMAND,
+            ..egui::RawInput::default()
+        };
+        input.events.push(egui::Event::Key {
+            key,
+            physical_key: Some(key),
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::COMMAND,
+        });
+        let _ = ctx.run_ui(input, |ui| window.read_the_shortcuts(ui.ctx()));
+    }
+
+    #[test]
+    fn ctrl_n_starts_a_new_document_only_when_no_dialog_is_asking_something() {
+        let mut free = window();
+        press(&mut free, egui::Key::N);
+        assert!(
+            free.untitled,
+            "known answer: with nothing open it starts one"
+        );
+
+        let mut asked = window();
+        asked.leaving = Some(Leaving::Close);
+        press(&mut asked, egui::Key::N);
+        assert!(
+            !asked.untitled,
+            "a new document replaced one under a dialog"
+        );
+        assert_eq!(asked.opened, PathBuf::from("/missing/original.pdf"));
+    }
+
+    #[test]
+    fn ctrl_d_opens_the_properties_only_when_no_dialog_is_asking_something() {
+        let mut free = window();
+        press(&mut free, egui::Key::D);
+        assert!(
+            free.properties.is_some(),
+            "known answer: with nothing open it opens them"
+        );
+
+        let mut asked = window();
+        asked.leaving = Some(Leaving::Close);
+        press(&mut asked, egui::Key::D);
+        assert!(asked.properties.is_none(), "properties stacked on a dialog");
+    }
+
+    #[test]
+    fn the_window_is_titled_by_its_file_and_marks_only_unsaved_work() {
+        let mut window = window();
+        assert_eq!(window.window_title_now(), "original.pdf \u{2014} PanPDF");
+        move_text(&mut window);
+        assert_eq!(
+            window.window_title_now(),
+            "\u{2022} original.pdf \u{2014} PanPDF"
+        );
+        window.home = true;
+        assert_eq!(window.window_title_now(), "PanPDF");
+    }
+
+    #[test]
+    fn the_system_is_told_the_title_only_when_it_changes() {
+        let mut window = window();
+        let ctx = egui::Context::default();
+        let told = |window: &mut Window| {
+            let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                window.keep_the_window_title(ui.ctx());
+            });
+            output.viewport_output[&egui::ViewportId::ROOT]
+                .commands
+                .iter()
+                .filter(|command| matches!(command, egui::ViewportCommand::Title(_)))
+                .count()
+        };
+        assert_eq!(told(&mut window), 1, "the first frame names the window");
+        assert_eq!(told(&mut window), 0, "the same title is not sent again");
+        move_text(&mut window);
+        assert_eq!(told(&mut window), 1, "unsaved work changes the title");
+        assert_eq!(told(&mut window), 0);
     }
 
     #[test]
@@ -1784,6 +1950,40 @@ mod persistence_tests {
         assert!(!window.selected());
         window.pointing = crate::window_state::Pointing::Block { page: 0, block: 0 };
         assert!(window.selected(), "the toolbar's Delete is offered for it");
+    }
+
+    #[test]
+    fn a_chosen_link_is_something_delete_acts_on_only_with_the_link_tool() {
+        let mut window = window();
+        window.chosen_links = Some(crate::window_state::ChosenLinks {
+            page: 0,
+            links: vec![pdf_syntax::Reference::new(7, 0)],
+        });
+        assert!(!window.selected(), "known answer: another tool ignores it");
+        window.tool = crate::window_state::Tool::Link;
+        assert!(
+            window.selected(),
+            "the Delete key removes it, so Delete is offered"
+        );
+    }
+
+    #[test]
+    fn a_new_document_does_not_inherit_the_last_ones_dialogs_or_find_results() {
+        let mut window = window();
+        window.open_the_properties();
+        window.open_the_find_bar();
+        window
+            .finding
+            .as_mut()
+            .expect("the find bar opened")
+            .asked
+            .insert(3);
+        assert!(window.properties.is_some());
+        window.new_document(crate::chrome::A4);
+        assert!(window.untitled, "the new document replaced the old one");
+        assert!(window.properties.is_none(), "properties of the old file");
+        let finding = window.finding.as_ref().expect("the find bar stays open");
+        assert!(finding.asked.is_empty(), "pages the old file answered");
     }
 
     #[test]

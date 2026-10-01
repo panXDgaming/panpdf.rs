@@ -11,11 +11,13 @@ publish = false
 pdf-bytes = { path = "../pdf-bytes" }
 pdf-cli = { path = "../pdf-cli" }
 pdf-content = { path = "../pdf-content" }
+pdf-convert = { path = "../pdf-convert", features = ["run"] }
 pdf-edit = { path = "../pdf-edit" }
 pdf-paint = { path = "../pdf-paint" }
 pdf-render = { path = "../pdf-render" }
 pdf-semantics = { path = "../pdf-semantics" }
 pdf-session = { path = "../pdf-session" }
+pdf-syntax = { path = "../pdf-syntax" }
 
 [lints]
 workspace = true

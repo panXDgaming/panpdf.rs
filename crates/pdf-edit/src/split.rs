@@ -1775,7 +1775,9 @@ mod tests {
     fn three_kinds_of_run() -> ByteStore {
         let program: Vec<u8> = SPACED_CFF
             .as_bytes()
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
             .collect();
         let content: &[u8] = b"BT /F1 24 Tf 1 0 0 1 10 150 Tm (A) Tj ET                                BT /F1 24 Tf 1 0 0 1 10 100 Tm (C) Tj ET                                BT /F1 24 Tf 1 0 0 1 10 50 Tm (D) Tj ET";

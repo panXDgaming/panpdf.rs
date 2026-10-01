@@ -1,0 +1,19 @@
+[package]
+name = "convert-cli"
+description = "What every desktop tool shares: arguments, pages, fonts from disk, time and memory"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+pdf-content.workspace = true
+convert-structure.workspace = true
+convert-zip = { workspace = true, features = ["deflate"] }
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

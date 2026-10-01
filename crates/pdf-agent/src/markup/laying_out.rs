@@ -44,6 +44,11 @@ pub enum Part {
         space_before: f32,
         indent: f32,
     },
+    Form {
+        spec: String,
+        space_before: f32,
+        indent: f32,
+    },
 }
 
 impl Part {
@@ -52,6 +57,7 @@ impl Part {
             Self::Text(paragraph) => &mut paragraph.space_before,
             Self::Rule { space_before, .. }
             | Self::Chart { space_before, .. }
+            | Self::Form { space_before, .. }
             | Self::Table(Table { space_before, .. }) => space_before,
         }
     }
@@ -77,6 +83,23 @@ const NARROWEST_COLUMN: f32 = 0.08;
 
 const HELD: u32 = 0xF0000;
 
+fn drawn_block(language: &str, text: &str, space_before: f32, indent: f32) -> Option<Part> {
+    let spec = text.to_owned();
+    match language.to_ascii_lowercase().as_str() {
+        "chart" => Some(Part::Chart {
+            spec,
+            space_before,
+            indent,
+        }),
+        "form" => Some(Part::Form {
+            spec,
+            space_before,
+            indent,
+        }),
+        _ => None,
+    }
+}
+
 #[must_use]
 pub fn parts(markdown: &str, body: f32) -> Vec<Part> {
     let (held, maths) = hold_the_mathematics(markdown);
@@ -99,7 +122,7 @@ pub fn paragraphs(markdown: &str, body: f32) -> Vec<Paragraph> {
         .into_iter()
         .filter_map(|part| match part {
             Part::Text(paragraph) => Some(paragraph),
-            Part::Rule { .. } | Part::Table(_) | Part::Chart { .. } => None,
+            Part::Rule { .. } | Part::Table(_) | Part::Chart { .. } | Part::Form { .. } => None,
         })
         .collect()
 }
@@ -395,12 +418,8 @@ impl Reading<'_> {
                     return;
                 }
                 let language = info.split_whitespace().next().unwrap_or_default();
-                if language.eq_ignore_ascii_case("chart") {
-                    self.out.push(Part::Chart {
-                        spec: text.to_owned(),
-                        space_before: body * AROUND_A_BLOCK,
-                        indent,
-                    });
+                if let Some(part) = drawn_block(language, text, body * AROUND_A_BLOCK, indent) {
+                    self.out.push(part);
                     return;
                 }
                 let maths = ["math", "latex", "tex"]

@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use super::{Chat, chat_about, name_for, newest_first, read, title_of, write};
+use super::{Chat, chat_about, is_a_chat_id, name_for, newest_first, read, title_of, write};
 use crate::connect::{Attachment, AttachmentKind, Provider, Raw, ToolCall, ToolResult, Turn};
 use crate::json::Json;
 
@@ -29,6 +29,7 @@ fn a_chat() -> Chat {
                     id: "call_1".to_owned(),
                     name: "read_text".to_owned(),
                     arguments: Json::object([("first", Json::count(2))]),
+                    problem: None,
                 }],
                 raw: Some(Raw {
                     provider: Provider::Gemini,
@@ -60,7 +61,7 @@ fn a_conversation_written_reads_back_as_itself() {
 }
 
 #[test]
-fn an_attachment_keeps_its_name_and_not_its_bytes() {
+fn a_text_attachment_keeps_its_words_and_a_picture_only_its_name() {
     let back = read(&write(&a_chat())).expect("it reads");
     let Turn::Person { attachments, .. } = &back.turns[0] else {
         panic!("the first turn is the person's");
@@ -68,7 +69,11 @@ fn an_attachment_keeps_its_name_and_not_its_bytes() {
     assert_eq!(attachments.len(), 2);
     assert_eq!(attachments[0].name, "notes.pdf");
     assert_eq!(attachments[0].kind, AttachmentKind::Text);
-    assert!(attachments[0].bytes.is_empty());
+    assert_eq!(
+        attachments[0].as_text(),
+        "the words of the file",
+        "a follow-up in a reopened chat still has the file to read"
+    );
     assert_eq!(attachments[1].name, "cover.png");
     assert_eq!(
         attachments[1].kind,
@@ -76,7 +81,36 @@ fn an_attachment_keeps_its_name_and_not_its_bytes() {
             media_type: "image/png".to_owned()
         }
     );
-    assert!(attachments[1].bytes.is_empty());
+    assert!(
+        attachments[1].bytes.is_empty(),
+        "a picture is not kept in the chat file"
+    );
+}
+
+#[test]
+fn a_text_attachment_too_big_to_keep_in_a_chat_file_is_kept_by_name_only() {
+    let big = "word ".repeat(30_000);
+    let chat = Chat {
+        turns: vec![Turn::person_with(
+            "read it",
+            vec![Attachment::text("big.txt", big.clone())],
+        )],
+        ..a_chat()
+    };
+    let written = write(&chat);
+    assert!(written.len() < big.len(), "the file stays small");
+    let back = read(&written).expect("it reads");
+    assert!(back.turns[0].attachments()[0].bytes.is_empty());
+}
+
+#[test]
+fn a_chat_written_from_borrowed_turns_is_the_same_file_as_one_written_whole() {
+    let chat = a_chat();
+    let bare = Chat {
+        turns: Vec::new(),
+        ..chat.clone()
+    };
+    assert_eq!(super::write_turns(&bare, &chat.turns), write(&chat));
 }
 
 #[test]
@@ -126,19 +160,23 @@ fn a_long_title_is_shortened_at_a_word() {
 #[test]
 fn the_list_is_newest_first_and_survives_a_bad_file() {
     let one = write(&Chat {
-        id: "a".to_owned(),
+        id: "000000000001".to_owned(),
         changed: 10,
         ..a_chat()
     });
     let two = write(&Chat {
-        id: "b".to_owned(),
+        id: "000000000002".to_owned(),
         changed: 20,
         ..a_chat()
     });
-    let listed = newest_first(vec![one, "not a chat at all".to_owned(), two]);
+    let listed = newest_first(vec![
+        ("000000000001".to_owned(), one),
+        ("000000000003".to_owned(), "not a chat at all".to_owned()),
+        ("000000000002".to_owned(), two),
+    ]);
     assert_eq!(listed.len(), 2);
-    assert_eq!(listed[0].id, "b");
-    assert_eq!(listed[1].id, "a");
+    assert_eq!(listed[0].id, "000000000002");
+    assert_eq!(listed[1].id, "000000000001");
 }
 
 #[test]
@@ -161,7 +199,7 @@ fn a_name_is_free_sortable_and_safe_to_join_to_a_path() {
 
 #[test]
 fn a_chat_from_before_documents_were_kept_still_reads() {
-    let old = r#"{"version":1,"id":"a","title":"t","changed":1,"model":"m","turns":[]}"#;
+    let old = r#"{"version":1,"id":"1","title":"t","changed":1,"model":"m","turns":[]}"#;
     let chat = read(old).expect("it reads");
     assert!(chat.documents.is_empty());
     assert!(chat.places.is_empty(), "and it is about no file");
@@ -177,18 +215,126 @@ fn a_document_brings_back_its_own_chat() {
         ..Chat::default()
     };
     let chats = newest_first([
-        write(&about("old", 10, &["/a/report.pdf"])),
-        write(&about(
-            "new",
-            20,
-            &["/a/report.pdf", "/a/report-edited.pdf"],
-        )),
-        write(&about("other", 30, &["/c/other.pdf"])),
+        ("10".to_owned(), write(&about("10", 10, &["/a/report.pdf"]))),
+        (
+            "20".to_owned(),
+            write(&about("20", 20, &["/a/report.pdf", "/a/report-edited.pdf"])),
+        ),
+        ("30".to_owned(), write(&about("30", 30, &["/c/other.pdf"]))),
     ]);
     let found = |place: &str| chat_about(&chats, place).map(|chat| chat.id.as_str());
-    assert_eq!(found("/a/report.pdf"), Some("new"));
-    assert_eq!(found("/a/report-edited.pdf"), Some("new"));
+    assert_eq!(found("/a/report.pdf"), Some("20"));
+    assert_eq!(found("/a/report-edited.pdf"), Some("20"));
     assert_eq!(found("/b/report.pdf"), None, "the same name elsewhere");
     assert_eq!(found(""), None, "a document saved nowhere yet");
-    assert_eq!(found("/c/other.pdf"), Some("other"));
+    assert_eq!(found("/c/other.pdf"), Some("30"));
+}
+
+#[test]
+fn a_chat_is_known_by_its_file_name_and_never_by_a_path_written_inside_it() {
+    let sly = write(&Chat {
+        id: "/home/someone/Documents/report".to_owned(),
+        ..a_chat()
+    });
+    assert_eq!(
+        read(&sly).expect("it reads").id,
+        "",
+        "an id that is not digits is not an id"
+    );
+    let listed = newest_first(vec![
+        ("000000000007".to_owned(), sly.clone()),
+        ("../report".to_owned(), sly.clone()),
+        ("000000000007 copy".to_owned(), sly),
+    ]);
+    assert_eq!(
+        listed.len(),
+        1,
+        "only a file that is named like a chat is one"
+    );
+    assert_eq!(
+        listed[0].id, "000000000007",
+        "its name is its id, whatever it says"
+    );
+    for good in ["0", "000000012345", "000000012345-3"] {
+        assert!(is_a_chat_id(good), "{good}");
+    }
+    for bad in [
+        "",
+        "-",
+        "1-",
+        "-1",
+        "1-2-3",
+        "a",
+        "/etc/passwd",
+        "..",
+        "1 2",
+        "1/2",
+    ] {
+        assert!(!is_a_chat_id(bad), "{bad:?}");
+    }
+}
+
+#[test]
+fn a_long_title_in_thai_is_cut_at_its_sixtieth_letter_and_not_at_a_byte_count() {
+    let space_early = format!("{} {}", "\u{0e01}".repeat(11), "\u{0e02}".repeat(70));
+    let title = title_of(&[Turn::person(space_early)]);
+    assert_eq!(
+        title.chars().count(),
+        61,
+        "the space is at the eleventh letter, too early to cut at: sixty letters fit"
+    );
+    let leading = format!("{}\u{0e40}{}", "\u{0e01}".repeat(59), "\u{0e02}".repeat(30));
+    let title = title_of(&[Turn::person(leading)]);
+    assert!(
+        !title.trim_end_matches('\u{2026}').ends_with('\u{0e40}'),
+        "a vowel written before its letter is not left without it: {title}"
+    );
+    let words = format!("{} {}", "\u{0e01}".repeat(40), "\u{0e02}".repeat(40));
+    let title = title_of(&[Turn::person(words)]);
+    assert_eq!(
+        title.chars().count(),
+        41,
+        "cut at the space, which is past the middle"
+    );
+}
+
+#[test]
+fn a_chat_of_a_hundred_long_readings_is_still_read_back_and_each_reading_is_kept_short() {
+    let reading = "ความเร็วของแสง ".repeat(4_000);
+    let mut chat = a_chat();
+    chat.turns = (0..100)
+        .map(|at| Turn::Results {
+            results: vec![ToolResult::said(format!("call_{at}"), reading.clone())],
+        })
+        .collect();
+    let written = write(&chat);
+    assert!(
+        written.len() < crate::json::MOST_BYTES,
+        "{} bytes: a hundred readings of 60,000 characters would have been more than a read can take",
+        written.len()
+    );
+    let back = read(&written).expect("it reads back");
+    assert_eq!(back.turns.len(), 100);
+    let Turn::Results { results } = &back.turns[0] else {
+        panic!("results first");
+    };
+    assert!(
+        results[0].text.chars().count() < 20_100,
+        "{}",
+        results[0].text.chars().count()
+    );
+    assert!(
+        results[0].text.ends_with("ask again for the rest)"),
+        "{}",
+        results[0].text
+    );
+    let short = Turn::Results {
+        results: vec![ToolResult::said("call_s", "Two paragraphs.")],
+    };
+    chat.turns = vec![short.clone()];
+    assert_eq!(
+        read(&write(&chat)).expect("reads").turns,
+        vec![short],
+        "negative control: a short one is as it was"
+    );
 }

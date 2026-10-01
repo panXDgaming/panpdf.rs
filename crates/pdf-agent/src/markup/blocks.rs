@@ -8,10 +8,12 @@ pub fn blocks(text: &str) -> Vec<Block> {
         .split('\n')
         .map(|line| line.replace('\t', "    "))
         .collect();
-    read(&lines)
+    read(&lines, 0)
 }
 
-fn read(lines: &[String]) -> Vec<Block> {
+const MOST_NESTING: usize = 16;
+
+fn read(lines: &[String], depth: usize) -> Vec<Block> {
     let mut out = Vec::new();
     let mut at = 0;
     while at < lines.len() {
@@ -30,10 +32,10 @@ fn read(lines: &[String]) -> Vec<Block> {
         } else if let Some((block, used)) = fenced(lines, at) {
             out.push(block);
             at = used;
-        } else if let Some((block, used)) = quoted(lines, at) {
+        } else if let Some((block, used)) = quoted(lines, at, depth) {
             out.push(block);
             at = used;
-        } else if let Some((block, used)) = listed(lines, at) {
+        } else if let Some((block, used)) = listed(lines, at, depth) {
             out.push(block);
             at = used;
         } else if let Some((block, used)) = indented_code(lines, at) {
@@ -167,8 +169,11 @@ fn indented_code(lines: &[String], at: usize) -> Option<(Block, usize)> {
     ))
 }
 
-fn quoted(lines: &[String], at: usize) -> Option<(Block, usize)> {
-    if indent_of(&lines[at]) >= 4 || !lines[at].trim_start().starts_with('>') {
+fn quoted(lines: &[String], at: usize, depth: usize) -> Option<(Block, usize)> {
+    if depth >= MOST_NESTING
+        || indent_of(&lines[at]) >= 4
+        || !lines[at].trim_start().starts_with('>')
+    {
         return None;
     }
     let mut inside: Vec<String> = Vec::new();
@@ -196,7 +201,7 @@ fn quoted(lines: &[String], at: usize) -> Option<(Block, usize)> {
     }
     Some((
         Block::Quote {
-            blocks: read(&inside),
+            blocks: read(&inside, depth + 1),
         },
         end,
     ))
@@ -252,7 +257,10 @@ fn ordered_at(line: &str) -> Option<(usize, usize, u64, char)> {
     Some((indent, width, digits.parse().unwrap_or(1), mark))
 }
 
-fn listed(lines: &[String], at: usize) -> Option<(Block, usize)> {
+fn listed(lines: &[String], at: usize, depth: usize) -> Option<(Block, usize)> {
+    if depth >= MOST_NESTING {
+        return None;
+    }
     let opens = |line: &str| -> Option<(usize, usize, Option<u64>, char)> {
         if let Some((indent, width, mark)) = bullet_at(line) {
             Some((indent, width, None, mark))
@@ -326,7 +334,7 @@ fn listed(lines: &[String], at: usize) -> Option<(Block, usize)> {
         Block::List(List {
             first,
             loose,
-            items: items.iter().map(|item| read(item)).collect(),
+            items: items.iter().map(|item| read(item, depth + 1)).collect(),
         }),
         end - blanks,
     ))

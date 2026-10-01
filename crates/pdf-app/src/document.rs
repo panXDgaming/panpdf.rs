@@ -315,6 +315,14 @@ enum Step {
         widget: pdf_syntax::Reference,
         value: pdf_edit::form::FieldValue,
     },
+    Command {
+        command: Command,
+        done: Done,
+    },
+    Batch {
+        commands: Vec<Command>,
+        done: Done,
+    },
     Undo,
     Redo,
     #[cfg(test)]
@@ -400,6 +408,8 @@ impl Step {
             Self::SetLinkBoxes { .. } => "SetLinkBoxes",
             Self::RemoveLinks { .. } => "RemoveLinks",
             Self::SetFieldSettings { .. } => "SetFieldSettings",
+            Self::Command { .. } => "Command",
+            Self::Batch { .. } => "Batch",
             Self::Undo => "Undo",
             Self::Redo => "Redo",
             #[cfg(test)]
@@ -720,6 +730,8 @@ impl Step {
                 widget.object_number(),
                 widget.generation()
             ),
+            Self::Command { command, .. } => format!("page={}", command.page_index()),
+            Self::Batch { commands, .. } => format!("commands={}", commands.len()),
             Self::Undo | Self::Redo => String::new(),
             #[cfg(test)]
             Self::Panics => String::new(),
@@ -1053,12 +1065,12 @@ impl Editor {
         if let Some(places) = self.named_places.as_ref() {
             return Arc::clone(places);
         }
+        let Some(session) = self.session.as_ref() else {
+            return Arc::default();
+        };
         let places = Arc::new(
-            self.session
-                .as_ref()
-                .and_then(|session| {
-                    pdf_edit::destination::spots_of(session.source(), &self.credential).ok()
-                })
+            pdf_edit::destination::spots_of(session.source(), &self.credential)
+                .ok()
                 .unwrap_or_default(),
         );
         self.named_places = Some(Arc::clone(&places));
@@ -1317,10 +1329,12 @@ impl Editor {
         if let Some(read) = self.outline.as_ref() {
             return Arc::clone(read);
         }
-        let found = self.session.as_ref().map_or_else(Vec::new, |session| {
-            pdf_edit::outline::read_outline(session.source(), &self.credential).unwrap_or_default()
-        });
-        let found = Arc::new(found);
+        let Some(session) = self.session.as_ref() else {
+            return Arc::default();
+        };
+        let found = Arc::new(
+            pdf_edit::outline::read_outline(session.source(), &self.credential).unwrap_or_default(),
+        );
         self.outline = Some(Arc::clone(&found));
         found
     }
@@ -1358,11 +1372,13 @@ impl Editor {
         if let Some(fields) = self.document_fields.as_ref() {
             return Arc::clone(fields);
         }
-        let found = self.session.as_ref().map_or_else(Vec::new, |session| {
+        let Some(session) = self.session.as_ref() else {
+            return Arc::default();
+        };
+        let found = Arc::new(
             pdf_edit::form::fields_of_document(session.source(), &self.credential)
-                .unwrap_or_default()
-        });
-        let found = Arc::new(found);
+                .unwrap_or_default(),
+        );
         self.document_fields = Some(Arc::clone(&found));
         found
     }
@@ -2910,6 +2926,29 @@ impl Editor {
     }
 
     #[must_use]
+    pub fn begin_command(&mut self, command: Command, done: Done) -> Option<EditJob> {
+        self.begin(Step::Command { command, done })
+    }
+
+    #[must_use]
+    pub fn begin_commands(&mut self, commands: Vec<Command>, done: Done) -> Option<EditJob> {
+        if commands.is_empty() {
+            return None;
+        }
+        self.begin(Step::Batch { commands, done })
+    }
+
+    pub fn try_planning(&mut self, command: &Command) -> Option<Result<(), String>> {
+        let session = self.session.as_mut()?;
+        Some(
+            session
+                .plan(command)
+                .map(drop)
+                .map_err(|error| error.to_string()),
+        )
+    }
+
+    #[must_use]
     pub fn begin_undo(&mut self) -> Option<EditJob> {
         self.begin(Step::Undo)
     }
@@ -4045,6 +4084,14 @@ impl EditJob {
                 let (page, widget, value) = (*page, *widget, value.clone());
                 self.fill_field(page, widget, value)
             }
+            Step::Command { command, done } => {
+                let (command, done) = (command.clone(), done.clone());
+                self.form_edit(&command, done)
+            }
+            Step::Batch { commands, done } => {
+                let (commands, done) = (commands.clone(), done.clone());
+                self.run_batch(&commands, done)
+            }
             Step::Undo | Step::Redo => self.walk(matches!(self.step, Step::Undo)),
             #[cfg(test)]
             Step::Panics => panic!("test: this step always panics"),
@@ -4127,6 +4174,7 @@ impl EditJob {
                 self.paragraphs.clear();
                 self.flowed.clear();
             }
+            Step::Command { .. } | Step::Batch { .. } => self.keep_frames_after_commands(page),
             _ => match self.resize_frame.take() {
                 Some((block, frame, edges, breaks)) => {
                     self.frames
@@ -5674,6 +5722,39 @@ impl EditJob {
         (count > 0).then_some(Message::TextMadeWay { blocks: count })
     }
 
+    fn run_batch(&mut self, commands: &[Command], done: Done) -> (Applied, Message) {
+        let Some(first) = commands.first() else {
+            return (Applied::Unchanged, Done::NothingChanged.into());
+        };
+        let page = first.page_index();
+        if let Err(error) = self.session.apply_each(commands) {
+            return refused(why_a_block_will_not_move(&pdf_session::PlanError::Plan(
+                error,
+            )));
+        }
+        (Applied::Changed { page, region: None }, done.into())
+    }
+
+    fn keep_frames_after_commands(&mut self, page: usize) {
+        if let Some(change) = self.session.last_pages().cloned() {
+            self.frames.pages_changed(&change);
+            self.paragraphs.clear();
+            self.flowed.clear();
+            return;
+        }
+        let mut touched: Vec<usize> = match &self.step {
+            Step::Batch { commands, .. } => commands.iter().map(Command::page_index).collect(),
+            _ => vec![page],
+        };
+        touched.sort_unstable();
+        touched.dedup();
+        if touched.len() > 1 {
+            self.frames.pages_forgotten(&touched);
+        } else {
+            self.frames.source_changed(page, None);
+        }
+    }
+
     fn form_edit(&mut self, command: &Command, done: Done) -> (Applied, Message) {
         let plan = match self.session.plan(command) {
             Ok(plan) => plan,
@@ -6748,5 +6829,146 @@ mod panic_recovery_tests {
             "the session must come back even though the step panicked, or the \
              document can never be saved, discarded or left"
         );
+    }
+}
+
+#[cfg(test)]
+mod command_tests {
+    use pdf_edit::{Command, PenStep, PenStroke};
+
+    use super::{Applied, Editor};
+    use crate::wording::Done;
+
+    fn blank() -> Editor {
+        Editor::blank([200.0, 300.0]).expect("a blank document opens")
+    }
+
+    fn page_after(beside: usize) -> Command {
+        Command::AddBlankPage {
+            beside,
+            before: false,
+            size: [200.0, 300.0],
+        }
+    }
+
+    fn line_on(page_index: usize) -> Command {
+        Command::DrawPath {
+            page_index,
+            steps: vec![PenStep::Move((10.0, 10.0)), PenStep::Line((90.0, 90.0))],
+            closed: false,
+            stroke: Some(PenStroke::pen([0.0, 0.0, 0.0], 1.0)),
+            fill: None,
+        }
+    }
+
+    fn run(editor: &mut Editor, commands: Vec<Command>) -> Applied {
+        let job = editor
+            .begin_commands(
+                commands,
+                Done::Wrote {
+                    pieces: 0,
+                    pages: 0,
+                },
+            )
+            .expect("an edit can start");
+        editor.adopt(job.run())
+    }
+
+    #[test]
+    fn a_command_is_one_step_that_one_undo_takes_back() {
+        let mut editor = blank();
+        let job = editor
+            .begin_command(page_after(0), Done::AddedPage { page: 2 })
+            .expect("an edit can start");
+        let applied = editor.adopt(job.run());
+        assert!(matches!(applied, Applied::Changed { .. }), "{applied:?}");
+        assert_eq!(editor.page_count(), 2);
+        assert!(matches!(editor.undo(), Applied::Changed { .. }));
+        assert_eq!(editor.page_count(), 1);
+        assert!(!editor.can_undo(), "one step was all there was");
+    }
+
+    #[test]
+    fn a_batch_of_pages_and_drawings_is_one_step_that_one_undo_takes_back() {
+        let mut editor = blank();
+        let revision = editor.revision();
+        let applied = run(
+            &mut editor,
+            vec![
+                line_on(0),
+                page_after(0),
+                line_on(1),
+                page_after(1),
+                line_on(2),
+            ],
+        );
+        assert!(
+            matches!(applied, Applied::Changed { page: 0, .. }),
+            "{applied:?}"
+        );
+        assert_eq!(editor.page_count(), 3);
+        assert!(
+            editor.pages_redrawn(),
+            "the pages went in, so all are drawn again"
+        );
+        assert_ne!(editor.revision(), revision);
+
+        assert!(matches!(editor.undo(), Applied::Changed { .. }));
+        assert_eq!(editor.page_count(), 1, "one undo took all of it back");
+        assert!(!editor.can_undo());
+        assert!(editor.can_redo());
+        assert!(matches!(editor.redo(), Applied::Changed { .. }));
+        assert_eq!(editor.page_count(), 3, "one redo put all of it back");
+    }
+
+    #[test]
+    fn a_batch_with_one_refused_command_changes_nothing() {
+        let mut editor = blank();
+        let before = editor.bytes_now();
+        let applied = run(&mut editor, vec![page_after(0), line_on(7)]);
+        assert!(matches!(applied, Applied::Refused(_)), "{applied:?}");
+        assert_eq!(
+            editor.page_count(),
+            1,
+            "the page that went in first did not stay"
+        );
+        assert!(!editor.can_undo());
+        assert_eq!(editor.bytes_now(), before);
+    }
+
+    #[test]
+    fn a_list_asked_for_while_an_edit_runs_is_not_remembered_as_empty() {
+        let mut editor = blank();
+        let job = editor
+            .begin_command(page_after(0), Done::AddedPage { page: 2 })
+            .expect("an edit can start");
+        assert!(editor.is_busy());
+        assert!(editor.bookmarks().is_empty());
+        assert!(editor.fields_in_document().is_empty());
+        assert!(editor.named_places().is_empty());
+        assert!(
+            editor.outline.is_none()
+                && editor.document_fields.is_none()
+                && editor.named_places.is_none(),
+            "nothing was kept from a session that was away"
+        );
+        editor.adopt(job.run());
+    }
+
+    #[test]
+    fn a_batch_of_nothing_is_not_started() {
+        let mut editor = blank();
+        assert!(
+            editor
+                .begin_commands(
+                    Vec::new(),
+                    Done::Wrote {
+                        pieces: 0,
+                        pages: 0
+                    }
+                )
+                .is_none()
+        );
+        assert!(!editor.is_busy(), "and the session stayed home");
     }
 }

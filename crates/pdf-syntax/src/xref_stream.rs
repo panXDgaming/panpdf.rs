@@ -340,7 +340,7 @@ fn parse_index(
 
     let mut ranges = Vec::with_capacity(values.len() / 2);
     let mut total = 0_usize;
-    for pair in values.chunks_exact(2) {
+    for pair in values.as_chunks::<2>().0 {
         let first = integer_usize(source, &pair[0])
             .and_then(|value| u32::try_from(value).ok())
             .ok_or_else(|| {

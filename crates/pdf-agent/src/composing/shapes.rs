@@ -16,6 +16,30 @@ pub fn rect(x0: f64, y0: f64, x1: f64, y1: f64) -> Vec<PenStep> {
     ]
 }
 
+const ARROW_HEAD: f64 = 4.0;
+
+const ARROW_SPREAD: f64 = 0.45;
+
+#[must_use]
+pub fn arrow(from: (f64, f64), to: (f64, f64), width: f64) -> Vec<PenStep> {
+    let (dx, dy) = (to.0 - from.0, to.1 - from.1);
+    let length = dx.hypot(dy);
+    let mut steps = line(from.0, from.1, to.0, to.1);
+    if length <= f64::EPSILON {
+        return steps;
+    }
+    let head = (width * ARROW_HEAD).min(length / 2.0).max(1.0);
+    let (back, side) = ((-dx / length, -dy / length), (-dy / length, dx / length));
+    for hand in [1.0, -1.0] {
+        steps.push(PenStep::Move(to));
+        steps.push(PenStep::Line((
+            to.0 + head * back.0 + hand * head * ARROW_SPREAD * side.0,
+            to.1 + head * back.1 + hand * head * ARROW_SPREAD * side.1,
+        )));
+    }
+    steps
+}
+
 #[must_use]
 pub fn rounded(x0: f64, y0: f64, x1: f64, y1: f64, radius: f64) -> Vec<PenStep> {
     let (left, right) = (x0.min(x1), x0.max(x1));

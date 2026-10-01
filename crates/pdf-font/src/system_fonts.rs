@@ -600,7 +600,7 @@ fn read_one_face(
     let mut os2_table = None;
     let mut has_outlines = false;
     let mut has_cmap = false;
-    for record in records.chunks_exact(16) {
+    for record in records.as_chunks::<16>().0 {
         let tag = &record[..4];
         let start = u32::from_be_bytes([record[8], record[9], record[10], record[11]]);
         let length = u32::from_be_bytes([record[12], record[13], record[14], record[15]]);
@@ -673,7 +673,9 @@ fn name_record(table: &[u8], wanted: u16) -> Option<String> {
         };
         let decoded: Option<String> = match platform {
             0 | 3 => text
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
                 .map(|unit| {
                     u8::try_from(unit)

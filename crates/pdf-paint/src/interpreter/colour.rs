@@ -194,7 +194,9 @@ impl Interpreter {
                 space
                     .range
                     .value
-                    .chunks_exact(2)
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
                     .map(|pair| 0.0_f64.clamp(pair[0], pair[1]))
                     .collect(),
             ),

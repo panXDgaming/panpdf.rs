@@ -7,6 +7,7 @@ use pdf_app::wording::{Command, Message, PrintScalingKind};
 use pdf_edit::stamp::Only;
 use pdf_print::{Order, Orientation, PerSheet, Scaling, Settings, Sheet};
 
+use crate::dialog;
 use crate::window_state::{
     JobNews, PrintChoices, PrintDraft, PrintJob, PrintWhich, Printing, Window,
 };
@@ -117,16 +118,6 @@ impl Window {
             .editor
             .source()
             .and_then(|source| pdf_print::allowance(source, self.editor.credential()).ok());
-        let printers = pdf_print::service::printers().map_err(|error| error.to_string());
-        if let Ok((list, default)) = &printers {
-            let named = |name: &String| list.iter().any(|printer| &printer.name == name);
-            if !self.print_choices.printer.as_ref().is_some_and(named) {
-                self.print_choices.printer = default
-                    .clone()
-                    .filter(named)
-                    .or_else(|| list.first().map(|printer| printer.name.clone()));
-            }
-        }
         self.print_draft = Some(PrintDraft {
             sheet: 0,
             dragging: None,
@@ -136,11 +127,51 @@ impl Window {
             allowance,
             shown: None,
             drawing: None,
-            printers,
+            printers: None,
+            looking: None,
             capabilities: None,
+            asking: None,
             job: None,
             failed: None,
         });
+    }
+
+    fn look_for_the_printers(&mut self, ctx: &egui::Context) {
+        let Some(draft) = self.print_draft.as_mut() else {
+            return;
+        };
+        if draft.printers.is_none() && draft.looking.is_none() {
+            let (send, looking) = mpsc::channel();
+            let repaint = ctx.clone();
+            std::thread::spawn(move || {
+                let _ =
+                    send.send(pdf_print::service::printers().map_err(|error| error.to_string()));
+                repaint.request_repaint();
+            });
+            draft.looking = Some(looking);
+        }
+        let Some(looking) = draft.looking.as_ref() else {
+            return;
+        };
+        let printers = match looking.try_recv() {
+            Ok(printers) => printers,
+            Err(mpsc::TryRecvError::Empty) => {
+                ctx.request_repaint_after(std::time::Duration::from_millis(80));
+                return;
+            }
+            Err(mpsc::TryRecvError::Disconnected) => Err(Message::PrintNoPrinter.say(self.lang)),
+        };
+        draft.looking = None;
+        if let Ok((list, default)) = &printers {
+            let named = |name: &String| list.iter().any(|printer| &printer.name == name);
+            if !self.print_choices.printer.as_ref().is_some_and(named) {
+                self.print_choices.printer = default
+                    .clone()
+                    .filter(named)
+                    .or_else(|| list.first().map(|printer| printer.name.clone()));
+            }
+        }
+        draft.printers = Some(printers);
     }
 
     fn print_sheets(&self) -> Result<Vec<Sheet>, Message> {
@@ -158,14 +189,40 @@ impl Window {
         pdf_print::lay_out(&sized, &settings_of(choices)).map_err(Message::PrintLayout)
     }
 
-    fn know_the_printer(&mut self) {
+    fn know_the_printer(&mut self, ctx: &egui::Context) {
         let Some(draft) = self.print_draft.as_mut() else {
             return;
         };
         let Some(name) = self.print_choices.printer.clone() else {
             draft.capabilities = None;
+            draft.asking = None;
             return;
         };
+        if draft
+            .asking
+            .as_ref()
+            .is_some_and(|(asked, _)| *asked != name)
+        {
+            draft.asking = None;
+        }
+        if let Some((_, answer)) = draft.asking.as_ref() {
+            match answer.try_recv() {
+                Ok(found) => {
+                    if let Ok(found) = &found
+                        && !found.colour
+                    {
+                        self.print_choices.printing = Printing::BlackAndWhite;
+                    }
+                    draft.capabilities = Some((name, found));
+                    draft.asking = None;
+                }
+                Err(mpsc::TryRecvError::Empty) => {
+                    ctx.request_repaint_after(std::time::Duration::from_millis(80));
+                }
+                Err(mpsc::TryRecvError::Disconnected) => draft.asking = None,
+            }
+            return;
+        }
         if draft
             .capabilities
             .as_ref()
@@ -173,13 +230,14 @@ impl Window {
         {
             return;
         }
-        let found = pdf_print::service::capabilities(&name).map_err(|error| error.to_string());
-        if let Ok(found) = &found
-            && !found.colour
-        {
-            self.print_choices.printing = Printing::BlackAndWhite;
-        }
-        draft.capabilities = Some((name, found));
+        let (send, answer) = mpsc::channel();
+        let (asked, repaint) = (name.clone(), ctx.clone());
+        std::thread::spawn(move || {
+            let _ = send
+                .send(pdf_print::service::capabilities(&asked).map_err(|error| error.to_string()));
+            repaint.request_repaint();
+        });
+        draft.asking = Some((name, answer));
     }
 
     fn print_problems(&self) -> (Vec<Message>, Vec<Message>) {
@@ -194,9 +252,9 @@ impl Window {
             _ => {}
         }
         match &draft.printers {
-            Err(why) => blocking.push(Message::PrintNoService(why.clone())),
-            Ok((list, _)) if list.is_empty() => blocking.push(Message::PrintNoPrinter),
-            Ok(_) => {}
+            Some(Err(why)) => blocking.push(Message::PrintNoService(why.clone())),
+            Some(Ok((list, _))) if list.is_empty() => blocking.push(Message::PrintNoPrinter),
+            Some(Ok(_)) | None => {}
         }
         let printer = self.printer_info();
         if let Some((_, Ok(found))) = &draft.capabilities {
@@ -228,7 +286,7 @@ impl Window {
         let name = self.print_choices.printer.clone().unwrap_or_default();
         self.print_draft
             .as_ref()
-            .and_then(|draft| draft.printers.as_ref().ok())
+            .and_then(|draft| draft.printers.as_ref()?.as_ref().ok())
             .and_then(|(list, _)| list.iter().find(|printer| printer.name == name))
             .map_or(name, |printer| printer.info.clone())
     }
@@ -246,7 +304,8 @@ impl Window {
         if self.print_draft.is_none() {
             return;
         }
-        self.know_the_printer();
+        self.look_for_the_printers(ctx);
+        self.know_the_printer(ctx);
         let lang = self.lang;
         let sheets = self.print_sheets();
         let count = sheets.as_ref().map_or(0, Vec::len);
@@ -268,28 +327,36 @@ impl Window {
         let (mut close, mut print, mut stop) = (false, false, false);
         let printing = draft.job.is_some();
         let title = Message::Command(Command::Print).say(lang);
-        let modal = egui::Modal::new(egui::Id::new("print-dialog")).show(ctx, |ui| {
-            ui.heading(title.trim_end_matches('\u{2026}'));
-            ui.label(
-                egui::RichText::new(Message::PrintWhy.say(lang))
-                    .size(11.0)
-                    .color(ui.visuals().weak_text_color()),
+        let why = Message::PrintWhy.say(lang);
+        let shut = Message::Close.say(lang);
+        let room = (ctx.content_rect().height() - 262.0).clamp(240.0, PREVIEW.y + 80.0);
+        let spec = dialog::Spec {
+            id: "print-dialog",
+            width: CHOICES_WIDTH + 18.0 + PREVIEW.x,
+        };
+        let modal = dialog::modal(ctx, &spec, |ui| {
+            close = dialog::header(
+                ui,
+                title.trim_end_matches('\u{2026}'),
+                Some(&why),
+                (!printing).then_some(shut.as_str()),
             );
-            ui.separator();
             ui.horizontal_top(|ui| {
                 ui.vertical(|ui| {
                     ui.set_width(CHOICES_WIDTH);
                     ui.add_enabled_ui(!printing, |ui| {
-                        which_printer(ui, choices, draft, lang);
-                        ui.separator();
-                        which_pages(ui, choices, (lang, page_count));
-                        ui.separator();
-                        what_paper(ui, choices, (margin_edge, lang));
-                        ui.separator();
-                        how_large(ui, choices, lang);
+                        dialog::scrolling(ui, "print-choices", room, |ui| {
+                            which_printer(ui, choices, draft, lang);
+                            dialog::divide(ui);
+                            which_pages(ui, choices, (lang, page_count));
+                            dialog::divide(ui);
+                            what_paper(ui, choices, (margin_edge, lang));
+                            dialog::divide(ui);
+                            how_large(ui, choices, lang);
+                        });
                     });
                 });
-                ui.add_space(16.0);
+                ui.add_space(18.0);
                 ui.vertical(|ui| {
                     preview(ui, draft, (&sheets, count), lang);
                     if let Some((by, corner)) = draft.landed.take() {
@@ -314,7 +381,9 @@ impl Window {
                     lang,
                 ),
             );
-            (print, close, stop) = asked;
+            print = asked.0;
+            close |= asked.1;
+            stop = asked.2;
         });
         if stop && let Some(job) = draft.job.as_ref() {
             job.stop.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -499,46 +568,47 @@ fn what_is_asked(
     (summary, lang): (Message, pdf_app::wording::Lang),
 ) -> (bool, bool, bool) {
     let (mut print, mut close, mut stop) = (false, false, false);
-    ui.separator();
+    ui.add_space(10.0);
     if sheets.is_ok() {
-        ui.label(summary.say(lang));
+        dialog::note(ui, dialog::Tone::Calm, &summary.say(lang));
     }
-    for why in blocking {
-        ui.colored_label(ui.visuals().error_fg_color, why.say(lang));
+    for why in blocking
+        .iter()
+        .filter(|why| !matches!(why, Message::PrintNoService(_) | Message::PrintNoPrinter))
+    {
+        ui.add_space(6.0);
+        dialog::note(ui, dialog::Tone::Trouble, &why.say(lang));
     }
     for why in warnings {
-        ui.colored_label(ui.visuals().warn_fg_color, why.say(lang));
+        ui.add_space(6.0);
+        dialog::note(ui, dialog::Tone::Warning, &why.say(lang));
     }
     if let Some(why) = &draft.failed {
-        ui.colored_label(
-            ui.visuals().error_fg_color,
-            Message::PrintFailed(why.clone()).say(lang),
-        );
+        ui.add_space(6.0);
+        let said = Message::PrintFailed(why.clone()).say(lang);
+        dialog::note(ui, dialog::Tone::Trouble, &said);
     }
     if let Some(job) = &draft.job {
         #[allow(clippy::cast_precision_loss)]
         let part = job.done as f32 / job.total.max(1) as f32;
-        ui.add(
-            egui::ProgressBar::new(part).text(
-                Message::PrintPreparing {
-                    done: job.done,
-                    total: job.total,
-                }
-                .say(lang),
-            ),
-        );
+        ui.add_space(8.0);
+        let said = Message::PrintPreparing {
+            done: job.done,
+            total: job.total,
+        };
+        dialog::small(ui, &said.say(lang));
+        ui.add_space(4.0);
+        dialog::bar(ui, Some(part));
     }
-    ui.horizontal(|ui| {
+    dialog::footer(ui, |ui| {
         let printing = draft.job.is_some();
-        let ready = sheets.is_ok() && blocking.is_empty() && !printing;
-        print = ui
-            .add_enabled(ready, egui::Button::new(Message::PrintButton.say(lang)))
-            .clicked();
         if printing {
-            stop = ui.button(Message::OcrStop.say(lang)).clicked();
-        } else {
-            close = ui.button(Message::Close.say(lang)).clicked();
+            stop = dialog::secondary(ui, &Message::OcrStop.say(lang)).clicked();
+            return;
         }
+        let ready = sheets.is_ok() && blocking.is_empty() && draft.printers.is_some();
+        print = dialog::primary(ui, &Message::PrintButton.say(lang), ready).clicked();
+        close = dialog::secondary(ui, &Message::Close.say(lang)).clicked();
     });
     (print, close, stop)
 }
@@ -556,13 +626,40 @@ fn which_printer(
     let colour_offered = found.is_none_or(|found| found.colour);
     let sides_offered = duplex_offered(found);
     choices.sides = resolved_sides(choices.sides, sides_offered);
-    egui::Grid::new("print-printer")
-        .num_columns(2)
-        .spacing([8.0, 4.0])
-        .show(ui, |ui| {
-            ui.label(Message::PrintPrinter.say(lang));
-            let list = draft
-                .printers
+    dialog::caption(ui, &Message::PrintPrinter.say(lang));
+    match &draft.printers {
+        None => {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                dialog::spinner(ui);
+                ui.label(
+                    egui::RichText::new(Message::PrintLooking.say(lang)).color(dialog::weak(ui)),
+                );
+            });
+        }
+        Some(Err(why)) => {
+            dialog::note(
+                ui,
+                dialog::Tone::Warning,
+                &Message::PrintNoService(why.clone()).say(lang),
+            );
+            ui.add_space(2.0);
+            dialog::foldable(
+                ui,
+                egui::Id::new("print-service-details"),
+                &pdf_app::wording::Fact::Details.say(lang),
+                |ui| dialog::small(ui, why),
+            );
+        }
+        Some(Ok((list, _))) if list.is_empty() => {
+            dialog::note(
+                ui,
+                dialog::Tone::Warning,
+                &Message::PrintNoPrinter.say(lang),
+            );
+        }
+        Some(printers) => {
+            let list = printers
                 .as_ref()
                 .map(|(list, _)| list.clone())
                 .unwrap_or_default();
@@ -573,7 +670,7 @@ fn which_printer(
                 .map_or_else(String::new, |printer| printer.info.clone());
             egui::ComboBox::from_id_salt("print-printer")
                 .selected_text(shown)
-                .width(190.0)
+                .width(ui.available_width() - 26.0)
                 .show_ui(ui, |ui| {
                     for printer in &list {
                         ui.selectable_value(
@@ -583,45 +680,40 @@ fn which_printer(
                         );
                     }
                 });
-            ui.end_row();
-            ui.label(Message::PrintSides.say(lang));
-            ui.add_enabled_ui(sides_offered, |ui| {
-                egui::ComboBox::from_id_salt("print-sides")
-                    .selected_text(Message::PrintSidesIs(choices.sides).say(lang))
-                    .width(190.0)
-                    .show_ui(ui, |ui| {
-                        for sides in [
-                            pdf_print::service::Sides::One,
-                            pdf_print::service::Sides::TwoLongEdge,
-                            pdf_print::service::Sides::TwoShortEdge,
-                        ] {
-                            ui.selectable_value(
-                                &mut choices.sides,
-                                sides,
-                                Message::PrintSidesIs(sides).say(lang),
-                            );
-                        }
-                    });
-            });
-            ui.end_row();
-            ui.label(Message::PrintCopies.say(lang));
-            ui.horizontal(|ui| {
-                ui.add(egui::DragValue::new(&mut choices.copies).range(1..=99));
-                ui.add_enabled_ui(colour_offered, |ui| {
-                    ui.radio_value(
-                        &mut choices.printing,
-                        Printing::InColour,
-                        Message::PrintColour.say(lang),
-                    );
+        }
+    }
+    ui.add_space(4.0);
+    dialog::labelled(ui, &Message::PrintSides.say(lang), |ui| {
+        ui.add_enabled_ui(sides_offered, |ui| {
+            egui::ComboBox::from_id_salt("print-sides")
+                .selected_text(Message::PrintSidesIs(choices.sides).say(lang))
+                .width(ui.available_width() - 26.0)
+                .show_ui(ui, |ui| {
+                    for sides in [
+                        pdf_print::service::Sides::One,
+                        pdf_print::service::Sides::TwoLongEdge,
+                        pdf_print::service::Sides::TwoShortEdge,
+                    ] {
+                        ui.selectable_value(
+                            &mut choices.sides,
+                            sides,
+                            Message::PrintSidesIs(sides).say(lang),
+                        );
+                    }
                 });
-                ui.radio_value(
-                    &mut choices.printing,
-                    Printing::BlackAndWhite,
-                    Message::PrintMonochrome.say(lang),
-                );
-            });
-            ui.end_row();
         });
+    });
+    dialog::labelled(ui, &Message::PrintCopies.say(lang), |ui| {
+        ui.add(egui::DragValue::new(&mut choices.copies).range(1..=99));
+    });
+    ui.add_space(4.0);
+    ui.add_enabled_ui(colour_offered, |ui| {
+        let inks = [
+            (Printing::InColour, Message::PrintColour.say(lang)),
+            (Printing::BlackAndWhite, Message::PrintMonochrome.say(lang)),
+        ];
+        dialog::segments(ui, "print-ink", &mut choices.printing, &inks);
+    });
 }
 
 fn which_pages(
@@ -629,48 +721,29 @@ fn which_pages(
     choices: &mut PrintChoices,
     (lang, count): (pdf_app::wording::Lang, usize),
 ) {
-    ui.strong(Message::StampPages.say(lang));
-    ui.radio_value(
-        &mut choices.which,
-        PrintWhich::All,
-        Message::AllPages.say(lang),
-    );
-    ui.radio_value(
-        &mut choices.which,
-        PrintWhich::Current,
-        Message::PrintCurrentPage.say(lang),
-    );
-    ui.horizontal(|ui| {
-        ui.radio_value(
-            &mut choices.which,
-            PrintWhich::Some,
-            Message::SomePages.say(lang),
-        );
-        let range = ui.add(
+    dialog::caption(ui, &Message::StampPages.say(lang));
+    let which = [
+        (PrintWhich::All, Message::AllPages.say(lang)),
+        (PrintWhich::Current, Message::PrintCurrentPage.say(lang)),
+        (PrintWhich::Some, Message::SomePages.say(lang)),
+    ];
+    dialog::segments(ui, "print-pages", &mut choices.which, &which);
+    if choices.which == PrintWhich::Some {
+        ui.add_space(6.0);
+        ui.add(
             egui::TextEdit::singleline(&mut choices.range)
                 .hint_text(format!("1-{count}"))
-                .desired_width(150.0),
+                .desired_width(f32::INFINITY),
         );
-        if range.changed() {
-            choices.which = PrintWhich::Some;
-        }
+    }
+    ui.add_space(6.0);
+    ui.add_enabled_ui(choices.which != PrintWhich::Current, |ui| {
+        let only = [Only::Every, Only::Odd, Only::Even]
+            .map(|only| (only, Message::StampOnly(only).say(lang)));
+        dialog::segments(ui, "print-only", &mut choices.only, &only);
     });
-    ui.horizontal(|ui| {
-        ui.add_enabled_ui(choices.which != PrintWhich::Current, |ui| {
-            egui::ComboBox::from_id_salt("print-only")
-                .selected_text(Message::StampOnly(choices.only).say(lang))
-                .show_ui(ui, |ui| {
-                    for only in [Only::Every, Only::Odd, Only::Even] {
-                        ui.selectable_value(
-                            &mut choices.only,
-                            only,
-                            Message::StampOnly(only).say(lang),
-                        );
-                    }
-                });
-        });
-        ui.checkbox(&mut choices.reverse, Message::PrintReverse.say(lang));
-    });
+    ui.add_space(6.0);
+    ui.checkbox(&mut choices.reverse, Message::PrintReverse.say(lang));
 }
 
 fn what_paper(
@@ -679,138 +752,131 @@ fn what_paper(
     (margin_edge, lang): (Option<i32>, pdf_app::wording::Lang),
 ) {
     let papers = pdf_print::papers();
-    egui::Grid::new("print-paper")
-        .num_columns(2)
-        .spacing([8.0, 4.0])
-        .show(ui, |ui| {
-            ui.label(Message::PrintPaper.say(lang));
-            let named = |at: usize| {
-                papers.get(at).map_or_else(String::new, |(name, paper)| {
-                    format!(
-                        "{name}  {:.0} \u{d7} {:.0} mm",
-                        paper.width * 25.4 / 72.0,
-                        paper.height * 25.4 / 72.0
-                    )
-                })
-            };
-            egui::ComboBox::from_id_salt("print-paper")
-                .selected_text(named(choices.paper))
-                .width(190.0)
-                .show_ui(ui, |ui| {
-                    for at in 0..papers.len() {
-                        ui.selectable_value(&mut choices.paper, at, named(at));
-                    }
-                });
-            ui.end_row();
-            ui.label(Message::PrintOrientation.say(lang));
-            egui::ComboBox::from_id_salt("print-orientation")
-                .selected_text(Message::PrintOrientationIs(choices.orientation).say(lang))
-                .width(190.0)
-                .show_ui(ui, |ui| {
-                    for orientation in [
-                        Orientation::Auto,
-                        Orientation::Portrait,
-                        Orientation::Landscape,
-                    ] {
-                        ui.selectable_value(
-                            &mut choices.orientation,
-                            orientation,
-                            Message::PrintOrientationIs(orientation).say(lang),
-                        );
-                    }
-                });
-            ui.end_row();
-            ui.label(Message::PrintMargin.say(lang));
-            ui.horizontal(|ui| {
-                ui.add(
-                    egui::DragValue::new(&mut choices.margin)
-                        .range(0.0..=30.0)
-                        .speed(0.2)
-                        .max_decimals(1)
-                        .suffix(" mm"),
-                );
-                if let Some(edge) = margin_edge {
-                    let millimetres = format!("{:.1}", f64::from(edge) / 100.0);
-                    if ui
-                        .button(Message::PrintMarginOfPrinter { millimetres }.say(lang))
-                        .clicked()
-                    {
-                        choices.margin = f64::from(edge) / 100.0;
-                    }
+    dialog::caption(ui, &Message::PrintPaper.say(lang));
+    let named = |at: usize| {
+        papers.get(at).map_or_else(String::new, |(name, paper)| {
+            format!(
+                "{name}  {:.0} \u{d7} {:.0} mm",
+                paper.width * 25.4 / 72.0,
+                paper.height * 25.4 / 72.0
+            )
+        })
+    };
+    egui::ComboBox::from_id_salt("print-paper")
+        .selected_text(named(choices.paper))
+        .width(ui.available_width() - 26.0)
+        .show_ui(ui, |ui| {
+            for at in 0..papers.len() {
+                ui.selectable_value(&mut choices.paper, at, named(at));
+            }
+        });
+    ui.add_space(6.0);
+    ui.add_space(4.0);
+    dialog::labelled(ui, &Message::PrintOrientation.say(lang), |ui| {
+        egui::ComboBox::from_id_salt("print-orientation")
+            .selected_text(Message::PrintOrientationIs(choices.orientation).say(lang))
+            .width(ui.available_width() - 26.0)
+            .show_ui(ui, |ui| {
+                for orientation in [
+                    Orientation::Auto,
+                    Orientation::Portrait,
+                    Orientation::Landscape,
+                ] {
+                    ui.selectable_value(
+                        &mut choices.orientation,
+                        orientation,
+                        Message::PrintOrientationIs(orientation).say(lang),
+                    );
                 }
             });
-            ui.end_row();
-        });
+    });
+    ui.add_space(6.0);
+    dialog::labelled(ui, &Message::PrintMargin.say(lang), |ui| {
+        ui.add(
+            egui::DragValue::new(&mut choices.margin)
+                .range(0.0..=30.0)
+                .speed(0.2)
+                .max_decimals(1)
+                .suffix(" mm"),
+        );
+        if let Some(edge) = margin_edge {
+            let millimetres = format!("{:.1}", f64::from(edge) / 100.0);
+            ui.add_space(6.0);
+            if dialog::secondary(ui, &Message::PrintMarginOfPrinter { millimetres }.say(lang))
+                .clicked()
+            {
+                choices.margin = f64::from(edge) / 100.0;
+            }
+        }
+    });
 }
 
 fn how_large(ui: &mut egui::Ui, choices: &mut PrintChoices, lang: pdf_app::wording::Lang) {
-    egui::Grid::new("print-size")
-        .num_columns(2)
-        .spacing([8.0, 4.0])
-        .show(ui, |ui| {
-            ui.label(Message::PrintPerSheet.say(lang));
-            ui.horizontal(|ui| {
-                let named = |count: u8| {
-                    if count == 0 {
-                        Message::PrintCustomGrid.say(lang)
-                    } else {
-                        count.to_string()
-                    }
-                };
-                egui::ComboBox::from_id_salt("print-per-sheet")
-                    .selected_text(named(choices.per_sheet))
-                    .width(70.0)
-                    .show_ui(ui, |ui| {
-                        for count in PerSheet::COUNTS.into_iter().chain([0]) {
-                            ui.selectable_value(&mut choices.per_sheet, count, named(count));
-                        }
-                    });
-                if choices.per_sheet == 0 {
-                    ui.add(egui::DragValue::new(&mut choices.columns).range(1..=10));
-                    ui.label("\u{d7}");
-                    ui.add(egui::DragValue::new(&mut choices.rows).range(1..=10));
+    dialog::caption(ui, &Message::PrintArrangement.say(lang));
+    dialog::labelled(ui, &Message::PrintPerSheet.say(lang), |ui| {
+        let named = |count: u8| {
+            if count == 0 {
+                Message::PrintCustomGrid.say(lang)
+            } else {
+                count.to_string()
+            }
+        };
+        egui::ComboBox::from_id_salt("print-per-sheet")
+            .selected_text(named(choices.per_sheet))
+            .width(70.0)
+            .show_ui(ui, |ui| {
+                for count in PerSheet::COUNTS.into_iter().chain([0]) {
+                    ui.selectable_value(&mut choices.per_sheet, count, named(count));
                 }
             });
-            ui.end_row();
-        });
+        if choices.per_sheet == 0 {
+            ui.add_space(6.0);
+            ui.add(egui::DragValue::new(&mut choices.columns).range(1..=10));
+            ui.label("\u{d7}");
+            ui.add(egui::DragValue::new(&mut choices.rows).range(1..=10));
+        }
+    });
     let several = choices.per_sheet != 1;
     ui.add_enabled_ui(!several, |ui| {
-        ui.label(Message::Size.say(lang));
-        for kind in [
-            PrintScalingKind::Fit,
-            PrintScalingKind::ShrinkOversized,
-            PrintScalingKind::ActualSize,
-        ] {
-            ui.radio_value(
-                &mut choices.scaling,
-                kind,
-                Message::PrintScaling(kind).say(lang),
-            );
-        }
-        ui.horizontal(|ui| {
-            ui.radio_value(
-                &mut choices.scaling,
-                PrintScalingKind::Custom,
-                Message::PrintScaling(PrintScalingKind::Custom).say(lang),
-            );
-            let scale = ui.add(
-                egui::DragValue::new(&mut choices.percent)
-                    .range(10.0..=400.0)
-                    .speed(1.0)
-                    .max_decimals(0)
-                    .suffix(" %"),
-            );
-            if scale.changed() {
-                choices.scaling = PrintScalingKind::Custom;
+        dialog::labelled(ui, &Message::Size.say(lang), |ui| {
+            egui::ComboBox::from_id_salt("print-scaling")
+                .selected_text(Message::PrintScaling(choices.scaling).say(lang))
+                .width(if choices.scaling == PrintScalingKind::Custom {
+                    80.0
+                } else {
+                    ui.available_width() - 26.0
+                })
+                .show_ui(ui, |ui| {
+                    for kind in [
+                        PrintScalingKind::Fit,
+                        PrintScalingKind::ShrinkOversized,
+                        PrintScalingKind::ActualSize,
+                        PrintScalingKind::Custom,
+                    ] {
+                        ui.selectable_value(
+                            &mut choices.scaling,
+                            kind,
+                            Message::PrintScaling(kind).say(lang),
+                        );
+                    }
+                });
+            if choices.scaling == PrintScalingKind::Custom {
+                ui.add_space(6.0);
+                ui.add(
+                    egui::DragValue::new(&mut choices.percent)
+                        .range(10.0..=400.0)
+                        .speed(1.0)
+                        .max_decimals(0)
+                        .suffix(" %"),
+                );
             }
         });
     });
     ui.add_enabled_ui(several, |ui| {
-        ui.horizontal(|ui| {
-            ui.label(Message::PrintOrder.say(lang));
+        dialog::labelled(ui, &Message::PrintOrder.say(lang), |ui| {
             egui::ComboBox::from_id_salt("print-order")
                 .selected_text(Message::PrintOrderIs(choices.order).say(lang))
-                .width(190.0)
+                .width(ui.available_width() - 26.0)
                 .show_ui(ui, |ui| {
                     for order in [
                         Order::Horizontal,
@@ -831,24 +897,21 @@ fn how_large(ui: &mut egui::Ui, choices: &mut PrintChoices, lang: pdf_app::wordi
     ui.checkbox(&mut choices.auto_rotate, Message::PrintAutoRotate.say(lang));
 }
 
-fn preview(
+fn the_sheet_bar(
     ui: &mut egui::Ui,
     draft: &mut PrintDraft,
-    (sheets, count): (&Result<Vec<Sheet>, Message>, usize),
+    count: usize,
     lang: pdf_app::wording::Lang,
 ) {
-    ui.set_min_size(PREVIEW);
-    let sheets = match sheets {
-        Ok(sheets) => sheets,
-        Err(why) => {
-            ui.colored_label(ui.visuals().error_fg_color, why.say(lang));
-            return;
-        }
-    };
     ui.horizontal(|ui| {
-        if ui
-            .add_enabled(draft.sheet > 0, egui::Button::new("\u{25c0}"))
-            .clicked()
+        if crate::format::icon_button(
+            ui,
+            crate::icons::Icon::Previous,
+            &Message::PrintPreviousSheet.say(lang),
+            false,
+            draft.sheet > 0,
+        )
+        .clicked()
         {
             draft.sheet -= 1;
         }
@@ -859,9 +922,14 @@ fn preview(
             }
             .say(lang),
         );
-        if ui
-            .add_enabled(draft.sheet + 1 < count, egui::Button::new("\u{25b6}"))
-            .clicked()
+        if crate::format::icon_button(
+            ui,
+            crate::icons::Icon::Next,
+            &Message::PrintNextSheet.say(lang),
+            false,
+            draft.sheet + 1 < count,
+        )
+        .clicked()
         {
             draft.sheet += 1;
         }
@@ -881,6 +949,23 @@ fn preview(
             }
         });
     });
+}
+
+fn preview(
+    ui: &mut egui::Ui,
+    draft: &mut PrintDraft,
+    (sheets, count): (&Result<Vec<Sheet>, Message>, usize),
+    lang: pdf_app::wording::Lang,
+) {
+    ui.set_min_size(PREVIEW);
+    let sheets = match sheets {
+        Ok(sheets) => sheets,
+        Err(why) => {
+            dialog::note(ui, dialog::Tone::Trouble, &why.say(lang));
+            return;
+        }
+    };
+    the_sheet_bar(ui, draft, count, lang);
     let Some(sheet) = sheets.get(draft.sheet) else {
         return;
     };
@@ -1059,7 +1144,43 @@ mod tests {
     use super::{
         duplex_offered, job_of, printed_pages, printer_margin, resolved_sides, settings_of,
     };
-    use crate::window_state::{PrintChoices, PrintWhich, Printing};
+    use crate::window_state::{PrintChoices, PrintWhich, Printing, Window};
+
+    fn window() -> Window {
+        Window::new(
+            pdf_app::Editor::stand_in().expect("the stand-in document opens"),
+            std::path::PathBuf::from("/missing/original.pdf"),
+            Vec::new(),
+        )
+    }
+
+    #[test]
+    fn the_print_dialog_opens_before_the_print_service_has_answered() {
+        let mut window = window();
+        window.open_the_print_dialog();
+        let draft = window.print_draft.as_ref().expect("the dialog is up");
+        assert!(
+            draft.printers.is_none() && draft.looking.is_none(),
+            "nothing waited for the print service on the window's own thread"
+        );
+        let ctx = eframe::egui::Context::default();
+        let started = std::time::Instant::now();
+        while window
+            .print_draft
+            .as_ref()
+            .is_some_and(|draft| draft.printers.is_none())
+        {
+            let _ = ctx.run_ui(eframe::egui::RawInput::default(), |_| {
+                window.print_dialog(&ctx);
+            });
+            assert!(
+                started.elapsed() < std::time::Duration::from_secs(20),
+                "the printers were never heard of, and the window is still answering frames"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(window.print_draft.is_some());
+    }
 
     #[test]
     fn the_pages_printed_are_the_pages_chosen() {

@@ -5,6 +5,8 @@ use eframe::egui;
 use pdf_app::files::is_a_copy;
 use pdf_app::wording::{Home, Lang, Message};
 
+use crate::dialog;
+use crate::format::icon_button;
 use crate::icons::Icon;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -20,6 +22,12 @@ pub(crate) enum Offer {
     AnyPdf,
     Pictures,
     ForTheChat,
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(dead_code, reason = "the tools room is not built for the browser")
+    )]
+    Extensions(&'static [&'static str]),
+    Ending(&'static str),
 }
 
 impl Offer {
@@ -33,6 +41,8 @@ impl Offer {
             Self::AnyPdf => is("pdf"),
             Self::Pictures => is("jpg") || is("jpeg") || is("png"),
             Self::ForTheChat => Self::Pictures.takes(path) || Self::AnyPdf.takes(path),
+            Self::Extensions(wanted) => wanted.iter().any(|ending| is(ending)),
+            Self::Ending(ending) => is(ending),
         }
     }
 }
@@ -48,6 +58,8 @@ pub(crate) struct Chooser {
     ending: &'static str,
     ticked: Option<Vec<PathBuf>>,
     system: System,
+    focused: bool,
+    destination: Destination,
 }
 
 enum System {
@@ -81,6 +93,8 @@ impl Chooser {
             ending: "pdf",
             ticked: None,
             system: System::Untried,
+            focused: false,
+            destination: None,
         };
         chooser.go(folder);
         chooser
@@ -96,10 +110,10 @@ impl Chooser {
         spread: usize,
         ending: &'static str,
     ) -> Self {
-        let offer = if ending == "pdf" {
-            Offer::AnyPdf
-        } else {
-            Offer::Pictures
+        let offer = match ending {
+            "pdf" => Offer::AnyPdf,
+            "png" | "jpg" => Offer::Pictures,
+            other => Offer::Ending(other),
         };
         Self {
             naming: Some(suggested.to_owned()),
@@ -139,21 +153,24 @@ impl Chooser {
         self.picked = None;
     }
 
-    pub(crate) fn show(&mut self, ctx: &egui::Context, lang: Lang, title: Home) -> Chose {
-        if let Some(chose) = self.ask_the_desktop(ctx, lang, &title) {
+    pub(crate) fn show(&mut self, ctx: &egui::Context, lang: Lang, title: &str) -> Chose {
+        if let Some(chose) = self.ask_the_desktop(ctx, lang, title) {
             return chose;
         }
         self.show_own(ctx, lang, title)
     }
 
-    fn ask_the_desktop(&mut self, ctx: &egui::Context, lang: Lang, title: &Home) -> Option<Chose> {
+    fn ask_the_desktop(&mut self, ctx: &egui::Context, lang: Lang, title: &str) -> Option<Chose> {
         if matches!(self.system, System::Untried) {
             let question = crate::system_dialog::Question {
-                title: Message::Home(title.clone()).say(lang),
+                title: title.to_owned(),
                 folder: std::path::absolute(&self.folder).unwrap_or_else(|_| self.folder.clone()),
                 kind: match self.offer {
                     Offer::Pdfs | Offer::AnyPdf => crate::system_dialog::Kind::Pdfs,
-                    Offer::Pictures | Offer::ForTheChat => crate::system_dialog::Kind::Pictures,
+                    Offer::Pictures => crate::system_dialog::Kind::Pictures,
+                    Offer::ForTheChat => crate::system_dialog::Kind::PicturesAndPdfs,
+                    Offer::Extensions(endings) => crate::system_dialog::Kind::Endings(endings),
+                    Offer::Ending(ending) => crate::system_dialog::Kind::Ending(ending),
                 },
                 naming: self
                     .naming
@@ -201,26 +218,27 @@ impl Chooser {
         None
     }
 
-    fn show_own(&mut self, ctx: &egui::Context, lang: Lang, title: Home) -> Chose {
+    fn show_own(&mut self, ctx: &egui::Context, lang: Lang, title: &str) -> Chose {
         let say = |home: Home| Message::Home(home).say(lang);
         let mut chose = Chose::Nothing;
         let mut go = None;
         let mut naming = self.naming.take();
-        let modal = egui::Modal::new(egui::Id::new("open-a-pdf")).show(ctx, |ui| {
-            ui.set_width(560.0);
-            ui.heading(say(title));
-            ui.add_space(6.0);
+        let spec = dialog::Spec {
+            id: "open-a-pdf",
+            width: 560.0,
+        };
+        let modal = dialog::modal(ctx, &spec, |ui| {
+            if dialog::header(ui, title, None, Some(&say(Home::Cancel))) {
+                chose = Chose::Cancelled;
+            }
             ui.horizontal(|ui| {
                 let up = self.folder.parent().map(Path::to_path_buf);
-                if ui
-                    .add_enabled(up.is_some(), egui::Button::new("⬆"))
-                    .on_hover_text(say(Home::UpOneFolder))
-                    .clicked()
-                {
+                let hover = say(Home::UpOneFolder);
+                if icon_button(ui, Icon::Up, &hover, false, up.is_some()).clicked() {
                     go = up;
                 }
                 if let Some(home) = home_folder()
-                    && ui.button(say(Home::HomeFolder)).clicked()
+                    && dialog::secondary(ui, &say(Home::HomeFolder)).clicked()
                 {
                     go = Some(home);
                 }
@@ -232,7 +250,9 @@ impl Chooser {
                     .truncate(),
                 );
             });
-            ui.separator();
+            ui.add_space(6.0);
+            dialog::hairline(ui);
+            ui.add_space(6.0);
             egui::ScrollArea::vertical()
                 .max_height(380.0)
                 .min_scrolled_height(380.0)
@@ -245,6 +265,7 @@ impl Chooser {
                         ui.label(say(match self.offer {
                             Offer::Pdfs | Offer::AnyPdf => Home::NoPdfHere,
                             Offer::Pictures | Offer::ForTheChat => Home::NoPictureHere,
+                            Offer::Extensions(_) | Offer::Ending(_) => Home::NoFileHere,
                         }));
                     }
                     for entry in &self.entries {
@@ -273,7 +294,6 @@ impl Chooser {
                         }
                     }
                 });
-            ui.separator();
             if let Some(answer) = finish(
                 ui,
                 Naming {
@@ -281,6 +301,8 @@ impl Chooser {
                     folder: &self.folder,
                     spread: self.spread,
                     ending: self.ending,
+                    focused: &mut self.focused,
+                    destination: &mut self.destination,
                 },
                 (self.picked.as_deref(), self.ticked.as_deref()),
                 lang,
@@ -299,11 +321,15 @@ impl Chooser {
     }
 }
 
+type Destination = Option<((PathBuf, String), Result<PathBuf, Home>)>;
+
 struct Naming<'a> {
     typed: &'a mut Option<String>,
     folder: &'a Path,
     spread: usize,
     ending: &'static str,
+    focused: &'a mut bool,
+    destination: &'a mut Destination,
 }
 
 fn finish(
@@ -318,10 +344,14 @@ fn finish(
         folder,
         spread,
         ending,
+        focused,
+        destination: held,
     } = naming;
-    let destination = naming
-        .as_ref()
-        .map(|name| where_to_write(folder, name, spread, ending));
+    let destination = naming.as_ref().map(|name| {
+        remembered(held, (folder.to_path_buf(), name.clone()), || {
+            where_to_write(folder, name, spread, ending)
+        })
+    });
     if let Some(name) = naming.as_mut() {
         ui.horizontal(|ui| {
             ui.label(say(Home::FileName));
@@ -332,45 +362,60 @@ fn finish(
                     .desired_width(box_width)
                     .hint_text(hint),
             );
-            typing.request_focus();
+            if !std::mem::replace(focused, true) {
+                typing.request_focus();
+            }
         });
         if let Some(Err(trouble)) = &destination {
-            let said = say(trouble.clone());
-            ui.label(egui::RichText::new(said).color(ui.visuals().warn_fg_color));
+            ui.add_space(4.0);
+            dialog::note(ui, dialog::Tone::Warning, &say(trouble.clone()));
         }
     }
     let mut chose = None;
-    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+    dialog::footer(ui, |ui| {
         match &destination {
             None if ticked.is_some() => {
                 let ticked = ticked.unwrap_or_default();
-                let use_these = egui::Button::new(say(Home::UsePictures(ticked.len())));
-                if ui.add_enabled(!ticked.is_empty(), use_these).clicked() {
+                let words = say(Home::UsePictures(ticked.len()));
+                if dialog::primary(ui, &words, !ticked.is_empty()).clicked() {
                     chose = Some(Chose::Several(ticked.to_vec()));
                 }
             }
             None => {
-                let open = egui::Button::new(say(Home::OpenChosen));
-                if ui.add_enabled(picked.is_some(), open).clicked()
+                if dialog::primary(ui, &say(Home::OpenChosen), picked.is_some()).clicked()
                     && let Some(path) = picked
                 {
                     chose = Some(Chose::Open(path.to_path_buf()));
                 }
             }
             Some(destination) => {
-                let save = egui::Button::new(say(Home::SaveHere));
-                if ui.add_enabled(destination.is_ok(), save).clicked()
+                if dialog::primary(ui, &say(Home::SaveHere), destination.is_ok()).clicked()
                     && let Ok(path) = destination
                 {
                     chose = Some(Chose::Save(path.clone()));
                 }
             }
         }
-        if ui.button(say(Home::Cancel)).clicked() {
+        if dialog::secondary(ui, &say(Home::Cancel)).clicked() {
             chose = Some(Chose::Cancelled);
         }
     });
     chose
+}
+
+fn remembered<K: PartialEq, V: Clone>(
+    held: &mut Option<(K, V)>,
+    key: K,
+    work: impl FnOnce() -> V,
+) -> V {
+    if let Some((was, result)) = held.as_ref()
+        && *was == key
+    {
+        return result.clone();
+    }
+    let result = work();
+    *held = Some((key, result.clone()));
+    result
 }
 
 fn with_ending(name: &str, ending: &str) -> String {
@@ -384,17 +429,18 @@ fn with_ending(name: &str, ending: &str) -> String {
 
 fn waiting_note(ctx: &egui::Context, lang: Lang) -> bool {
     let mut cancelled = false;
-    egui::Modal::new(egui::Id::new("file-window-open")).show(ctx, |ui| {
-        ui.set_width(320.0);
+    let spec = dialog::Spec {
+        id: "file-window-open",
+        width: 320.0,
+    };
+    dialog::modal(ctx, &spec, |ui| {
         ui.horizontal(|ui| {
-            ui.spinner();
+            ui.spacing_mut().item_spacing.x = 8.0;
+            dialog::spinner(ui);
             ui.label(Message::Home(Home::ChooseInTheFileWindow).say(lang));
         });
-        ui.add_space(6.0);
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.button(Message::Home(Home::Cancel).say(lang)).clicked() {
-                cancelled = true;
-            }
+        dialog::footer(ui, |ui| {
+            cancelled = dialog::secondary(ui, &Message::Home(Home::Cancel).say(lang)).clicked();
         });
     });
     cancelled
@@ -492,7 +538,26 @@ pub(crate) fn home_folder() -> Option<PathBuf> {
 mod tests {
     use std::path::PathBuf;
 
-    use super::{Offer, listing};
+    use super::{Offer, listing, remembered};
+
+    #[test]
+    fn the_disk_is_asked_once_for_a_name_and_again_only_when_it_changes() {
+        let mut held = None;
+        let mut asked = 0;
+        for _ in 0..5 {
+            let said = remembered(&mut held, ("/d", "a.pdf"), || {
+                asked += 1;
+                "free"
+            });
+            assert_eq!(said, "free");
+        }
+        assert_eq!(asked, 1, "a frame is not a reason to look at the disk");
+        let _ = remembered(&mut held, ("/d", "b.pdf"), || {
+            asked += 1;
+            "taken"
+        });
+        assert_eq!(asked, 2, "a new name is");
+    }
 
     #[test]
     fn folders_come_first_and_only_pdfs_are_offered() {

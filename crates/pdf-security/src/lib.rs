@@ -655,7 +655,9 @@ fn two_point_zero_hash(
             return Err(SecurityError::new(SecurityErrorKind::MalformedCiphertext));
         }
         let mut blocks: Vec<aes::cipher::Array<u8, aes::cipher::consts::U16>> = block
-            .chunks_exact(16)
+            .as_chunks::<16>()
+            .0
+            .iter()
             .map(|chunk| {
                 let mut array = aes::cipher::Array::from([0u8; 16]);
                 array.copy_from_slice(chunk);
@@ -1053,7 +1055,9 @@ mod tests {
 
     fn decode_hex(hex: &str) -> Vec<u8> {
         hex.as_bytes()
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|pair| {
                 let text = std::str::from_utf8(pair).expect("ASCII fixture");
                 u8::from_str_radix(text, 16).expect("hex fixture")

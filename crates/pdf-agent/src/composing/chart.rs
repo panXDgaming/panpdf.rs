@@ -51,6 +51,7 @@ struct Chart {
 fn number(json: &Json) -> Option<f64> {
     match json {
         Json::Number(value) => value.is_finite().then_some(*value),
+        Json::Whole(_) => json.as_f64(),
         Json::Text(text) => text.trim().replace(',', "").parse::<f64>().ok(),
         _ => None,
     }
@@ -357,7 +358,7 @@ fn ticks(low: f64, high: f64, count: f64) -> Vec<f64> {
     out
 }
 
-fn mix(a: Colour, b: Colour, t: f64) -> Colour {
+pub(super) fn mix(a: Colour, b: Colour, t: f64) -> Colour {
     [
         a[0] + (b[0] - a[0]) * t,
         a[1] + (b[1] - a[1]) * t,

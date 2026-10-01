@@ -1,0 +1,19 @@
+[package]
+name = "convert-pdf-canvas"
+description = "A new PDF drawn from nothing: shaped text in embedded subset fonts, paths, pictures, links"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+convert-gif.workspace = true
+pdf-font.workspace = true
+pdf-syntax.workspace = true
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

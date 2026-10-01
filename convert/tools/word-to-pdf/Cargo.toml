@@ -1,0 +1,30 @@
+[package]
+name = "word-to-pdf"
+description = "A Word document (.docx) to PDF, with Lao and Thai set right"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "word-to-pdf"
+path = "src/main.rs"
+
+[dependencies]
+convert-layout.workspace = true
+convert-structure.workspace = true
+convert-wasm.workspace = true
+convert-office-read.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+convert-cli.workspace = true
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

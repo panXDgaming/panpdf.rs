@@ -108,3 +108,44 @@ fn base64_matches_the_rfc() {
         assert_eq!(base64(plain.as_bytes()), coded);
     }
 }
+
+#[test]
+fn a_stored_file_may_be_larger_than_a_message_and_both_limits_are_real() {
+    let padding = "x".repeat(super::MOST_BYTES);
+    let big = format!(r#"{{"words":"{padding}"}}"#);
+    assert!(big.len() > super::MOST_BYTES);
+    let refused = Json::parse(&big).expect_err("a message that long is refused");
+    assert_eq!(refused.reason, "message too long");
+    let read = Json::parse_stored(&big).expect("a saved chat that long is read back");
+    assert_eq!(
+        read.get("words").and_then(Json::as_str).map(str::len),
+        Some(super::MOST_BYTES)
+    );
+    const { assert!(super::MOST_STORED_BYTES > 4 * super::MOST_BYTES) };
+}
+
+#[test]
+fn a_whole_number_past_what_a_double_holds_is_written_back_as_it_came() {
+    for text in [
+        "9007199254740993",
+        "-9007199254740993",
+        "18446744073709551615",
+    ] {
+        let read = Json::parse(text).expect("a whole number");
+        assert_eq!(read.write(), text);
+        assert!(read.as_f64().is_some());
+        assert_eq!(read.as_count(), None);
+    }
+    let kept = Json::parse(r#"{"id":9007199254740993}"#).expect("an object");
+    assert_eq!(kept.write(), r#"{"id":9007199254740993}"#);
+    assert_eq!(
+        Json::parse("9007199254740991").expect("number").write(),
+        "9007199254740991"
+    );
+    assert_eq!(Json::parse("1e300").expect("number"), Json::Number(1e300));
+    assert_eq!(
+        Json::parse("9007199254740993.0").expect("number").write(),
+        "9007199254740992"
+    );
+    assert!(Json::parse(&"9".repeat(400)).is_err());
+}

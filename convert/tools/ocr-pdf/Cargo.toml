@@ -1,0 +1,38 @@
+[package]
+name = "ocr-pdf"
+description = "Scanned PDF pages made searchable: recognised words written invisibly under the picture (Tesseract: a program on the desktop, compiled for the browser in a tab)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "ocr-pdf"
+path = "src/main.rs"
+
+[dependencies]
+convert-files.workspace = true
+convert-pdfdoc.workspace = true
+pdf-bytes.workspace = true
+pdf-content.workspace = true
+pdf-edit.workspace = true
+pdf-ocr.workspace = true
+pdf-paint.workspace = true
+pdf-render.workspace = true
+pdf-session.workspace = true
+pdf-syntax.workspace = true
+
+[dev-dependencies]
+pdf-bytes.workspace = true
+pdf-paint.workspace = true
+pdf-session.workspace = true
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

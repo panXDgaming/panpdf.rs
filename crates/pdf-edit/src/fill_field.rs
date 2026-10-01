@@ -241,15 +241,15 @@ pub(crate) fn typed(
     } else {
         appearance.size
     };
-    let (size, lines) = laid_out(&shown, &face, embeddable, (&layout, box_, asked))?;
+    let (size, lines) = laid_out(&shown, &face, (&layout, box_, asked))?;
     let chosen = highlight(listing.then_some((field, &text)), &lines, (box_, size));
 
     let objects = FontObjects::numbered_from(crate::block_rewrite::next_object_number(source)?);
-    let clusters = shape(&shown, &face, embeddable, size)?;
+    let clusters = shape(&shown, std::slice::from_ref(&face), size)?;
     let mark = face_mark(&face.identity.sha256, face.identity.face_index);
     let font = embed(
         embeddable,
-        &meanings(&clusters, embeddable),
+        &meanings(&clusters, 0, embeddable),
         (objects, &mark, false),
     )?;
     writes.extend(font.writes);
@@ -361,15 +361,14 @@ fn inner(field: &FormField) -> Result<[f64; 4], SpikeError> {
 fn laid_out(
     text: &str,
     face: &pdf_content::SubstitutedFace,
-    embeddable: Embeddable<'_>,
     (field, box_, asked): (&FormField, [f64; 4], Option<f64>),
 ) -> Result<(f64, Vec<PlacedLine>), SpikeError> {
     if let Some(size) = asked {
-        let lines = at_size(text, face, embeddable, (field, box_, size))?;
+        let lines = at_size(text, face, (field, box_, size))?;
         return Ok((size, lines));
     }
     for size in LADDER {
-        if let Ok(lines) = at_size(text, face, embeddable, (field, box_, size))
+        if let Ok(lines) = at_size(text, face, (field, box_, size))
             && fits(&lines, box_, size)
         {
             return Ok((size, lines));
@@ -389,13 +388,12 @@ fn fits(lines: &[PlacedLine], box_: [f64; 4], size: f64) -> bool {
 fn at_size(
     text: &str,
     face: &pdf_content::SubstitutedFace,
-    embeddable: Embeddable<'_>,
     (field, box_, size): (&FormField, [f64; 4], f64),
 ) -> Result<Vec<PlacedLine>, SpikeError> {
     if !(size.is_finite() && size > 0.0) {
         return Err(refused("a field's text has a size"));
     }
-    let clusters = shape(text, face, embeddable, size)?;
+    let clusters = shape(text, std::slice::from_ref(face), size)?;
     if let (true, Some(cells)) = (
         field.flags & crate::form::flags::COMB != 0 && !field.multiline && !field.password,
         field.max_len,
@@ -482,6 +480,7 @@ fn combed(
             PlacedLine {
                 origin,
                 codes: cluster.codes.clone(),
+                faces: vec![0; cluster.codes.len()],
                 glyphs: cluster.glyphs.clone(),
                 pens: cluster
                     .glyphs

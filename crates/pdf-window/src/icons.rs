@@ -24,8 +24,6 @@ pub(crate) enum Icon {
     ZoomIn,
     ZoomOut,
     NewDocument,
-    Theme,
-    Home,
     Document,
     Folder,
     Bold,
@@ -90,12 +88,43 @@ pub(crate) enum Icon {
     Stop,
     #[cfg_attr(
         target_arch = "wasm32",
+        expect(dead_code, reason = "the assistant panel is not built for the browser")
+    )]
+    History,
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(dead_code, reason = "the assistant panel is not built for the browser")
+    )]
+    NewChat,
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(dead_code, reason = "the assistant panel is not built for the browser")
+    )]
+    Chat,
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(dead_code, reason = "the assistant panel is not built for the browser")
+    )]
+    Attach,
+    Info,
+    Check,
+    Expand,
+    Close,
+    Up,
+    Download,
+    #[cfg_attr(
+        target_arch = "wasm32",
         expect(
             dead_code,
-            reason = "the assistant panel that closes is not built for the browser"
+            reason = "the assistant button is not built for the browser"
         )
     )]
-    Close,
+    Assistant,
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(dead_code, reason = "the tools room is not built for the browser")
+    )]
+    Tools,
 }
 
 const WEIGHT: f32 = 0.085;
@@ -111,6 +140,7 @@ const CHAIN: [u8; 3] = [14, 116, 196];
 const TAKE_AWAY: [u8; 3] = [220, 38, 38];
 const SHAPE_FILL: [u8; 3] = [249, 115, 22];
 const STACK: [u8; 3] = [124, 58, 237];
+const SPARK: [u8; 3] = [13, 148, 136];
 
 const HEAVIER: f32 = 1.3;
 const BOLD_WEIGHT: f32 = 1.7;
@@ -163,8 +193,6 @@ impl Icon {
             Self::ZoomIn => magnifier(&pen, Some(true)),
             Self::ZoomOut => magnifier(&pen, Some(false)),
             Self::NewDocument => new_document(&pen),
-            Self::Theme => theme(&pen),
-            Self::Home => home(&pen),
             Self::Document => document(&pen),
             Self::Folder => folder(&pen),
             Self::Bold => bold(&pen),
@@ -240,6 +268,33 @@ impl Icon {
                 pen.line(&[(0.22, 0.42), (0.5, 0.14), (0.78, 0.42)]);
             }
             Self::Stop => pen.block((0.24, 0.24), (0.76, 0.76), 0.08),
+            Self::History => history(&pen),
+            Self::NewChat => {
+                bubble(&pen);
+                pen.line(&[(0.50, 0.28), (0.50, 0.54)]);
+                pen.line(&[(0.37, 0.41), (0.63, 0.41)]);
+            }
+            Self::Chat => {
+                bubble(&pen);
+                pen.line(&[(0.28, 0.32), (0.72, 0.32)]);
+                pen.line(&[(0.28, 0.50), (0.56, 0.50)]);
+            }
+            Self::Attach => paperclip(&pen),
+            Self::Info => {
+                pen.ring((0.5, 0.5), 0.40);
+                pen.dot((0.5, 0.30), 0.045);
+                pen.line(&[(0.5, 0.45), (0.5, 0.72)]);
+            }
+            Self::Check => pen.line(&[(0.16, 0.54), (0.40, 0.76), (0.84, 0.26)]),
+            Self::Expand => pen.line(&[(0.18, 0.36), (0.50, 0.68), (0.82, 0.36)]),
+            Self::Up => pen.line(&[(0.18, 0.64), (0.50, 0.32), (0.82, 0.64)]),
+            Self::Download => {
+                pen.line(&[(0.50, 0.12), (0.50, 0.64)]);
+                pen.line(&[(0.26, 0.42), (0.50, 0.66), (0.74, 0.42)]);
+                pen.line(&[(0.14, 0.74), (0.14, 0.88), (0.86, 0.88), (0.86, 0.74)]);
+            }
+            Self::Assistant => assistant(&pen),
+            Self::Tools => toolbox(&pen),
         }
     }
 }
@@ -617,12 +672,6 @@ fn new_document(pen: &Pen<'_>) {
     pen.line(&[(0.78, 0.62), (0.78, 0.94)]);
 }
 
-fn home(pen: &Pen<'_>) {
-    pen.line(&[(0.06, 0.50), (0.5, 0.10), (0.94, 0.50)]);
-    pen.line(&[(0.20, 0.38), (0.20, 0.92), (0.80, 0.92), (0.80, 0.38)]);
-    pen.line(&[(0.40, 0.92), (0.40, 0.64), (0.60, 0.64), (0.60, 0.92)]);
-}
-
 fn document(pen: &Pen<'_>) {
     pen.line(&[
         (0.18, 0.06),
@@ -651,15 +700,90 @@ fn folder(pen: &Pen<'_>) {
     pen.line(&[(0.06, 0.42), (0.94, 0.42)]);
 }
 
-fn theme(pen: &Pen<'_>) {
-    pen.ring((0.5, 0.5), 0.38);
-    pen.fill(&[
-        (0.5, 0.12),
-        (0.77, 0.23),
-        (0.88, 0.5),
-        (0.77, 0.77),
-        (0.5, 0.88),
+fn toolbox(pen: &Pen<'_>) {
+    pen.line(&[(0.32, 0.30), (0.32, 0.14), (0.68, 0.14), (0.68, 0.30)]);
+    pen.frame((0.06, 0.30), (0.94, 0.86), 0.06);
+    pen.line(&[(0.06, 0.56), (0.94, 0.56)]);
+    pen.in_accent(CHAIN).block((0.43, 0.48), (0.57, 0.66), 0.02);
+}
+
+fn history(pen: &Pen<'_>) {
+    pen.ring((0.5, 0.5), 0.40);
+    pen.line(&[(0.5, 0.26), (0.5, 0.5), (0.68, 0.62)]);
+}
+
+fn bubble(pen: &Pen<'_>) {
+    pen.line(&[
+        (0.10, 0.16),
+        (0.90, 0.16),
+        (0.90, 0.70),
+        (0.44, 0.70),
+        (0.24, 0.88),
+        (0.24, 0.70),
+        (0.10, 0.70),
+        (0.10, 0.16),
     ]);
+}
+
+fn paperclip(pen: &Pen<'_>) {
+    const STEPS: u8 = 12;
+    let arc = |centre: (f32, f32), radius: f32, from: f32, to: f32| -> Vec<(f32, f32)> {
+        (0..=STEPS)
+            .map(|step| {
+                let angle = from + (to - from) * f32::from(step) / f32::from(STEPS);
+                (
+                    centre.0 + radius * angle.cos(),
+                    centre.1 + radius * angle.sin(),
+                )
+            })
+            .collect()
+    };
+    let mut path = vec![(0.72, 0.34)];
+    path.extend(arc((0.50, 0.70), 0.22, 0.0, std::f32::consts::PI));
+    path.push((0.28, 0.28));
+    path.extend(arc(
+        (0.42, 0.28),
+        0.14,
+        std::f32::consts::PI,
+        std::f32::consts::TAU,
+    ));
+    path.push((0.56, 0.64));
+    pen.line(&path);
+}
+
+fn assistant(pen: &Pen<'_>) {
+    sparkle(&pen.in_accent(SPARK), (0.42, 0.58), 0.42);
+    sparkle(pen, (0.80, 0.20), 0.17);
+}
+
+fn sparkle(pen: &Pen<'_>, centre: (f32, f32), reach: f32) {
+    const SIDE_STEPS: u8 = 8;
+    const PINCH: f32 = 0.08;
+    let tip = |quarter: u8| {
+        let angle = std::f32::consts::FRAC_PI_2 * f32::from(quarter);
+        (
+            centre.0 + reach * angle.sin(),
+            centre.1 - reach * angle.cos(),
+        )
+    };
+    let mut outline = Vec::new();
+    for quarter in 0..4_u8 {
+        let (from, to) = (tip(quarter), tip((quarter + 1) % 4));
+        let control = (
+            centre.0 + (from.0 + to.0 - 2.0 * centre.0) * PINCH,
+            centre.1 + (from.1 + to.1 - 2.0 * centre.1) * PINCH,
+        );
+        for step in 0..SIDE_STEPS {
+            let along = f32::from(step) / f32::from(SIDE_STEPS);
+            let behind = 1.0 - along;
+            outline.push((
+                behind * behind * from.0 + 2.0 * behind * along * control.0 + along * along * to.0,
+                behind * behind * from.1 + 2.0 * behind * along * control.1 + along * along * to.1,
+            ));
+        }
+    }
+    outline.push(tip(0));
+    pen.line(&outline);
 }
 
 fn bold(pen: &Pen<'_>) {
@@ -1006,8 +1130,6 @@ mod tests {
             Icon::ZoomIn,
             Icon::ZoomOut,
             Icon::NewDocument,
-            Icon::Theme,
-            Icon::Home,
             Icon::Document,
             Icon::Folder,
             Icon::Pen,
@@ -1052,12 +1174,23 @@ mod tests {
             Icon::AskAgain,
             Icon::Send,
             Icon::Stop,
+            Icon::History,
+            Icon::NewChat,
+            Icon::Chat,
+            Icon::Attach,
+            Icon::Info,
+            Icon::Check,
+            Icon::Expand,
+            Icon::Up,
+            Icon::Download,
+            Icon::Assistant,
+            Icon::Tools,
         ];
         for (step, icon) in every.iter().enumerate() {
             for other in &every[step + 1..] {
                 assert_ne!(icon, other, "two of the same icon");
             }
         }
-        assert_eq!(every.len(), 62);
+        assert_eq!(every.len(), 71);
     }
 }

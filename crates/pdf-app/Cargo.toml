@@ -11,6 +11,7 @@ publish = false
 pdf-bytes = { path = "../pdf-bytes" }
 pdf-cli = { path = "../pdf-cli" }
 pdf-content = { path = "../pdf-content" }
+pdf-convert = { path = "../pdf-convert" }
 pdf-edit = { path = "../pdf-edit" }
 pdf-ocr = { path = "../pdf-ocr" }
 pdf-print = { path = "../pdf-print" }

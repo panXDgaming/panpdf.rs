@@ -128,9 +128,12 @@ fn picture_media_type(bytes: &[u8]) -> Option<&'static str> {
 }
 
 fn looks_like_pdf(bytes: &[u8]) -> bool {
-    bytes[..bytes.len().min(1024)]
-        .windows(4)
-        .any(|window| window == b"%PDF")
+    let head = &bytes[..bytes.len().min(1024)];
+    let after_a_mark = head.strip_prefix(&[0xEF, 0xBB, 0xBF][..]).unwrap_or(head);
+    if after_a_mark.trim_ascii_start().starts_with(b"%PDF-") {
+        return true;
+    }
+    head.windows(5).any(|window| window == b"%PDF-") && as_text(bytes).is_none()
 }
 
 fn picture(name: &str, media_type: &'static str, bytes: &[u8]) -> Result<Attachment, AttachError> {
@@ -153,7 +156,7 @@ fn picture(name: &str, media_type: &'static str, bytes: &[u8]) -> Result<Attachm
 
 fn over_white(rgba: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(rgba.len() / 4 * 3);
-    for pixel in rgba.chunks_exact(4) {
+    for pixel in rgba.as_chunks::<4>().0 {
         let alpha = u32::from(pixel[3]);
         for channel in &pixel[..3] {
             let over = (u32::from(*channel) * alpha + 255 * (255 - alpha)) / 255;
@@ -349,20 +352,34 @@ fn zip_member_text(bytes: &[u8], entry: &ZipEntry) -> Option<String> {
     String::from_utf8(raw).ok()
 }
 
+fn breaks_a_line(tag: &str) -> bool {
+    let name = tag
+        .trim_start_matches('/')
+        .split(|letter: char| letter.is_whitespace() || letter == '/')
+        .next()
+        .unwrap_or_default();
+    matches!(
+        name,
+        "w:p" | "w:tc" | "w:tr" | "w:br" | "w:tab" | "w:cr" | "a:p" | "a:br" | "si" | "row"
+    )
+}
+
 fn strip_tags(xml: &str) -> String {
     let mut out = String::with_capacity(xml.len());
-    let mut in_tag = false;
-    for ch in xml.chars() {
-        match ch {
-            '<' => {
-                in_tag = true;
-                out.push(' ');
-            }
-            '>' => in_tag = false,
-            _ if in_tag => {}
-            _ => out.push(ch),
+    let mut rest = xml;
+    while let Some(open) = rest.find('<') {
+        out.push_str(&rest[..open]);
+        let after = &rest[open + 1..];
+        let Some(close) = after.find('>') else {
+            rest = "";
+            break;
+        };
+        if breaks_a_line(&after[..close]) {
+            out.push(' ');
         }
+        rest = &after[close + 1..];
     }
+    out.push_str(rest);
     let out = out
         .replace("&lt;", "<")
         .replace("&gt;", ">")

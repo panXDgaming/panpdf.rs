@@ -1445,9 +1445,7 @@ impl Renderer<'_> {
         };
         let mut over_white = Canvas::blank(width, height);
         let mut over_black = Canvas::blank(width, height);
-        for pixel in &mut over_black.pixels {
-            *pixel = [0.0, 0.0, 0.0];
-        }
+        over_black.pixels.fill([0.0, 0.0, 0.0]);
         for canvas in [&mut over_white, &mut over_black] {
             let mut renderer = Renderer {
                 outlines: std::collections::HashMap::new(),
@@ -1688,12 +1686,10 @@ impl Renderer<'_> {
         let mut over_second = Canvas::window(x0, y0, width, height);
         #[allow(clippy::cast_possible_truncation)]
         let first = [backdrop[0] as f32, backdrop[1] as f32, backdrop[2] as f32];
-        for pixel in &mut over_first.pixels {
-            *pixel = first;
-        }
-        for pixel in &mut over_second.pixels {
-            *pixel = if luminosity { first } else { [0.0, 0.0, 0.0] };
-        }
+        over_first.pixels.fill(first);
+        over_second
+            .pixels
+            .fill(if luminosity { first } else { [0.0, 0.0, 0.0] });
         let saved_clip = self.clip_cache.take();
         let saved_soft = self.soft_mask_cache.take();
         for canvas in [&mut over_first, &mut over_second] {
@@ -3205,7 +3201,9 @@ mod tests {
         canvas.pixels[1] = [0.2, 0.4, 0.6];
         let rgba: Vec<u8> = canvas
             .to_rgb8()
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .flat_map(|pixel| [pixel[0], pixel[1], pixel[2], 255])
             .collect();
         assert_eq!(canvas.to_rgba8(), rgba);

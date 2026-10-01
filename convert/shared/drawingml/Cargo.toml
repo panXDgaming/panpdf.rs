@@ -1,0 +1,18 @@
+[package]
+name = "convert-drawingml"
+description = "DrawingML drawn on a PDF canvas: theme colours, shapes, pictures, text bodies, tables and charts"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+convert-office-read.workspace = true
+convert-pdf-canvas.workspace = true
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

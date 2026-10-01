@@ -19,6 +19,23 @@ impl Server {
     }
 
     #[must_use]
+    pub fn answer_bytes(&mut self, line: &[u8]) -> Option<String> {
+        match std::str::from_utf8(line) {
+            Ok(line) => self.answer_line(line),
+            Err(error) => Some(
+                failure(
+                    &Json::Null,
+                    -32700,
+                    &format!(
+                        "not JSON: the line is not UTF-8, bad byte at {}",
+                        error.valid_up_to()
+                    ),
+                )
+                .write(),
+            ),
+        }
+    }
+
     pub fn answer_line(&mut self, line: &str) -> Option<String> {
         let line = line.trim();
         if line.is_empty() {
@@ -39,7 +56,7 @@ impl Server {
             return id.map(|id| failure(&id, -32600, "a request needs a method"));
         };
         let id = id?;
-        if !matches!(id, Json::Text(_) | Json::Number(_)) {
+        if !matches!(id, Json::Text(_) | Json::Number(_) | Json::Whole(_)) {
             return Some(failure(
                 &Json::Null,
                 -32600,
