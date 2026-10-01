@@ -9,24 +9,35 @@ use std::thread;
 use eframe::egui;
 use pdf_agent::attach;
 use pdf_agent::connect::{
-    Attachment, ConnectError, Connection, Effort, Model, Provider as WireProvider, Reply, Said,
+    Attachment, ConnectError, Connection, Effort, Model, Provider as WireProvider, Reply,
     ToolResult, Turn, settle_dangling_calls,
 };
 use pdf_agent::tools::DocumentBrief;
-use pdf_agent::tools::request::{PlanStep, StepState};
 
 use pdf_app::ai_layout;
-use pdf_app::ai_permission::{Answer as Allowed, Mode, describe_call};
-use pdf_app::wording::{Lang, Message};
+use pdf_app::ai_permission::{Answer as Allowed, Mode};
+use pdf_app::wording::{Assistant, Lang, Message};
 
-use crate::ai_actions::{Question, QuestionReply, Tools, tools_are_offered};
+use crate::ai_actions::{Tools, tools_are_offered};
 use crate::icons::Icon;
 use crate::window_state::Window;
 
-mod drawers;
+mod cards;
+mod chats;
+mod composer;
+mod conversation;
 mod going_back;
+mod header;
 mod history;
 mod keeping;
+mod look;
+mod setup;
+mod steps;
+
+#[cfg(test)]
+mod behaviour;
+
+pub(crate) use header::Badge;
 
 const MAX_CONTEXT: usize = 12_000;
 
@@ -51,7 +62,15 @@ you go on.";
 
 const GAP: f32 = 8.0;
 
-const LEAST_CONVERSATION: f32 = 80.0;
+const DEFAULT_CHROME: f32 = 110.0;
+
+const EFFORTS: [Effort; 5] = [
+    Effort::Off,
+    Effort::None,
+    Effort::Low,
+    Effort::Medium,
+    Effort::High,
+];
 
 fn plain_enter(ui: &mut egui::Ui) -> bool {
     ui.input_mut(|input| {
@@ -79,33 +98,6 @@ fn shorten_model(id: &str) -> String {
     let mut clipped: String = last.chars().take(27).collect();
     clipped.push('\u{2026}');
     clipped
-}
-
-fn small_button_width(ui: &egui::Ui, text: &str) -> f32 {
-    let font = egui::TextStyle::Small.resolve(ui.style());
-    let colour = ui.visuals().text_color();
-    let letters = ui
-        .ctx()
-        .fonts_mut(|fonts| fonts.layout_no_wrap(text.to_owned(), font, colour).size().x);
-    letters + ui.spacing().button_padding.x * 2.0
-}
-
-fn control_height(ui: &egui::Ui) -> f32 {
-    ui.spacing()
-        .interact_size
-        .y
-        .max(crate::format::CONTROL_HEIGHT)
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-struct Asked {
-    asked: bool,
-    attach: bool,
-}
-
-fn composer_chrome(ui: &egui::Ui) -> f32 {
-    let frame = egui::Frame::group(ui.style());
-    frame.inner_margin.sum().y + frame.stroke.width * 2.0 + control_height(ui) + GAP * 0.75
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -184,6 +176,7 @@ enum Answer {
 enum NoticeAction {
     Continue,
     Retry,
+    OpenSettings,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -212,19 +205,27 @@ impl Notice {
 }
 
 fn notice_of(error: &ConnectError) -> Notice {
-    let (said, detail) = match error {
-        ConnectError::Invalid(why) => (Message::AiConnectionInvalid, Some(why)),
-        ConnectError::Cancelled => (Message::AiStopped, None),
-        ConnectError::Curl(why) => (Message::AiCouldNotReach, Some(why)),
-        ConnectError::ResponseTooLarge => (Message::AiAnswerTooLarge, None),
-        ConnectError::TooLarge(why) => (Message::AiConversationTooLarge, Some(why)),
-        ConnectError::Http(why) => (Message::AiServiceRefused, Some(why)),
-        ConnectError::Protocol(why) => (Message::AiAnswerUnexpected, Some(why)),
+    let (said, detail, action) = match error {
+        ConnectError::Invalid(why) => (
+            Message::AiConnectionInvalid,
+            Some(why),
+            Some(NoticeAction::OpenSettings),
+        ),
+        ConnectError::Cancelled => (Message::AiStopped, None, None),
+        ConnectError::Curl(why) => (Message::AiCouldNotReach, Some(why), None),
+        ConnectError::ResponseTooLarge => (Message::AiAnswerTooLarge, None, None),
+        ConnectError::TooLarge(why) => (Message::AiConversationTooLarge, Some(why), None),
+        ConnectError::Http(why) => (
+            Message::AiServiceRefused,
+            Some(why),
+            Some(NoticeAction::OpenSettings),
+        ),
+        ConnectError::Protocol(why) => (Message::AiAnswerUnexpected, Some(why), None),
     };
     Notice {
         said,
         detail: detail.cloned(),
-        action: None,
+        action,
     }
 }
 
@@ -233,16 +234,41 @@ struct Asking {
     answers: Receiver<Answer>,
 }
 
+type Prepared = (attach::Kind, Result<Vec<Attachment>, String>);
+
+enum Preparing {
+    Reading(Receiver<Prepared>),
+    Done(Result<Vec<Attachment>, String>),
+}
+
 struct PendingAttachment {
     name: String,
     bytes: usize,
     kind: attach::Kind,
-    outcome: Result<Vec<Attachment>, String>,
+    state: Preparing,
 }
 
 impl PendingAttachment {
+    fn refused(&self) -> bool {
+        matches!(self.state, Preparing::Done(Err(_)))
+    }
+
+    fn reading(&self) -> bool {
+        matches!(self.state, Preparing::Reading(_))
+    }
+
+    fn ready(&self) -> Option<&[Attachment]> {
+        match &self.state {
+            Preparing::Done(Ok(attachments)) => Some(attachments),
+            _ => None,
+        }
+    }
+
     fn label(&self, lang: Lang) -> String {
-        if self.outcome.is_err() {
+        if self.reading() {
+            return Assistant::Attaching.say(lang);
+        }
+        if self.refused() {
             return Message::AiAttachRefused.say(lang);
         }
         match self.kind {
@@ -274,16 +300,14 @@ pub(crate) struct AiState {
     settings_open: bool,
     notice: Option<Notice>,
     connected: bool,
+    edited: bool,
     include_context: bool,
     generation: u64,
     asking: Option<Asking>,
     partial: Option<Arriving>,
     wrapped_rows: usize,
-    chips_height: f32,
-    second_row_height: f32,
-    drawn: Vec<Option<(TurnShape, f32)>>,
+    drawn: Vec<Option<(conversation::TurnShape, f32)>>,
     drawn_width: f32,
-    plan_height: f32,
     undo_the_run_asked: bool,
     model_calls: usize,
     summarising: bool,
@@ -300,14 +324,20 @@ pub(crate) struct AiState {
     documents: Vec<String>,
     places: Vec<String>,
     confirming_free: bool,
-    history: Option<Vec<pdf_agent::history::Chat>>,
+    history: Option<Arc<Vec<pdf_agent::history::Chat>>>,
     pending: Vec<PendingAttachment>,
     recall: pdf_app::ai_recall::Recall,
     rewound: Option<going_back::Rewound>,
     send_now: bool,
-    tried_at_start: bool,
     checking: bool,
-    confirming_delete: bool,
+    other_keys: BTreeMap<&'static str, String>,
+    chats_open: bool,
+    deleting: Option<String>,
+    copied_chat: Option<String>,
+    composer_chrome: f32,
+    was_moving: bool,
+    focus_composer: bool,
+    act_on_the_notice_later: Option<NoticeAction>,
 }
 
 impl Default for AiState {
@@ -326,16 +356,14 @@ impl Default for AiState {
             notice: None,
             width: 360.0,
             connected: false,
-            include_context: false,
+            edited: false,
+            include_context: true,
             generation: 0,
             asking: None,
             partial: None,
             wrapped_rows: ai_layout::LEAST_ROWS,
-            chips_height: 0.0,
-            second_row_height: 0.0,
             drawn: Vec::new(),
             drawn_width: 0.0,
-            plan_height: 0.0,
             undo_the_run_asked: false,
             model_calls: 0,
             summarising: false,
@@ -357,9 +385,15 @@ impl Default for AiState {
             recall: pdf_app::ai_recall::Recall::default(),
             rewound: None,
             send_now: false,
-            tried_at_start: false,
             checking: false,
-            confirming_delete: false,
+            other_keys: BTreeMap::new(),
+            chats_open: false,
+            deleting: None,
+            copied_chat: None,
+            composer_chrome: DEFAULT_CHROME,
+            was_moving: false,
+            focus_composer: false,
+            act_on_the_notice_later: None,
         }
     }
 }
@@ -367,25 +401,34 @@ impl Default for AiState {
 impl AiState {
     pub(crate) fn remembered() -> Self {
         let mut state = Self::default();
-        let Some(choice) = choice_file()
+        let choice = choice_file()
             .and_then(|file| std::fs::read_to_string(file).ok())
-            .and_then(|text| pdf_app::ai_choice::read(&text))
-        else {
-            return state;
-        };
-        let Some(provider) = Provider::by_name(&choice.provider) else {
-            return state;
-        };
-        state.provider = provider;
-        state.base_url = if choice.base_url.is_empty() {
-            provider.base_url().into()
-        } else {
-            choice.base_url
-        };
-        state.model = choice.model;
-        state.effort = Effort::parse(&choice.effort).unwrap_or(Effort::Off);
-        state.mode = Mode::parse(&choice.mode)
-            .unwrap_or_else(|| Mode::parse(pdf_app::ai_choice::DEFAULT_MODE).unwrap_or_default());
+            .and_then(|text| pdf_app::ai_choice::read(&text));
+        match choice
+            .as_ref()
+            .and_then(|kept| Provider::by_name(&kept.provider).map(|provider| (provider, kept)))
+        {
+            Some((provider, choice)) => {
+                state.provider = provider;
+                state.base_url = if choice.base_url.is_empty() {
+                    provider.base_url().into()
+                } else {
+                    choice.base_url.clone()
+                };
+                state.model.clone_from(&choice.model);
+                state.effort = Effort::parse(&choice.effort).unwrap_or(Effort::Off);
+                state.mode = Mode::parse(&choice.mode)
+                    .or_else(|| Mode::parse(pdf_app::ai_choice::DEFAULT_MODE))
+                    .unwrap_or_default()
+                    .kept_for_next_time();
+            }
+            None => {
+                if let Some(provider) = keeping::kept_for() {
+                    state.provider = provider;
+                    state.base_url = provider.base_url().into();
+                }
+            }
+        }
         state.take_the_kept_key();
         state.settings_open = state.model.is_empty() || state.key_missing();
         state
@@ -397,7 +440,7 @@ impl AiState {
             base_url: self.base_url.clone(),
             model: self.model.clone(),
             effort: self.effort.as_str().to_owned(),
-            mode: self.mode.as_str().to_owned(),
+            mode: self.mode.kept_for_next_time().as_str().to_owned(),
         };
         let (Some(file), Some(line)) = (choice_file(), pdf_app::ai_choice::write(&choice)) else {
             return;
@@ -416,41 +459,84 @@ impl AiState {
     }
 
     fn may_send(&self) -> bool {
-        !self.composer.trim().is_empty() || self.pending.iter().any(|item| item.outcome.is_ok())
+        !self.composer.trim().is_empty() || self.pending.iter().any(|item| item.ready().is_some())
+    }
+
+    fn reading(&self) -> bool {
+        self.pending.iter().any(PendingAttachment::reading)
+    }
+
+    fn can_send(&self) -> bool {
+        self.may_send() && !self.reading()
     }
 
     pub(crate) fn attach_file(&mut self, path: &std::path::Path) {
         let name = path
             .file_name()
             .map_or_else(String::new, |name| name.to_string_lossy().into_owned());
-        let bytes = match std::fs::read(path) {
-            Ok(bytes) => bytes,
+        let refused = |name: String, why: String| PendingAttachment {
+            name,
+            bytes: 0,
+            kind: attach::Kind::Unsupported,
+            state: Preparing::Done(Err(why)),
+        };
+        let size = match std::fs::metadata(path) {
+            Ok(facts) => usize::try_from(facts.len()).unwrap_or(usize::MAX),
             Err(error) => {
-                self.pending.push(PendingAttachment {
-                    name,
-                    bytes: 0,
-                    kind: attach::Kind::Unsupported,
-                    outcome: Err(error.to_string()),
-                });
+                self.pending.push(refused(name, error.to_string()));
                 return;
             }
         };
         let so_far: Vec<(String, usize)> = self
             .pending
             .iter()
-            .filter(|item| item.outcome.is_ok())
+            .filter(|item| !item.refused())
             .map(|item| (item.name.clone(), item.bytes))
             .collect();
-        let kind = attach::kind_of(&bytes);
-        let outcome = attach::fits(&so_far, (&name, bytes.len()))
-            .and_then(|()| attach::prepare(&name, &bytes))
-            .map_err(|error| error.to_string());
+        if let Err(error) = attach::fits(&so_far, (&name, size)) {
+            self.pending.push(refused(name, error.to_string()));
+            return;
+        }
+        let (send, receive) = mpsc::channel();
+        let (worker_path, worker_name) = (path.to_owned(), name.clone());
+        thread::spawn(move || {
+            let outcome = match std::fs::read(&worker_path) {
+                Ok(bytes) => (
+                    attach::kind_of(&bytes),
+                    attach::prepare(&worker_name, &bytes).map_err(|error| error.to_string()),
+                ),
+                Err(error) => (attach::Kind::Unsupported, Err(error.to_string())),
+            };
+            let _ = send.send(outcome);
+        });
         self.pending.push(PendingAttachment {
             name,
-            bytes: bytes.len(),
-            kind,
-            outcome,
+            bytes: size,
+            kind: attach::Kind::Unsupported,
+            state: Preparing::Reading(receive),
         });
+    }
+
+    fn take_what_was_read(&mut self, ctx: &egui::Context) {
+        let mut waiting = false;
+        for item in &mut self.pending {
+            let Preparing::Reading(receive) = &item.state else {
+                continue;
+            };
+            match receive.try_recv() {
+                Ok((kind, outcome)) => {
+                    item.kind = kind;
+                    item.state = Preparing::Done(outcome);
+                }
+                Err(TryRecvError::Empty) => waiting = true,
+                Err(TryRecvError::Disconnected) => {
+                    item.state = Preparing::Done(Err(Message::AiWorkerStopped.say(Lang::English)));
+                }
+            }
+        }
+        if waiting {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        }
     }
 
     pub(crate) fn remove_pending(&mut self, at: usize) {
@@ -471,6 +557,7 @@ impl AiState {
     fn invalidate(&mut self) {
         self.generation += 1;
         self.connected = false;
+        self.edited = true;
         self.models.clear();
         self.notice = None;
     }
@@ -494,6 +581,7 @@ impl AiState {
         self.generation += 1;
     }
     pub(crate) fn poll(&mut self, ctx: &egui::Context) {
+        self.take_what_was_read(ctx);
         let Some(asking) = self.asking.as_ref() else {
             return;
         };
@@ -539,10 +627,7 @@ impl AiState {
         match answer {
             Answer::Partial(..) => {}
             Answer::Models(_, result) => match result {
-                Ok(models) => {
-                    self.models = models;
-                    self.connected = true;
-                }
+                Ok(models) => self.take_the_models(models),
                 Err(error) => {
                     self.connected = false;
                     self.notice = Some(notice_of(&error));
@@ -649,7 +734,7 @@ impl AiState {
         if self.checking {
             self.cancel();
         }
-        if self.busy() || !self.may_send() {
+        if self.busy() || !self.can_send() {
             return;
         }
         if self.tools.busy() {
@@ -665,7 +750,10 @@ impl AiState {
         let asked = std::mem::take(&mut self.composer);
         let attachments: Vec<Attachment> = std::mem::take(&mut self.pending)
             .into_iter()
-            .filter_map(|item| item.outcome.ok())
+            .filter_map(|item| match item.state {
+                Preparing::Done(Ok(attachments)) => Some(attachments),
+                _ => None,
+            })
             .flatten()
             .collect();
         self.turns
@@ -725,6 +813,10 @@ impl AiState {
         match action {
             NoticeAction::Continue => self.continue_the_run(ctx, brief),
             NoticeAction::Retry => self.retry(ctx, brief),
+            NoticeAction::OpenSettings => {
+                self.notice = None;
+                self.settings_open = true;
+            }
         }
     }
 
@@ -819,7 +911,7 @@ impl AiState {
         self.pending.clear();
         self.rewound = None;
         self.recall.forget();
-        self.confirming_delete = false;
+        self.deleting = None;
         self.chat_id.clear();
         self.saved_turns = 0;
         let here = self.documents.pop();
@@ -840,7 +932,7 @@ impl AiState {
             return;
         }
         self.save_the_chat();
-        let found = pdf_agent::history::chat_about(self.the_chats(), &place).cloned();
+        let found = pdf_agent::history::chat_about(&self.the_chats(), &place).cloned();
         if let Some(chat) = found {
             self.take_up(&chat);
             self.notes
@@ -917,897 +1009,6 @@ impl AiState {
                 Provider::OpenAi | Provider::Claude | Provider::Gemini
             )
     }
-
-    fn the_heading(&mut self, ui: &mut egui::Ui, lang: Lang) -> bool {
-        let say = |message: Message| message.say(lang);
-        let mut close = false;
-        ui.horizontal(|ui| {
-            self.the_history(ui, lang);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if crate::format::icon_button(
-                    ui,
-                    crate::icons::Icon::Close,
-                    &say(Message::Close),
-                    false,
-                    true,
-                )
-                .clicked()
-                {
-                    close = true;
-                }
-                if crate::format::icon_button(
-                    ui,
-                    crate::icons::Icon::Plus,
-                    &say(Message::AiNewChat),
-                    false,
-                    !self.turns.is_empty(),
-                )
-                .clicked()
-                {
-                    self.new_chat();
-                }
-                self.the_chat_menu(ui, lang);
-                if crate::format::icon_button(
-                    ui,
-                    crate::icons::Icon::Settings,
-                    &say(Message::AiConnection),
-                    self.settings_open,
-                    true,
-                )
-                .clicked()
-                {
-                    self.settings_open = !self.settings_open;
-                }
-            });
-        });
-        close
-    }
-
-    fn the_chat_menu(&mut self, ui: &mut egui::Ui, lang: Lang) {
-        let say = |message: Message| message.say(lang);
-        let button = crate::format::icon_button(
-            ui,
-            crate::icons::Icon::More,
-            &say(Message::AiChatMenu),
-            false,
-            !self.turns.is_empty(),
-        );
-        let mut delete = false;
-        let shown = egui::Popup::menu(&button)
-            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-            .show(|ui| {
-                ui.set_min_width(220.0);
-                if ui.button(say(Message::AiCopyWholeChat)).clicked() {
-                    ui.ctx().copy_text(self.the_whole_chat(lang));
-                    ui.close();
-                }
-                let (words, colour) = if self.confirming_delete {
-                    (
-                        say(Message::AiDeleteThisChatSure),
-                        ui.visuals().error_fg_color,
-                    )
-                } else {
-                    (say(Message::AiForgetChat), ui.visuals().text_color())
-                };
-                if ui
-                    .add_enabled(
-                        !self.working(),
-                        egui::Button::new(egui::RichText::new(words).color(colour)),
-                    )
-                    .clicked()
-                {
-                    if self.confirming_delete {
-                        delete = true;
-                        ui.close();
-                    } else {
-                        self.confirming_delete = true;
-                    }
-                }
-            });
-        if shown.is_none() {
-            self.confirming_delete = false;
-        }
-        if delete {
-            let id = self.chat_id.clone();
-            if !id.is_empty() {
-                self.forget_a_chat(&id);
-            }
-            self.new_chat();
-        }
-    }
-
-    fn who_answers(&mut self, ui: &mut egui::Ui, lang: Lang) {
-        self.whether_it_is_connected(ui, lang);
-    }
-
-    fn whether_it_is_connected(&mut self, ui: &mut egui::Ui, lang: Lang) {
-        if self.settings_open {
-            return;
-        }
-        let ready = self.connected && !self.model.is_empty() && !self.key_missing();
-        ui.horizontal(|ui| {
-            if ready {
-                ui.label(
-                    egui::RichText::new(Message::AiConnectedTo.say(lang))
-                        .small()
-                        .color(egui::Color32::from_rgb(0x1f, 0x7a, 0x34)),
-                );
-                ui.weak(egui::RichText::new(&self.model).small());
-            } else if self.checking {
-                slow_spinner(ui);
-                ui.weak(egui::RichText::new(Message::AiCheckingConnection.say(lang)).small());
-            } else {
-                let missing = if self.key_missing() {
-                    Message::AiNotConnected
-                } else if self.model.is_empty() {
-                    Message::AiNoModelChosen
-                } else {
-                    Message::AiNotConnectedYet
-                };
-                if ui
-                    .add(
-                        egui::Label::new(
-                            egui::RichText::new(missing.say(lang))
-                                .small()
-                                .color(ui.visuals().warn_fg_color),
-                        )
-                        .sense(egui::Sense::click()),
-                    )
-                    .clicked()
-                {
-                    self.settings_open = true;
-                }
-            }
-        });
-    }
-
-    fn the_notice(&mut self, ui: &mut egui::Ui, lang: Lang) -> Option<NoticeAction> {
-        let notice = self.notice.clone()?;
-        let mut close = false;
-        let mut chosen = None;
-        egui::Frame::group(ui.style())
-            .fill(ui.visuals().faint_bg_color)
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
-                    if crate::format::icon_button(
-                        ui,
-                        crate::icons::Icon::Close,
-                        &Message::AiDismiss.say(lang),
-                        false,
-                        true,
-                    )
-                    .clicked()
-                    {
-                        close = true;
-                    }
-                    ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(notice.said.say(lang))
-                                .color(ui.visuals().error_fg_color),
-                        )
-                        .wrap(),
-                    );
-                });
-                if let Some(detail) = &notice.detail {
-                    ui.add(
-                        egui::Label::new(egui::RichText::new(detail).small().weak())
-                            .selectable(true)
-                            .wrap(),
-                    );
-                }
-                if let Some(action) = notice.action {
-                    let words = match action {
-                        NoticeAction::Continue => Message::AiContinue,
-                        NoticeAction::Retry => Message::AiRetry,
-                    };
-                    if ui.button(words.say(lang)).clicked() {
-                        chosen = Some(action);
-                    }
-                }
-            });
-        if close {
-            self.notice = None;
-        }
-        chosen
-    }
-
-    fn the_connection(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, lang: Lang) {
-        let say = |message: Message| message.say(lang);
-        egui::Frame::group(ui.style()).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.add_enabled_ui(!self.busy(), |ui| {
-                egui::Grid::new("ai-connection")
-                    .num_columns(2)
-                    .spacing([GAP, GAP * 0.75])
-                    .show(ui, |ui| {
-                        ui.label(say(Message::AiBaseUrl));
-                        let address = ui.add(
-                            egui::TextEdit::singleline(&mut self.base_url)
-                                .desired_width(f32::INFINITY),
-                        );
-                        if address.changed() {
-                            self.invalidate();
-                        }
-                        if address.lost_focus() {
-                            self.remember();
-                        }
-                        ui.end_row();
-                        ui.label(say(Message::AiApiKey));
-                        if ui
-                            .add(
-                                egui::TextEdit::singleline(&mut self.key)
-                                    .password(true)
-                                    .desired_width(f32::INFINITY),
-                            )
-                            .lost_focus()
-                        {
-                            self.models_if_possible(ctx);
-                            self.keep_the_key();
-                        }
-                        ui.end_row();
-                    });
-                ui.add_space(GAP * 0.5);
-                if ui
-                    .checkbox(&mut self.remember_key, say(Message::AiKeepTheKey))
-                    .on_hover_text(say(Message::AiKeepTheKeyMeans))
-                    .changed()
-                {
-                    self.keep_the_key();
-                }
-                ui.add_space(GAP * 0.5);
-                ui.horizontal(|ui| {
-                    if ui
-                        .add_enabled(
-                            !self.base_url.is_empty(),
-                            egui::Button::new(say(Message::AiFindModels)),
-                        )
-                        .clicked()
-                    {
-                        self.start_models(ctx);
-                    }
-                    if ui
-                        .add_enabled(
-                            !self.key.is_empty(),
-                            egui::Button::new(say(Message::AiDisconnect)),
-                        )
-                        .clicked()
-                    {
-                        self.disconnect();
-                    }
-                    if self.connected {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.weak(say(Message::AiConnected));
-                        });
-                    }
-                });
-                ui.add_space(GAP * 0.5);
-                ui.weak(egui::RichText::new(say(Message::AiPrivacy)).small());
-            });
-        });
-    }
-
-    fn try_the_kept_connection(&mut self, ctx: &egui::Context) {
-        if std::mem::replace(&mut self.tried_at_start, true) || self.model.is_empty() {
-            return;
-        }
-        self.models_if_possible(ctx);
-    }
-
-    fn models_if_possible(&mut self, ctx: &egui::Context) {
-        if self.busy() || self.base_url.is_empty() || self.key_missing() {
-            return;
-        }
-        self.start_models(ctx);
-    }
-
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one conversation, drawn top to bottom: turns, notes, cards, status"
-    )]
-    fn the_conversation(&mut self, ui: &mut egui::Ui, lang: Lang) -> Option<Allowed> {
-        let say = |message: Message| message.say(lang);
-        let card = self.tools.ask.as_ref().map(|pending| {
-            (
-                describe_call(&pending.request, lang),
-                pending.may_allow_for_chat,
-                pending.of_this_tool,
-            )
-        });
-        let mut answered = None;
-        let idle = !self.working();
-        let last_answer = self.last_question().and_then(|_| {
-            self.turns.iter().rposition(
-                |turn| matches!(turn, Turn::Model { text, .. } if !text.trim().is_empty()),
-            )
-        });
-        let mut action = None;
-        let mut put_back = false;
-        let mut undo_the_run = false;
-        let mut replied = None;
-        let names: BTreeMap<String, String> = self
-            .turns
-            .iter()
-            .filter_map(|turn| match turn {
-                Turn::Model { calls, .. } => Some(calls),
-                _ => None,
-            })
-            .flatten()
-            .map(|call| (call.id.clone(), call.name.clone()))
-            .collect();
-        let document_stays = self
-            .rewound
-            .as_ref()
-            .map(going_back::Rewound::changed_the_document);
-        let width = ui.available_width();
-        if (width - self.drawn_width).abs() > 0.5 {
-            self.drawn.clear();
-            self.drawn_width = width;
-        }
-        self.drawn.resize(self.turns.len(), None);
-        egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .stick_to_bottom(true)
-            .show_viewport(ui, |ui, viewport| {
-                let origin = ui.cursor().top();
-                let seen = viewport.expand2(egui::vec2(0.0, viewport.height()));
-                if self.turns.is_empty() && document_stays.is_none() {
-                    ui.add_space(GAP);
-                    ui.weak(say(Message::AiNothingAskedYet));
-                }
-                for (at, turn) in self.turns.iter().enumerate() {
-                    let shape = TurnShape::of(turn, at, &self.notes);
-                    let top = ui.cursor().top();
-                    if let Some((_, height)) = self.drawn[at].filter(|(was, _)| *was == shape)
-                        && !seen
-                            .y_range()
-                            .intersects(egui::Rangef::new(top - origin, top - origin + height))
-                    {
-                        ui.add_space(height);
-                        continue;
-                    }
-                    for (_, said) in self.notes.iter().filter(|(index, _)| *index == at) {
-                        a_note(ui, &said.say(lang));
-                    }
-                    match turn {
-                        Turn::Results { results } => {
-                            what_the_tools_did(ui, results, (&self.tools, &names), lang);
-                        }
-                        Turn::Model { text, .. } if text.trim().is_empty() => {}
-                        _ => {
-                            let offers = Offers {
-                                edit: idle && turn.said() == Said::Person,
-                                ask_again: idle && Some(at) == last_answer,
-                            };
-                            let salt = format!("turn-{at}");
-                            if let Some(chosen) =
-                                said_by(ui, turn, (&self.model, lang), &salt, offers)
-                            {
-                                action = Some((at, chosen));
-                            }
-                        }
-                    }
-                    self.drawn[at] = Some((shape, ui.cursor().top() - top));
-                }
-                for (_, said) in self
-                    .notes
-                    .iter()
-                    .filter(|(index, _)| *index >= self.turns.len())
-                {
-                    a_note(ui, &said.say(lang));
-                }
-                if idle && self.tools.run.steps() > 0 {
-                    undo_the_run |= the_run_card(ui, self.tools.run.steps(), lang);
-                }
-                if let Some(document_stays) = document_stays
-                    && idle
-                {
-                    put_back = went_back(ui, document_stays, lang);
-                }
-                if let Some((wants, may_remember, of_this_tool)) = card {
-                    answered = the_card(ui, (&wants, may_remember, of_this_tool), lang);
-                }
-                if let Some(question) = self.tools.question.as_mut() {
-                    replied = the_question(ui, question, lang);
-                }
-                if let Some(arrived) = self.partial.as_ref().filter(|far| !far.is_empty()) {
-                    if !arrived.thinking.is_empty() {
-                        thinking_so_far(ui, &arrived.thinking, lang);
-                    }
-                    if !arrived.said.is_empty() {
-                        said_by(
-                            ui,
-                            &Turn::model(arrived.said.clone()),
-                            (&self.model, lang),
-                            "arriving",
-                            Offers::default(),
-                        );
-                    }
-                }
-                if let Some((icon, doing)) = self.what_is_happening(lang) {
-                    ui.add_space(GAP);
-                    ui.horizontal(|ui| {
-                        slow_spinner(ui);
-                        if let Some(icon) = icon {
-                            let (rect, _) = ui
-                                .allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
-                            icon.draw(ui.painter(), rect, ui.visuals().text_color());
-                        }
-                        ui.weak(doing);
-                    });
-                }
-            });
-        if put_back {
-            self.put_back();
-        }
-        if undo_the_run {
-            self.undo_the_run_asked = true;
-        }
-        if let Some(reply) = replied {
-            self.tools.answer_the_question(reply);
-        }
-        match action {
-            Some((at, TurnAction::Edit)) => self.go_back_to(at, false),
-            Some((_, TurnAction::AskAgain)) => {
-                if let Some(at) = self.last_question() {
-                    self.go_back_to(at, true);
-                }
-            }
-            None => {}
-        }
-        answered
-    }
-
-    fn what_is_happening(&self, lang: Lang) -> Option<(Option<Icon>, String)> {
-        use crate::ai_actions::Doing;
-        match self.tools.doing() {
-            Some(Doing::Tool(name, request)) => Some((
-                Some(tool_icon(&name)),
-                format!("{}\u{2026}", pdf_app::ai_status::doing(&request, lang)),
-            )),
-            None if self.busy() && !self.checking => {
-                let arrived = self.partial.as_ref();
-                let said = if arrived.is_some_and(|far| !far.said.trim().is_empty()) {
-                    Message::AiWritingTheAnswer
-                } else if arrived.is_some_and(|far| !far.thinking.trim().is_empty())
-                    || self.model.is_empty()
-                {
-                    Message::AiThinking
-                } else {
-                    Message::AiWaitingForModel(shorten_model(&self.model))
-                };
-                Some((None, said.say(lang)))
-            }
-            Some(Doing::Asking | Doing::Allowing) | None => None,
-        }
-    }
-
-    fn pending_chips(&mut self, ui: &mut egui::Ui, lang: Lang) {
-        if self.pending.is_empty() {
-            self.chips_height = 0.0;
-            return;
-        }
-        let mut remove = None;
-        let row = ui.horizontal_wrapped(|ui| {
-            for (at, item) in self.pending.iter().enumerate() {
-                let refused = item.outcome.is_err();
-                let chip = egui::Frame::group(ui.style())
-                    .fill(if refused {
-                        ui.visuals().error_fg_color.gamma_multiply(0.12)
-                    } else {
-                        ui.visuals().faint_bg_color
-                    })
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            let text = egui::RichText::new(&item.name).small();
-                            ui.label(if refused {
-                                text.color(ui.visuals().error_fg_color)
-                            } else {
-                                text
-                            });
-                            ui.weak(egui::RichText::new(item.label(lang)).small());
-                            if crate::format::icon_button(
-                                ui,
-                                crate::icons::Icon::Close,
-                                &Message::Close.say(lang),
-                                false,
-                                true,
-                            )
-                            .clicked()
-                            {
-                                remove = Some(at);
-                            }
-                        });
-                    });
-                chip.response.on_hover_text(match &item.outcome {
-                    Ok(_) => item.label(lang),
-                    Err(why) => why.clone(),
-                });
-            }
-        });
-        self.chips_height = row.response.rect.height() + ui.spacing().item_spacing.y;
-        if let Some(at) = remove {
-            self.remove_pending(at);
-        }
-    }
-
-    fn recall_keys(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) -> bool {
-        use pdf_app::ai_recall::Way;
-        if !ui.memory(|memory| memory.has_focus(composer_id())) {
-            return false;
-        }
-        for (key, way) in [
-            (egui::Key::ArrowUp, Way::Up),
-            (egui::Key::ArrowDown, Way::Down),
-        ] {
-            if !ui.input(|input| input.key_pressed(key) && input.modifiers.is_none()) {
-                continue;
-            }
-            let caret_at_start = egui::TextEdit::load_state(ctx, composer_id())
-                .and_then(|state| state.cursor.char_range())
-                .is_some_and(|range| range.primary.index.0 == 0 && range.secondary.index.0 == 0);
-            if self.recall_key(way, caret_at_start) {
-                ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, key));
-                return true;
-            }
-        }
-        false
-    }
-
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one box and the one row of controls under it"
-    )]
-    fn the_composer(
-        &mut self,
-        ui: &mut egui::Ui,
-        ctx: &egui::Context,
-        lang: Lang,
-        (rows, row_height): (usize, f32),
-    ) -> Asked {
-        let say = |message: Message| message.say(lang);
-        let mut asked = false;
-        let mut attach = false;
-        egui::Frame::group(ui.style()).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            self.pending_chips(ui, lang);
-            let recalled = self.recall_keys(ui, ctx);
-            let mut typed = egui::ScrollArea::vertical()
-                .id_salt("ai-composer")
-                .max_height(ai_layout::composer_height(rows, row_height, 0.0))
-                .show(ui, |ui| {
-                    egui::TextEdit::multiline(&mut self.composer)
-                        .id(composer_id())
-                        .hint_text(say(Message::AiAskHint))
-                        .frame(egui::Frame::NONE)
-                        .desired_width(f32::INFINITY)
-                        .desired_rows(rows)
-                        .return_key(Some(egui::KeyboardShortcut::new(
-                            egui::Modifiers::SHIFT,
-                            egui::Key::Enter,
-                        )))
-                        .show(ui)
-                })
-                .inner;
-            self.wrapped_rows = typed.galley.rows.len();
-            if recalled {
-                let end = self.composer.chars().count();
-                typed
-                    .state
-                    .cursor
-                    .set_char_range(Some(egui::text::CCursorRange::one(
-                        egui::text::CCursor::new(end),
-                    )));
-                typed.state.store(ui.ctx(), typed.response.id);
-            }
-            if typed.response.has_focus() && plain_enter(ui) && self.may_send() {
-                asked = true;
-            }
-            if std::mem::take(&mut self.send_now) && self.may_send() {
-                asked = true;
-            }
-            let one_row = ai_layout::fits_on_one_row(
-                ui.available_width(),
-                &[
-                    crate::format::CONTROL_HEIGHT,
-                    small_button_width(ui, &self.mode_label(lang)),
-                    small_button_width(ui, &self.model_label(lang)),
-                    crate::format::CONTROL_HEIGHT,
-                ],
-                GAP * 2.0,
-            );
-            let mut left = |ui: &mut egui::Ui, this: &mut Self| {
-                if this.the_attach_button(ui, lang) {
-                    attach = true;
-                }
-                this.what_it_may_do(ui, lang);
-            };
-            let mut right = |ui: &mut egui::Ui, this: &mut Self| {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if this.working() {
-                        if crate::format::icon_button(
-                            ui,
-                            Icon::Stop,
-                            &say(Message::AiCancel),
-                            false,
-                            true,
-                        )
-                        .clicked()
-                        {
-                            this.stop_the_run();
-                        }
-                    } else {
-                        let ready = this.ready() && this.may_send();
-                        let send = format!(
-                            "{} \u{2014} {}",
-                            say(Message::AiSend),
-                            say(Message::AiEnterSends)
-                        );
-                        if crate::format::icon_button(ui, Icon::Send, &send, ready, ready).clicked()
-                        {
-                            asked = true;
-                        }
-                    }
-                    this.the_model_button(ui, ctx, lang);
-                });
-            };
-            ui.horizontal(|ui| {
-                left(ui, self);
-                if one_row {
-                    right(ui, self);
-                }
-            });
-            self.second_row_height = 0.0;
-            if !one_row {
-                let second = ui.horizontal(|ui| right(ui, self));
-                self.second_row_height =
-                    second.response.rect.height() + ui.spacing().item_spacing.y;
-            }
-        });
-        if asked && !self.ready() {
-            self.settings_open = true;
-            self.notice = Some(Notice::plain(if self.key_missing() {
-                Message::AiKeyNeeded
-            } else {
-                Message::AiNoModelChosen
-            }));
-            asked = false;
-        }
-        Asked { asked, attach }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum TurnAction {
-    Edit,
-    AskAgain,
-}
-
-fn slow_spinner(ui: &mut egui::Ui) {
-    let size = ui.style().spacing.interact_size.y;
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
-    if !ui.is_rect_visible(rect) {
-        return;
-    }
-    ui.ctx()
-        .request_repaint_after(std::time::Duration::from_millis(100));
-    let radius = rect.height().min(rect.width()) / 2.0 - 2.0;
-    let time = ui.input(|input| input.time);
-    let start = time * std::f64::consts::TAU;
-    let end = start + 240_f64.to_radians() * time.sin();
-    let points: Vec<egui::Pos2> = (0..24_u32)
-        .map(|at| {
-            let angle = start + (end - start) * f64::from(at) / 24.0;
-            let (sin, cos) = angle.sin_cos();
-            #[expect(clippy::cast_possible_truncation, reason = "a point on the screen")]
-            let offset = egui::vec2(cos as f32, sin as f32);
-            rect.center() + radius * offset
-        })
-        .collect();
-    ui.painter().add(egui::Shape::line(
-        points,
-        egui::Stroke::new(3.0, ui.visuals().strong_text_color()),
-    ));
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct TurnShape {
-    text: usize,
-    attachments: usize,
-    results: usize,
-    notes: usize,
-}
-
-impl TurnShape {
-    fn of(turn: &Turn, at: usize, notes: &[(usize, Message)]) -> Self {
-        Self {
-            text: turn.text().len(),
-            attachments: turn.attachments().len(),
-            results: match turn {
-                Turn::Results { results } => results.len(),
-                _ => 0,
-            },
-            notes: notes.iter().filter(|(index, _)| *index == at).count(),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-struct Offers {
-    edit: bool,
-    ask_again: bool,
-}
-
-fn said_by(
-    ui: &mut egui::Ui,
-    turn: &Turn,
-    (model, lang): (&str, Lang),
-    salt: &str,
-    offers: Offers,
-) -> Option<TurnAction> {
-    let mine = turn.said() == Said::Person;
-    let name = if mine {
-        Message::AiYou.say(lang)
-    } else if model.is_empty() {
-        Message::AiResponse.say(lang)
-    } else {
-        model.to_owned()
-    };
-    let mut action = None;
-    ui.add_space(GAP);
-    let frame = if mine {
-        egui::Frame::group(ui.style()).fill(ui.visuals().faint_bg_color)
-    } else {
-        egui::Frame::group(ui.style())
-    };
-    frame.show(ui, |ui| {
-        ui.set_width(ui.available_width());
-        ui.horizontal(|ui| {
-            ui.weak(egui::RichText::new(name).small());
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.spacing_mut().item_spacing.x = 2.0;
-                let quiet = crate::format::quiet_icon_button;
-                if quiet(ui, Icon::Copy, &Message::DraftCopy.say(lang)).clicked() {
-                    ui.ctx().copy_text(turn.text().to_owned());
-                }
-                if offers.edit && quiet(ui, Icon::Edit, &Message::AiEditMeans.say(lang)).clicked() {
-                    action = Some(TurnAction::Edit);
-                }
-                if offers.ask_again
-                    && quiet(ui, Icon::AskAgain, &Message::AiAskAgainMeans.say(lang)).clicked()
-                {
-                    action = Some(TurnAction::AskAgain);
-                }
-            });
-        });
-        if !turn.attachments().is_empty() {
-            ui.horizontal_wrapped(|ui| {
-                for attachment in turn.attachments() {
-                    egui::Frame::group(ui.style()).show(ui, |ui| {
-                        ui.label(egui::RichText::new(&attachment.name).small());
-                    });
-                }
-            });
-        }
-        crate::ai_written::written(ui, turn.text(), salt, lang);
-    });
-    action
-}
-
-fn went_back(ui: &mut egui::Ui, document_stays: bool, lang: Lang) -> bool {
-    let mut put_back = false;
-    ui.add_space(GAP);
-    egui::Frame::group(ui.style())
-        .fill(ui.visuals().faint_bg_color)
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.weak(egui::RichText::new(Message::AiWentBack.say(lang)).small());
-            if document_stays {
-                ui.label(
-                    egui::RichText::new(Message::AiWentBackDocumentStays.say(lang))
-                        .small()
-                        .color(ui.visuals().warn_fg_color),
-                );
-            }
-            if ui.small_button(Message::AiPutBack.say(lang)).clicked() {
-                put_back = true;
-            }
-        });
-    put_back
-}
-
-fn the_run_card(ui: &mut egui::Ui, steps: usize, lang: Lang) -> bool {
-    let mut undo = false;
-    ui.add_space(GAP);
-    egui::Frame::group(ui.style())
-        .fill(ui.visuals().faint_bg_color)
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.weak(egui::RichText::new(Message::AiRunMadeChanges { steps }.say(lang)).small());
-            if ui.small_button(Message::AiUndoRun.say(lang)).clicked() {
-                undo = true;
-            }
-        });
-    undo
-}
-
-const PLAN_MOST_HEIGHT: f32 = 110.0;
-
-fn plan_mark(ui: &mut egui::Ui, state: StepState) {
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
-    let painter = ui.painter();
-    let centre = rect.center();
-    let ink = ui.visuals().text_color();
-    let weak = ui.visuals().weak_text_color();
-    match state {
-        StepState::Pending => {
-            painter.circle_stroke(centre, 4.5, egui::Stroke::new(1.2, weak));
-        }
-        StepState::InProgress => {
-            painter.circle_stroke(centre, 5.5, egui::Stroke::new(1.2, ink));
-            painter.circle_filled(centre, 3.0, ink);
-        }
-        StepState::Done => {
-            painter.circle_filled(centre, 5.5, weak);
-            let tick = egui::Stroke::new(1.5, ui.visuals().panel_fill);
-            painter.line_segment(
-                [
-                    centre + egui::vec2(-2.5, 0.0),
-                    centre + egui::vec2(-0.7, 2.2),
-                ],
-                tick,
-            );
-            painter.line_segment(
-                [
-                    centre + egui::vec2(-0.7, 2.2),
-                    centre + egui::vec2(2.8, -2.4),
-                ],
-                tick,
-            );
-        }
-    }
-}
-
-fn the_plan(ui: &mut egui::Ui, steps: &[PlanStep], lang: Lang) -> f32 {
-    let top = ui.cursor().top();
-    let done = steps
-        .iter()
-        .filter(|step| step.state == StepState::Done)
-        .count();
-    egui::Frame::group(ui.style())
-        .fill(ui.visuals().faint_bg_color)
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.weak(
-                egui::RichText::new(
-                    Message::AiPlan {
-                        done,
-                        total: steps.len(),
-                    }
-                    .say(lang),
-                )
-                .small(),
-            );
-            egui::ScrollArea::vertical()
-                .id_salt("ai-plan")
-                .max_height(PLAN_MOST_HEIGHT)
-                .auto_shrink([false, true])
-                .show(ui, |ui| {
-                    for step in steps {
-                        ui.horizontal(|ui| {
-                            plan_mark(ui, step.state);
-                            let text = egui::RichText::new(&step.text).small();
-                            let text = match step.state {
-                                StepState::Done => text.weak().strikethrough(),
-                                StepState::InProgress => text.strong(),
-                                StepState::Pending => text,
-                            };
-                            ui.add(egui::Label::new(text).wrap());
-                        });
-                    }
-                });
-        });
-    ui.cursor().top() - top
 }
 
 pub(crate) fn composer_id() -> egui::Id {
@@ -1820,6 +1021,7 @@ impl Window {
             return;
         }
         self.ai.open = true;
+        self.ai.focus_composer = true;
         self.ai_flow = Some(crate::room::Flow::new(0.0, self.ai.width, now));
     }
 
@@ -1831,10 +1033,11 @@ impl Window {
 
     fn the_chat_handle(&mut self, ui: &mut egui::Ui) {
         let title = Message::AiTitle.say(self.lang);
+        let badge = self.ai.badge();
         let mut open = false;
         egui::Panel::right("ai edge")
             .resizable(false)
-            .exact_size(crate::room::HANDLE_WIDE)
+            .exact_size(EDGE_WIDE)
             .frame(egui::Frame::NONE)
             .show(ui, |ui| {
                 let strip = ui.max_rect();
@@ -1851,21 +1054,26 @@ impl Window {
                     open = true;
                 }
                 let visuals = ui.visuals();
+                let hairline = visuals.widgets.noninteractive.bg_stroke;
+                let painter = ui.painter();
+                painter.rect_filled(strip, 0.0, visuals.panel_fill);
+                painter.line_segment([strip.left_top(), strip.left_bottom()], hairline);
+                let tall = crate::room::handle_tall(strip.height());
+                let tab = egui::Rect::from_center_size(
+                    strip.center(),
+                    egui::vec2(strip.width() - 4.0, tall),
+                );
                 let (fill, ink) = if live {
                     (
-                        visuals.widgets.hovered.weak_bg_fill,
+                        visuals.widgets.hovered.bg_fill,
                         visuals.selection.stroke.color,
                     )
                 } else {
-                    (visuals.panel_fill, visuals.weak_text_color())
+                    (visuals.widgets.inactive.bg_fill, visuals.weak_text_color())
                 };
-                let painter = ui.painter();
-                painter.rect_filled(strip, 0.0, fill);
-                painter.line_segment(
-                    [strip.left_top(), strip.left_bottom()],
-                    visuals.widgets.noninteractive.bg_stroke,
-                );
-                let middle = strip.center();
+                painter.rect_filled(tab, 4.0, fill);
+                painter.rect_stroke(tab, 4.0, hairline, egui::StrokeKind::Inside);
+                let middle = tab.center();
                 let arm = egui::Stroke::new(1.6, ink);
                 painter.line_segment(
                     [
@@ -1881,6 +1089,9 @@ impl Window {
                     ],
                     arm,
                 );
+                if let Some(badge) = badge {
+                    paint_badge(ui, egui::pos2(tab.center().x, tab.top() + 7.0), badge);
+                }
                 handle.on_hover_text(title);
             });
         if open {
@@ -1919,75 +1130,88 @@ impl Window {
             self.the_chat_handle(ui);
             return;
         }
-        self.ai.try_the_kept_connection(&ctx);
         let lang = self.lang;
-        let mut asked = Asked::default();
+        let page = (self.editor.page_count() > 0).then_some(self.focus + 1);
+        let mut asked = composer::Asked::default();
         let mut close = false;
         let mut answered = None;
-        let mut noticed = None;
-        let margin = 8_i8;
+        let mut noticed = cards::Noticed::default();
+        let mut undo_the_run = false;
         let frame = egui::Frame::side_top_panel(&ui.style().clone())
-            .inner_margin(egui::Margin::symmetric(margin, margin));
+            .inner_margin(egui::Margin::symmetric(8, 8));
+        let was_moving = std::mem::replace(&mut self.ai.was_moving, moving);
+        let settling = moving || was_moving;
         let mut panel = egui::Panel::right("ai chat")
-            .resizable(!moving)
+            .resizable(!settling)
             .default_size(self.ai.width)
             .size_range(300.0..=640.0)
             .frame(frame);
-        if moving {
+        if settling {
             panel = panel.exact_size(width);
         }
         let panel = panel.show(ui, |ui| {
             ui.spacing_mut().item_spacing = egui::vec2(GAP, GAP * 0.75);
             let panel_height = ui.available_height();
             close = self.ai.the_heading(ui, lang);
-            self.ai.who_answers(ui, lang);
-            if self.ai.settings_open {
+            look::hairline(ui);
+            let card = self.ai.settings_open || !self.ai.ready();
+            if card {
                 self.ai.the_connection(ui, &ctx, lang);
+            } else if self.ai.turns.is_empty() {
+                self.ai.the_summary(ui, lang);
             }
-            noticed = self.ai.the_notice(ui, lang);
-            ui.separator();
             let row_height = ui.text_style_height(&egui::TextStyle::Body);
-            let chrome = composer_chrome(ui) + self.ai.chips_height + self.ai.second_row_height;
             let rows = ai_layout::rows_shown(
                 self.ai.wrapped_rows,
-                ai_layout::most_rows(panel_height, row_height, chrome),
+                ai_layout::most_rows(panel_height, row_height, self.ai.composer_chrome),
             );
-            let composer = ai_layout::composer_height(rows, row_height, chrome);
-            let plan_room = if self.ai.tools.plan.is_empty() {
-                0.0
-            } else {
-                self.ai.plan_height + ui.spacing().item_spacing.y
-            };
-            let room = ai_layout::conversation_room(
-                ui.available_height(),
-                composer + plan_room,
-                LEAST_CONVERSATION,
-            );
-            ui.allocate_ui(egui::vec2(ui.available_width(), room), |ui| {
+            let bottom = egui::Panel::bottom("ai bottom")
+                .resizable(false)
+                .show_separator_line(false)
+                .frame(egui::Frame::NONE)
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(GAP, GAP * 0.75);
+                    if !card && let Some(notice) = self.ai.notice.clone() {
+                        noticed = cards::the_notice(ui, &notice, lang);
+                        if let Some(action) = noticed.chosen {
+                            self.ai.notice = None;
+                            self.ai.act_on_the_notice_later = Some(action);
+                        }
+                        if noticed.dismissed {
+                            self.ai.notice = None;
+                        }
+                    }
+                    if !self.ai.tools.plan.is_empty() {
+                        cards::the_plan(ui, &self.ai.tools.plan, lang);
+                    }
+                    if !self.ai.working() && self.ai.tools.run.steps() > 0 {
+                        undo_the_run = cards::the_run_strip(ui, self.ai.tools.run.steps(), lang);
+                    }
+                    asked = self
+                        .ai
+                        .the_composer(ui, &ctx, lang, page, (rows, row_height));
+                });
+            let text_height = ai_layout::composer_height(rows, row_height, 0.0);
+            self.ai.composer_chrome =
+                (bottom.response.rect.height() - text_height).clamp(60.0, 400.0);
+            egui::CentralPanel::no_frame().show(ui, |ui| {
                 answered = self.ai.the_conversation(ui, lang);
             });
-            let plan_height = if self.ai.tools.plan.is_empty() {
-                0.0
-            } else {
-                the_plan(ui, &self.ai.tools.plan, lang)
-            };
-            if (plan_height - self.ai.plan_height).abs() > 0.5 {
-                self.ai.plan_height = plan_height;
-                ctx.request_repaint();
-            }
-            asked = self.ai.the_composer(ui, &ctx, lang, (rows, row_height));
         });
         self.ai_panel_shape = Some(panel.response.rect);
-        if !moving {
+        if !settling {
             self.ai.width = panel.response.rect.width().clamp(300.0, 640.0);
         }
-        self.hear_the_panel(&ctx, (asked, answered, noticed), close);
+        if undo_the_run {
+            self.ai.undo_the_run_asked = true;
+        }
+        self.hear_the_panel(&ctx, (asked, answered), close);
     }
 
     fn hear_the_panel(
         &mut self,
         ctx: &egui::Context,
-        (asked, answered, noticed): (Asked, Option<Allowed>, Option<NoticeAction>),
+        (asked, answered): (composer::Asked, Option<Allowed>),
         close: bool,
     ) {
         if let Some(answer) = answered {
@@ -2010,7 +1234,7 @@ impl Window {
             self.ai.start_answer(ctx, context, &brief);
             ctx.request_repaint();
         }
-        if let Some(action) = noticed {
+        if let Some(action) = self.ai.act_on_the_notice_later.take() {
             let brief = self.document_brief();
             self.ai.act_on_the_notice(ctx, &brief, action);
             ctx.request_repaint();
@@ -2023,6 +1247,30 @@ impl Window {
             self.ai.open = false;
             let now = ctx.input(|input| input.time);
             self.ai_flow = Some(crate::room::Flow::new(self.ai.width, 0.0, now));
+        }
+    }
+}
+
+const EDGE_WIDE: f32 = 14.0;
+
+pub(crate) fn paint_badge(ui: &egui::Ui, at: egui::Pos2, badge: Badge) {
+    let visuals = ui.visuals();
+    match badge {
+        Badge::NeedsYou => {
+            ui.painter().circle_filled(at, 3.5, visuals.warn_fg_color);
+        }
+        Badge::Working => {
+            let time = ui.input(|input| input.time);
+            let beat = 0.5 + 0.5 * (time * std::f64::consts::TAU * 0.9).sin();
+            #[expect(clippy::cast_possible_truncation, reason = "a share of one")]
+            let share = (0.4 + 0.6 * beat) as f32;
+            ui.painter().circle_filled(
+                at,
+                3.5,
+                visuals.selection.stroke.color.gamma_multiply(share),
+            );
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(60));
         }
     }
 }
@@ -2048,204 +1296,6 @@ fn tool_icon(name: &str) -> Icon {
     }
 }
 
-fn what_the_tools_did(
-    ui: &mut egui::Ui,
-    results: &[ToolResult],
-    (tools, names): (&Tools, &BTreeMap<String, String>),
-    lang: Lang,
-) {
-    for result in results {
-        ui.add_space(GAP * 0.5);
-        ui.horizontal(|ui| {
-            let name = tools
-                .called
-                .get(&result.call_id)
-                .or_else(|| names.get(&result.call_id))
-                .map_or("", String::as_str);
-            let (icon_colour, colour) = if result.is_error {
-                (ui.visuals().error_fg_color, ui.visuals().error_fg_color)
-            } else {
-                (ui.visuals().text_color(), ui.visuals().weak_text_color())
-            };
-            let (rect, _) = ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
-            tool_icon(name).draw(ui.painter(), rect, icon_colour);
-            ui.label(
-                egui::RichText::new(pdf_app::ai_status::did(name, lang))
-                    .small()
-                    .color(icon_colour),
-            );
-            ui.add(
-                egui::Label::new(
-                    egui::RichText::new(one_line(&result.text))
-                        .small()
-                        .color(colour),
-                )
-                .truncate(),
-            );
-        });
-    }
-}
-
-fn the_card(
-    ui: &mut egui::Ui,
-    (wants, may_remember, of_this_tool): (&str, bool, usize),
-    lang: Lang,
-) -> Option<Allowed> {
-    let say = |message: Message| message.say(lang);
-    let mut answered = None;
-    ui.add_space(GAP);
-    egui::Frame::group(ui.style())
-        .fill(ui.visuals().faint_bg_color)
-        .stroke(egui::Stroke::new(1.0, ui.visuals().warn_fg_color))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.weak(egui::RichText::new(say(Message::AiWantsTo)).small());
-            ui.add(egui::Label::new(wants).selectable(true).wrap());
-            ui.add_space(GAP * 0.5);
-            ui.horizontal_wrapped(|ui| {
-                if ui.button(say(Message::AiAllowOnce)).clicked() {
-                    answered = Some(Allowed::Once);
-                }
-                if of_this_tool > 1
-                    && ui
-                        .button(
-                            Message::AiAllowAll {
-                                count: of_this_tool,
-                            }
-                            .say(lang),
-                        )
-                        .clicked()
-                {
-                    answered = Some(Allowed::AllOfThem);
-                }
-                if may_remember && ui.button(say(Message::AiAllowForThisChat)).clicked() {
-                    answered = Some(Allowed::ForThisChat);
-                }
-                if ui.button(say(Message::AiRefuse)).clicked() {
-                    answered = Some(Allowed::Refuse);
-                }
-            });
-        });
-    answered
-}
-
-fn the_question(ui: &mut egui::Ui, question: &mut Question, lang: Lang) -> Option<QuestionReply> {
-    let say = |message: Message| message.say(lang);
-    let mut reply = None;
-    ui.add_space(GAP);
-    egui::Frame::group(ui.style())
-        .fill(ui.visuals().faint_bg_color)
-        .stroke(egui::Stroke::new(1.0, ui.visuals().selection.stroke.color))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.weak(egui::RichText::new(say(Message::AiQuestionForYou)).small());
-            ui.add(
-                egui::Label::new(egui::RichText::new(&question.asked).strong())
-                    .selectable(true)
-                    .wrap(),
-            );
-            ui.add_space(GAP * 0.5);
-            for (label, means) in &question.options {
-                let mut job = egui::text::LayoutJob::default();
-                let style = ui.style();
-                job.append(
-                    label,
-                    0.0,
-                    egui::TextFormat {
-                        font_id: egui::TextStyle::Body.resolve(style),
-                        color: style.visuals.text_color(),
-                        ..egui::TextFormat::default()
-                    },
-                );
-                if !means.is_empty() {
-                    job.append(
-                        &format!("\n{means}"),
-                        0.0,
-                        egui::TextFormat {
-                            font_id: egui::TextStyle::Small.resolve(style),
-                            color: style.visuals.weak_text_color(),
-                            ..egui::TextFormat::default()
-                        },
-                    );
-                }
-                let width = ui.available_width();
-                job.wrap.max_width = width - 2.0 * ui.spacing().button_padding.x;
-                if ui
-                    .add(egui::Button::new(job).min_size(egui::vec2(width, 0.0)))
-                    .clicked()
-                {
-                    reply = Some(QuestionReply::Said(label.clone()));
-                }
-            }
-            ui.add_space(GAP * 0.5);
-            ui.horizontal(|ui| {
-                let skip = ui.button(say(Message::AiSkipQuestion));
-                let answer = ui.add_enabled(
-                    !question.own.trim().is_empty(),
-                    egui::Button::new(say(Message::AiAnswer)),
-                );
-                let typed = ui.add(
-                    egui::TextEdit::singleline(&mut question.own)
-                        .hint_text(say(Message::AiOwnAnswer))
-                        .desired_width(ui.available_width()),
-                );
-                let entered =
-                    typed.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
-                if (answer.clicked() || entered) && !question.own.trim().is_empty() {
-                    reply = Some(QuestionReply::Said(question.own.trim().to_owned()));
-                }
-                if skip.clicked() {
-                    reply = Some(QuestionReply::Skipped);
-                }
-            });
-        });
-    reply
-}
-
-fn a_note(ui: &mut egui::Ui, said: &str) {
-    ui.add_space(GAP * 0.5);
-    ui.add(
-        egui::Label::new(egui::RichText::new(said).small().italics())
-            .selectable(true)
-            .wrap(),
-    );
-}
-
-fn thinking_so_far(ui: &mut egui::Ui, thinking: &str, lang: Lang) {
-    const TAIL: usize = 600;
-    ui.add_space(GAP * 0.5);
-    let counted = thinking.chars().count();
-    let tail: String = thinking
-        .chars()
-        .skip(counted.saturating_sub(TAIL))
-        .collect();
-    egui::CollapsingHeader::new(
-        egui::RichText::new(Message::AiThinkingAloud.say(lang))
-            .small()
-            .weak(),
-    )
-    .id_salt("ai-thinking")
-    .default_open(true)
-    .show(ui, |ui| {
-        ui.add(
-            egui::Label::new(egui::RichText::new(tail).small().weak())
-                .selectable(true)
-                .wrap(),
-        );
-    });
-}
-
-fn one_line(text: &str) -> String {
-    let first = text.lines().next().unwrap_or_default();
-    if first.chars().count() <= 80 {
-        first.to_owned()
-    } else {
-        let mut clipped: String = first.chars().take(80).collect();
-        clipped.push('\u{2026}');
-        clipped
-    }
-}
-
 const fn effort_said(effort: Effort) -> Message {
     match effort {
         Effort::Off => Message::AiEffortOff,
@@ -2253,6 +1303,16 @@ const fn effort_said(effort: Effort) -> Message {
         Effort::Low => Message::AiEffortLow,
         Effort::Medium => Message::AiEffortMedium,
         Effort::High => Message::AiEffortHigh,
+    }
+}
+
+const fn effort_means(effort: Effort) -> Message {
+    match effort {
+        Effort::Off => Message::AiEffortOffMeans,
+        Effort::None => Message::AiEffortNoneMeans,
+        Effort::Low => Message::AiEffortLowMeans,
+        Effort::Medium => Message::AiEffortMediumMeans,
+        Effort::High => Message::AiEffortHighMeans,
     }
 }
 
@@ -2641,7 +1701,7 @@ mod tests {
             Some(Notice {
                 said: Message::AiServiceRefused,
                 detail: Some("401 Unauthorized".to_owned()),
-                action: None,
+                action: Some(NoticeAction::OpenSettings),
             })
         );
     }
@@ -2728,8 +1788,20 @@ mod tests {
             Notice {
                 said: Message::AiServiceRefused,
                 detail: Some("401 Unauthorized".to_owned()),
-                action: None,
+                action: Some(NoticeAction::OpenSettings),
             }
+        );
+        assert_eq!(
+            notices[0].action,
+            Some(NoticeAction::OpenSettings),
+            "a connection that cannot be used is fixed in the settings"
+        );
+        assert!(
+            notices[1..4]
+                .iter()
+                .chain(&notices[5..])
+                .all(|notice| notice.action.is_none()),
+            "nothing else is mended by the settings"
         );
         assert_eq!(notices[1], Notice::plain(Message::AiStopped));
         assert_eq!(notices[3], Notice::plain(Message::AiAnswerTooLarge));
@@ -3232,11 +2304,11 @@ mod tests {
         use pdf_app::ai_recall::Way;
         let mut state = AiState {
             turns: a_conversation(),
-            history: Some(vec![pdf_agent::history::Chat {
+            history: Some(std::sync::Arc::new(vec![pdf_agent::history::Chat {
                 id: "old".to_owned(),
                 turns: vec![Turn::person("elsewhere")],
                 ..pdf_agent::history::Chat::default()
-            }]),
+            }])),
             ..AiState::default()
         };
         for want in ["three", "one", "elsewhere"] {
@@ -3262,7 +2334,7 @@ mod tests {
     #[test]
     fn a_document_brings_back_its_own_chat() {
         let mut state = AiState {
-            history: Some(vec![kept("kept", "/a/x.pdf")]),
+            history: Some(std::sync::Arc::new(vec![kept("kept", "/a/x.pdf")])),
             ..AiState::default()
         };
         state.document_arrived("x.pdf".to_owned(), "/a/x.pdf".to_owned());
@@ -3282,7 +2354,7 @@ mod tests {
     #[test]
     fn a_chat_carried_to_another_file_is_that_files_too() {
         let mut state = AiState {
-            history: Some(vec![kept("kept", "/a/x.pdf")]),
+            history: Some(std::sync::Arc::new(vec![kept("kept", "/a/x.pdf")])),
             ..AiState::default()
         };
         state.document_arrived("y.pdf".to_owned(), "/b/y.pdf".to_owned());

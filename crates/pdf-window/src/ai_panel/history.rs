@@ -1,10 +1,8 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
+use std::sync::Arc;
 
-use eframe::egui;
 use pdf_agent::history::{Chat, is_a_chat_id, name_for, newest_first, title_of, write_turns};
-
-use pdf_app::wording::{Lang, Message};
 
 use super::AiState;
 
@@ -19,7 +17,7 @@ fn folder() -> Option<PathBuf> {
     crate::own_folder::own_file("chats")
 }
 
-fn now() -> u64 {
+pub(super) fn now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |since| since.as_secs())
@@ -118,14 +116,27 @@ impl AiState {
         let beside = folder.join(format!("{}.writing", self.chat_id));
         if write_privately(&file, &beside, &text) {
             self.saved_turns = self.turns.len();
-            self.history = None;
-            trim(&folder, &self.chat_id);
+            let gone = trim(&folder, &self.chat_id);
+            self.shelve(&text, &gone);
         } else {
             self.save_again_at = now() + SECONDS_BEFORE_TRYING_AGAIN;
         }
     }
 
-    pub(super) fn the_chats(&mut self) -> &[Chat] {
+    pub(super) fn shelve(&mut self, text: &str, gone: &[String]) {
+        let Some(listed) = self.history.as_mut() else {
+            return;
+        };
+        let Some(saved) = pdf_agent::history::read(text) else {
+            self.history = None;
+            return;
+        };
+        let list = Arc::make_mut(listed);
+        list.retain(|chat| chat.id != saved.id && !gone.contains(&chat.id));
+        list.insert(0, saved);
+    }
+
+    pub(super) fn the_chats(&mut self) -> Arc<Vec<Chat>> {
         if self.history.is_none() {
             let chats = folder().map_or_else(Vec::new, |folder| {
                 let Ok(listing) = std::fs::read_dir(&folder) else {
@@ -141,9 +152,9 @@ impl AiState {
                     });
                 newest_first(texts)
             });
-            self.history = Some(chats);
+            self.history = Some(Arc::new(chats));
         }
-        self.history.as_deref().unwrap_or_default()
+        self.history.as_ref().map_or_else(Arc::default, Arc::clone)
     }
 
     pub(super) fn open_a_chat(&mut self, chat: &Chat) {
@@ -186,94 +197,15 @@ impl AiState {
         if self.chat_id == id {
             self.new_chat();
         }
-        self.history = None;
-    }
-
-    pub(super) fn the_history(&mut self, ui: &mut egui::Ui, lang: Lang) {
-        let say = |message: Message| message.say(lang);
-        let title = if self.turns.is_empty() {
-            say(Message::AiNewChatTitle)
-        } else {
-            let made = title_of(&self.turns);
-            if made.is_empty() {
-                say(Message::AiUntitledChat)
-            } else {
-                made
-            }
-        };
-        let shown: String = if title.chars().count() > 26 {
-            title
-                .chars()
-                .take(25)
-                .chain(std::iter::once('\u{2026}'))
-                .collect()
-        } else {
-            title
-        };
-        let mut open = None;
-        let mut forget = None;
-        let here = self.chat_id.clone();
-        let place = self.places.last().cloned().unwrap_or_default();
-        ui.menu_button(
-            egui::RichText::new(format!("{shown}  \u{2304}")).strong(),
-            |ui| {
-                ui.set_min_width(300.0);
-                ui.label(egui::RichText::new(say(Message::AiHistory)).small().weak());
-                let chats: Vec<Chat> = self.the_chats().to_vec();
-                if chats.is_empty() {
-                    ui.weak(say(Message::AiNoChatsYet));
-                    return;
-                }
-                let (ours, others): (Vec<&Chat>, Vec<&Chat>) = chats
-                    .iter()
-                    .partition(|chat| !place.is_empty() && chat.places.contains(&place));
-                egui::ScrollArea::vertical()
-                    .id_salt("ai-history")
-                    .max_height(360.0)
-                    .show(ui, |ui| {
-                        for (heading, group) in [
-                            (Message::AiThisDocument, &ours),
-                            (Message::AiOtherChats, &others),
-                        ] {
-                            if group.is_empty() {
-                                continue;
-                            }
-                            if !ours.is_empty() {
-                                ui.label(egui::RichText::new(say(heading)).small().strong());
-                            }
-                            for chat in group {
-                                ui.horizontal(|ui| {
-                                    if ui
-                                        .small_button("\u{2715}")
-                                        .on_hover_text(say(Message::AiForgetChat))
-                                        .clicked()
-                                    {
-                                        forget = Some(chat.id.clone());
-                                    }
-                                    if one_chat(ui, chat, chat.id == here, lang).clicked() {
-                                        open = Some((*chat).clone());
-                                        ui.close();
-                                    }
-                                });
-                            }
-                        }
-                    });
-            },
-        )
-        .response
-        .on_hover_text(say(Message::AiHistory));
-        if let Some(chat) = open {
-            self.open_a_chat(&chat);
-        }
-        if let Some(id) = forget {
-            self.forget_a_chat(&id);
+        if let Some(listed) = self.history.as_mut() {
+            Arc::make_mut(listed).retain(|chat| chat.id != id);
         }
     }
 }
 
-fn trim(folder: &std::path::Path, keep: &str) {
+fn trim(folder: &std::path::Path, keep: &str) -> Vec<String> {
     let Ok(listing) = std::fs::read_dir(folder) else {
-        return;
+        return Vec::new();
     };
     let mut chats: Vec<(std::time::SystemTime, PathBuf)> = listing
         .flatten()
@@ -292,57 +224,17 @@ fn trim(folder: &std::path::Path, keep: &str) {
         })
         .collect();
     if chats.len() < MOST_KEPT {
-        return;
+        return Vec::new();
     }
     chats.sort();
     let over = chats.len() + 1 - MOST_KEPT;
+    let mut gone = Vec::new();
     for (_, path) in chats.into_iter().take(over) {
-        let _ = std::fs::remove_file(path);
-    }
-}
-
-fn one_chat(ui: &mut egui::Ui, chat: &Chat, here: bool, lang: Lang) -> egui::Response {
-    use egui::text::{LayoutJob, TextFormat};
-    let title = if chat.title.is_empty() {
-        Message::AiUntitledChat.say(lang)
-    } else {
-        chat.title.clone()
-    };
-    let style = ui.style();
-    let visuals = &style.visuals;
-    let mut job = LayoutJob::default();
-    job.append(
-        &title,
-        0.0,
-        TextFormat {
-            font_id: egui::TextStyle::Body.resolve(style),
-            color: visuals.text_color(),
-            ..TextFormat::default()
-        },
-    );
-    let mut under = chat.documents.join(", ");
-    if !chat.model.is_empty() {
-        if !under.is_empty() {
-            under.push_str("  \u{00b7}  ");
+        if std::fs::remove_file(&path).is_ok()
+            && let Some(name) = path.file_name().and_then(std::ffi::OsStr::to_str)
+        {
+            gone.push(name.to_owned());
         }
-        under.push_str(chat.model.rsplit('/').next().unwrap_or(&chat.model));
     }
-    if !under.is_empty() {
-        job.append(
-            &format!("\n{under}"),
-            0.0,
-            TextFormat {
-                font_id: egui::TextStyle::Small.resolve(style),
-                color: visuals.weak_text_color(),
-                ..TextFormat::default()
-            },
-        );
-    }
-    job.wrap.max_width = 260.0;
-    ui.add(
-        egui::Button::new(job)
-            .frame(false)
-            .selected(here)
-            .min_size(egui::vec2(260.0, 0.0)),
-    )
+    gone
 }

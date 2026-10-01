@@ -539,6 +539,13 @@ impl Window {
                 egui::vec2(room::ICON_SIDE, room::ICON_SIDE),
             );
             icon.draw_tinted(ui.painter(), glyph, colour, enabled);
+            #[cfg(not(target_arch = "wasm32"))]
+            if command == Command::Assistant
+                && !self.ai.open
+                && let Some(badge) = self.ai.badge()
+            {
+                crate::ai_panel::paint_badge(ui, glyph.right_top() + egui::vec2(3.0, 2.0), badge);
+            }
             if self.toolbar_compact {
                 return enabled && response.clicked();
             }

@@ -86,6 +86,41 @@ pub(crate) enum Icon {
         expect(dead_code, reason = "the assistant panel is not built for the browser")
     )]
     Stop,
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(dead_code, reason = "the assistant panel is not built for the browser")
+    )]
+    History,
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(dead_code, reason = "the assistant panel is not built for the browser")
+    )]
+    NewChat,
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(dead_code, reason = "the assistant panel is not built for the browser")
+    )]
+    Chat,
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(dead_code, reason = "the assistant panel is not built for the browser")
+    )]
+    Attach,
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(dead_code, reason = "the assistant panel is not built for the browser")
+    )]
+    Info,
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(dead_code, reason = "the assistant panel is not built for the browser")
+    )]
+    Check,
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(dead_code, reason = "the assistant panel is not built for the browser")
+    )]
+    Expand,
     Close,
     #[cfg_attr(
         target_arch = "wasm32",
@@ -243,6 +278,25 @@ impl Icon {
                 pen.line(&[(0.22, 0.42), (0.5, 0.14), (0.78, 0.42)]);
             }
             Self::Stop => pen.block((0.24, 0.24), (0.76, 0.76), 0.08),
+            Self::History => history(&pen),
+            Self::NewChat => {
+                bubble(&pen);
+                pen.line(&[(0.50, 0.28), (0.50, 0.54)]);
+                pen.line(&[(0.37, 0.41), (0.63, 0.41)]);
+            }
+            Self::Chat => {
+                bubble(&pen);
+                pen.line(&[(0.28, 0.32), (0.72, 0.32)]);
+                pen.line(&[(0.28, 0.50), (0.56, 0.50)]);
+            }
+            Self::Attach => paperclip(&pen),
+            Self::Info => {
+                pen.ring((0.5, 0.5), 0.40);
+                pen.dot((0.5, 0.30), 0.045);
+                pen.line(&[(0.5, 0.45), (0.5, 0.72)]);
+            }
+            Self::Check => pen.line(&[(0.16, 0.54), (0.40, 0.76), (0.84, 0.26)]),
+            Self::Expand => pen.line(&[(0.18, 0.36), (0.50, 0.68), (0.82, 0.36)]),
             Self::Assistant => assistant(&pen),
             Self::Tools => toolbox(&pen),
         }
@@ -655,6 +709,50 @@ fn toolbox(pen: &Pen<'_>) {
     pen.frame((0.06, 0.30), (0.94, 0.86), 0.06);
     pen.line(&[(0.06, 0.56), (0.94, 0.56)]);
     pen.in_accent(CHAIN).block((0.43, 0.48), (0.57, 0.66), 0.02);
+}
+
+fn history(pen: &Pen<'_>) {
+    pen.ring((0.5, 0.5), 0.40);
+    pen.line(&[(0.5, 0.26), (0.5, 0.5), (0.68, 0.62)]);
+}
+
+fn bubble(pen: &Pen<'_>) {
+    pen.line(&[
+        (0.10, 0.16),
+        (0.90, 0.16),
+        (0.90, 0.70),
+        (0.44, 0.70),
+        (0.24, 0.88),
+        (0.24, 0.70),
+        (0.10, 0.70),
+        (0.10, 0.16),
+    ]);
+}
+
+fn paperclip(pen: &Pen<'_>) {
+    const STEPS: u8 = 12;
+    let arc = |centre: (f32, f32), radius: f32, from: f32, to: f32| -> Vec<(f32, f32)> {
+        (0..=STEPS)
+            .map(|step| {
+                let angle = from + (to - from) * f32::from(step) / f32::from(STEPS);
+                (
+                    centre.0 + radius * angle.cos(),
+                    centre.1 + radius * angle.sin(),
+                )
+            })
+            .collect()
+    };
+    let mut path = vec![(0.72, 0.34)];
+    path.extend(arc((0.50, 0.70), 0.22, 0.0, std::f32::consts::PI));
+    path.push((0.28, 0.28));
+    path.extend(arc(
+        (0.42, 0.28),
+        0.14,
+        std::f32::consts::PI,
+        std::f32::consts::TAU,
+    ));
+    path.push((0.56, 0.64));
+    pen.line(&path);
 }
 
 fn assistant(pen: &Pen<'_>) {
@@ -1080,6 +1178,13 @@ mod tests {
             Icon::AskAgain,
             Icon::Send,
             Icon::Stop,
+            Icon::History,
+            Icon::NewChat,
+            Icon::Chat,
+            Icon::Attach,
+            Icon::Info,
+            Icon::Check,
+            Icon::Expand,
             Icon::Assistant,
             Icon::Tools,
         ];
@@ -1088,6 +1193,6 @@ mod tests {
                 assert_ne!(icon, other, "two of the same icon");
             }
         }
-        assert_eq!(every.len(), 62);
+        assert_eq!(every.len(), 69);
     }
 }

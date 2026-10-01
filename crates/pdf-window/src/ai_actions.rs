@@ -83,7 +83,6 @@ pub(crate) struct Tools {
     skipped: Vec<ToolCall>,
     stopping: bool,
     announced: Option<String>,
-    pub(crate) called: BTreeMap<String, String>,
     pub(crate) question: Option<Question>,
     pub(crate) plan: Vec<PlanStep>,
     pub(crate) run: Run,
@@ -212,9 +211,16 @@ impl Tools {
             self.numbered_at_take = self.renumbered;
         }
         for call in calls {
-            self.called.insert(call.id.clone(), call.name.clone());
             self.queue.push_back(call.clone());
         }
+    }
+
+    pub(crate) fn text_before(&self, request: &Request) -> Option<String> {
+        let Request::ReplaceText { block, .. } = request else {
+            return None;
+        };
+        let key = parse_block_name(block).ok()?;
+        self.named.get(&key).map(|named| named.text.clone())
     }
 
     pub(crate) fn waits_for_an_edit(&self) -> bool {

@@ -1,6 +1,6 @@
 use pdf_agent::tools::request::Request;
 
-use crate::wording::Lang;
+use crate::wording::{Assistant, Lang};
 
 #[must_use]
 pub fn doing(request: &Request, lang: Lang) -> String {
@@ -13,6 +13,77 @@ pub fn doing(request: &Request, lang: Lang) -> String {
 pub fn did(name: &str, lang: Lang) -> String {
     match lang {
         Lang::English => did_in_english(name),
+    }
+}
+
+#[must_use]
+pub fn target(request: &Request) -> Option<Assistant> {
+    match request {
+        Request::DocumentInfo
+        | Request::ListFonts { .. }
+        | Request::AddBlankPage { .. }
+        | Request::Undo
+        | Request::Redo
+        | Request::AskPerson { .. }
+        | Request::UpdatePlan { .. } => None,
+        Request::ReadText { first, last } => match (first, last) {
+            (None, None) => Some(Assistant::TargetDocument),
+            (Some(first), Some(last)) if first == last => Some(Assistant::TargetPage(first + 1)),
+            (Some(first), Some(last)) => Some(Assistant::TargetPages {
+                first: first + 1,
+                last: last + 1,
+            }),
+            (Some(first), None) => Some(Assistant::TargetPage(first + 1)),
+            (None, Some(last)) => Some(Assistant::TargetPages {
+                first: 1,
+                last: last + 1,
+            }),
+        },
+        Request::FindText { text, .. } => Some(Assistant::TargetQuery(short(text))),
+        Request::RenderPage { page, .. }
+        | Request::AddText { page, .. }
+        | Request::WritePages {
+            from_page: page, ..
+        } => Some(Assistant::TargetPage(page + 1)),
+        Request::ReplaceText { block, .. } => Some(Assistant::TargetBlock(block.clone())),
+        Request::SetProperties(_) => Some(Assistant::TargetDocument),
+        Request::FillField { name, .. } => Some(Assistant::TargetField(short(name))),
+        Request::DeletePages(list) => Some(these_pages(list)),
+        Request::MovePages { pages: list, .. } | Request::RotatePages { pages: list, .. } => {
+            Some(these_pages(list))
+        }
+        Request::InsertPages { from, .. } => {
+            Some(Assistant::TargetFile(from.file_name().map_or_else(
+                || from.display().to_string(),
+                |name| name.to_string_lossy().into_owned(),
+            )))
+        }
+    }
+}
+
+fn these_pages(list: &[usize]) -> Assistant {
+    let mut sorted: Vec<usize> = list.to_vec();
+    sorted.sort_unstable();
+    sorted.dedup();
+    match sorted[..] {
+        [] => Assistant::TargetDocument,
+        [one] => Assistant::TargetPage(one + 1),
+        [low, .., high] if high - low + 1 == sorted.len() => Assistant::TargetPages {
+            first: low + 1,
+            last: high + 1,
+        },
+        _ => Assistant::TargetCount(sorted.len()),
+    }
+}
+
+fn short(text: &str) -> String {
+    const MOST: usize = 30;
+    let line = text.lines().next().unwrap_or_default().trim();
+    if line.chars().count() <= MOST {
+        line.to_owned()
+    } else {
+        let cut: String = line.chars().take(MOST).collect();
+        format!("{}\u{2026}", cut.trim_end())
     }
 }
 
@@ -110,8 +181,8 @@ fn did_in_english(name: &str) -> String {
 mod tests {
     use pdf_agent::tools::request::Request;
 
-    use super::{did, doing};
-    use crate::wording::Lang;
+    use super::{did, doing, target};
+    use crate::wording::{Assistant, Lang};
 
     #[test]
     fn a_status_says_what_it_is_about() {
@@ -173,5 +244,55 @@ mod tests {
         assert_eq!(did("update_plan", Lang::English), "Updated the plan");
         assert_eq!(did("read_text", Lang::English), "Read the text");
         assert_eq!(did("something_new", Lang::English), "something_new");
+    }
+
+    #[test]
+    fn a_step_names_what_it_was_done_to() {
+        let said = |request: Request| target(&request).map(|target| target.say(Lang::English));
+        assert_eq!(
+            said(Request::ReadText {
+                first: Some(1),
+                last: Some(1)
+            })
+            .as_deref(),
+            Some("page 2")
+        );
+        assert_eq!(
+            said(Request::ReadText {
+                first: None,
+                last: None
+            })
+            .as_deref(),
+            Some("the document")
+        );
+        assert_eq!(
+            said(Request::DeletePages(vec![4, 2, 3])).as_deref(),
+            Some("pages 3 to 5")
+        );
+        assert_eq!(
+            said(Request::DeletePages(vec![0, 5, 9])).as_deref(),
+            Some("3 pages")
+        );
+        assert_eq!(
+            said(Request::ReplaceText {
+                block: "p2-b3".to_owned(),
+                find: None,
+                text: String::new()
+            })
+            .as_deref(),
+            Some("p2-b3")
+        );
+        assert_eq!(said(Request::Undo), None);
+        assert_eq!(
+            target(&Request::FindText {
+                text: "a very long thing to look for in the whole of the document".to_owned(),
+                match_case: false,
+                first: None,
+                last: None
+            }),
+            Some(Assistant::TargetQuery(
+                "a very long thing to look for\u{2026}".to_owned()
+            ))
+        );
     }
 }

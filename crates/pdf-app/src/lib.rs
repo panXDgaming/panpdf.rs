@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 pub mod addresses;
+pub mod ai_chats;
 pub mod ai_choice;
 pub mod ai_key;
 pub mod ai_layout;

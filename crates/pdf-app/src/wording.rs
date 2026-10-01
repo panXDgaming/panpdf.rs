@@ -1,9 +1,11 @@
+mod assistant;
 mod controls;
 mod edits;
 mod facts;
 mod home;
 mod tools;
 
+pub use assistant::Assistant;
 pub use controls::Control;
 pub use edits::{BlockMove, Done, Hidden, Layout, LayoutWhy, PictureMove, Refusal, Side, StampWhy};
 pub use facts::Fact;
@@ -633,7 +635,6 @@ pub enum Message {
     AiProvider,
     AiAttach,
     AiHistory,
-    AiNewChatTitle,
     AiNoChatsYet,
     AiUntitledChat,
     AiForgetChat,
@@ -641,13 +642,9 @@ pub enum Message {
     AiKeepTheKeyMeans,
     AiKeptKeyUnreadable,
     AiNowOnDocument(String),
-    AiResetToDefault,
     AiFullAccessAsk,
     AiFullAccessMeans,
     AiFullAccessConfirm,
-    AiAdd,
-    AiAttachFiles,
-    AiAttachFilesMeans,
     AiEffortOffMeans,
     AiEffortNoneMeans,
     AiEffortLowMeans,
@@ -655,18 +652,13 @@ pub enum Message {
     AiEffortHighMeans,
     AiCancel,
     AiDisconnect,
-    AiConnected,
-    AiConnectedTo,
-    AiNotConnected,
     AiCheckingConnection,
-    AiNotConnectedYet,
     AiThisDocumentsChat,
     AiEditMeans,
     AiAskAgainMeans,
     AiWentBack,
     AiWentBackDocumentStays,
     AiPutBack,
-    AiChatMenu,
     AiCopyWholeChat,
     AiDeleteThisChatSure,
     AiThisDocument,
@@ -678,9 +670,6 @@ pub enum Message {
     AiWritingTheAnswer,
     AiWaitingForModel(String),
     AiAskHint,
-    AiIncludeContext {
-        characters: usize,
-    },
     AiSend,
     AiResponse,
     AiPrivacy,
@@ -691,10 +680,7 @@ pub enum Message {
     AiYou,
     AiThinking,
     AiKeyNeeded,
-    AiFindModels,
     AiNoModelChosen,
-    AiEnterSends,
-    AiSendThePage,
     AiConnectionInvalid,
     AiStopped,
     AiCouldNotReach,
@@ -756,6 +742,7 @@ pub enum Message {
     Refused(Refusal),
     Home(Home),
     Control(Control),
+    Assistant(Assistant),
     Quiet,
     DrawingSpeed(crate::speed::Summary),
     EditSpeed(pdf_session::stages::Stages),
@@ -1250,7 +1237,7 @@ impl Message {
             Self::OcrSkipText => "Skip pages that already have text".to_owned(),
             Self::OcrStart(1) => "Read 1 page".to_owned(),
             Self::OcrStart(count) => format!("Read {count} pages"),
-            Self::OcrStop => "Stop".to_owned(),
+            Self::OcrStop | Self::AiCancel => "Stop".to_owned(),
             Self::OcrProgress { done, total } => format!("Read {done} of {total} pages\u{2026}"),
             Self::OcrNotInstalled => "The text recogniser (Tesseract) is not installed. On Linux, \
                                       install tesseract-ocr with tesseract-ocr-lao, \
@@ -1577,7 +1564,7 @@ impl Message {
             Self::FieldCheckedByDefault => "Checked by default".to_owned(),
             Self::FieldInUnison => "Buttons with the same name and choice are selected in unison".to_owned(),
             Self::FieldItem => "Item".to_owned(),
-            Self::FieldAddItem | Self::AiAdd => "Add".to_owned(),
+            Self::FieldAddItem => "Add".to_owned(),
             Self::FieldDeleteItem => "Delete".to_owned(),
             Self::FieldItemUp => "Up".to_owned(),
             Self::FieldItemDown => "Down".to_owned(),
@@ -1932,30 +1919,27 @@ impl Message {
             }
             Self::AiTitle => "AI assistant".to_owned(),
             Self::AiBaseUrl => "Base URL".to_owned(),
-            Self::AiApiKey => "API key (session only)".to_owned(),
+            Self::AiApiKey => "API key".to_owned(),
             Self::AiModel => "Model".to_owned(),
             Self::AiProvider => "Provider".to_owned(),
-            Self::AiAttach => "Attach a picture or a PDF".to_owned(),
-            Self::AiHistory => "Earlier chats".to_owned(),
+            Self::AiAttach => "Attach pictures, PDFs or text files".to_owned(),
+            Self::AiHistory => "Chats".to_owned(),
             Self::AiNoChatsYet => "No chats kept yet".to_owned(),
             Self::AiUntitledChat => "Untitled chat".to_owned(),
             Self::AiForgetChat => "Delete this chat".to_owned(),
-            Self::AiKeepTheKey => "Keep this key on this machine".to_owned(),
-            Self::AiKeepTheKeyMeans => "The key is written to a file only you can read, \
-                 locked with a secret made for this installation. It keeps the key out of \
-                 backups and screenshots; it does not protect it from a program already \
-                 running as you. Leave it unticked to give the key afresh each session."
+            Self::AiKeepTheKey => "Remember the key on this computer".to_owned(),
+            Self::AiKeepTheKeyMeans => "The key is saved in a file only you can read, scrambled with a \
+                 secret kept beside it. That keeps it from casual view, not from a program \
+                 running as you or from a backup of that folder. Leave this off to give the \
+                 key again each time."
                 .to_owned(),
             Self::AiNowOnDocument(name) => format!("Now on {name}"),
-            Self::AiResetToDefault => "Reset to default".to_owned(),
             Self::AiFullAccessAsk => "Turn on full access?".to_owned(),
             Self::AiFullAccessMeans => "The assistant will change the document and take pages \
                  out of any file on this computer without asking you first. Every change is \
                  still one step you can undo. You can turn this off again at any time."
                 .to_owned(),
             Self::AiFullAccessConfirm => "Turn it on".to_owned(),
-            Self::AiAttachFiles => "Pictures or PDFs".to_owned(),
-            Self::AiAttachFilesMeans => "Choose files to send with the question".to_owned(),
             Self::AiEffortOffMeans => "Leave it to the model".to_owned(),
             Self::AiEffortNoneMeans => "Answer straight away; fastest".to_owned(),
             Self::AiEffortLowMeans => "A little thought first".to_owned(),
@@ -1964,13 +1948,8 @@ impl Message {
             Self::AiKeptKeyUnreadable => "The key kept on this machine could not be read. \
                  Give it again."
                 .to_owned(),
-            Self::AiCancel => "Stop asking".to_owned(),
             Self::AiDisconnect => "Disconnect".to_owned(),
-            Self::AiConnected => "Connected".to_owned(),
-            Self::AiConnectedTo => "Connected \u{2713}".to_owned(),
-            Self::AiNotConnected => "Not connected \u{2014} open the settings and give a key".to_owned(),
             Self::AiCheckingConnection => "Checking the connection\u{2026}".to_owned(),
-            Self::AiNotConnectedYet => "Not connected \u{2014} open the settings".to_owned(),
             Self::AiThisDocumentsChat => "This document's chat, carried on from last time".to_owned(),
             Self::AiEditMeans => "Go back to this question to change it and ask again".to_owned(),
             Self::AiAskAgainMeans => "Ask for this answer again".to_owned(),
@@ -1979,9 +1958,8 @@ impl Message {
                 "What the assistant changed in the document is still there \u{2014} Undo takes it back.".to_owned()
             }
             Self::AiPutBack => "Put the conversation back".to_owned(),
-            Self::AiChatMenu => "More".to_owned(),
             Self::AiCopyWholeChat => "Copy the whole chat".to_owned(),
-            Self::AiDeleteThisChatSure => "Click again to delete it for good".to_owned(),
+            Self::AiDeleteThisChatSure => "Delete this chat for good?".to_owned(),
             Self::AiThisDocument => "This document".to_owned(),
             Self::AiOtherChats => "Other chats".to_owned(),
             Self::AiQuestionForYou => "A question for you".to_owned(),
@@ -1990,36 +1968,36 @@ impl Message {
             Self::AiSkipQuestion => "Skip".to_owned(),
             Self::AiWritingTheAnswer => "Writing the answer\u{2026}".to_owned(),
             Self::AiWaitingForModel(model) => format!("Waiting for {model}\u{2026}"),
-            Self::AiAskHint => "Ask a question\u{2026}".to_owned(),
-            Self::AiIncludeContext { characters } => {
-                format!("Include the text of the page on screen (up to {characters} characters)")
+            Self::AiAskHint => {
+                "Ask anything, or say what to change. Enter sends, Shift+Enter adds a line."
+                    .to_owned()
             }
             Self::AiSend => "Send".to_owned(),
             Self::AiResponse => "Response".to_owned(),
             Self::AiPrivacy => {
-                "Finding models asks for the list and nothing else. The key stays in \
-                 memory and is never written to disc. In Chat only, what leaves this \
-                 machine is your question, and this page's text if you tick it. In the \
-                 other modes the assistant may also send what it reads of the document \
-                 -- its text, a search, its properties, a page as a picture -- and \
-                 nothing else. Nothing is sent unless you ask a question."
+                "What leaves this computer goes only to the provider you chose, at the \
+                 address shown: your questions and attached files, the text of the page if \
+                 its chip is on, and what the assistant reads of the document while it \
+                 works (text, searches, properties, pages as pictures). In Chat only it \
+                 reads nothing from the document. Connect asks the provider for its list \
+                 of models, and nothing else is sent unless you ask a question. The key \
+                 stays in memory unless you choose to remember it. Chats are kept as plain \
+                 files on this computer, with what the assistant read from your documents, \
+                 until you delete them."
                     .to_owned()
             }
             Self::AiWorkerStopped => {
                 "The worker asking the provider stopped without an answer".to_owned()
             }
             Self::AiNothingAskedYet => {
-                "Ask about the document on screen, or anything else.".to_owned()
+                "Ask about this document, or tell the assistant what to change.".to_owned()
             }
-            Self::AiNewChat | Self::AiNewChatTitle => "New chat".to_owned(),
-            Self::AiConnection => "Connection".to_owned(),
+            Self::AiNewChat => "New chat".to_owned(),
+            Self::AiConnection => "Settings".to_owned(),
             Self::AiYou => "You".to_owned(),
             Self::AiThinking => "Thinking\u{2026}".to_owned(),
             Self::AiKeyNeeded => "This provider needs a key".to_owned(),
-            Self::AiFindModels => "Find models".to_owned(),
             Self::AiNoModelChosen => "Choose a model".to_owned(),
-            Self::AiEnterSends => "Enter sends \u{00b7} Shift+Enter for a new line".to_owned(),
-            Self::AiSendThePage => "Send this page".to_owned(),
             Self::AiConnectionInvalid => {
                 format!("This connection cannot be used as it is{SEP}check the address and the model")
             }
@@ -2036,7 +2014,7 @@ impl Message {
             }
             Self::AiDismiss => "Dismiss".to_owned(),
             Self::AiWantsTo => "The assistant would like to".to_owned(),
-            Self::AiAllowOnce => "Allow once".to_owned(),
+            Self::AiAllowOnce => "Allow".to_owned(),
             Self::AiAllowForThisChat => "Allow for this chat".to_owned(),
             Self::AiRefuse => "Refuse".to_owned(),
             Self::AiChangedTheDocument { pages } => format!(
@@ -2059,7 +2037,7 @@ impl Message {
             Self::AiPlan { done, total } => format!("Plan \u{00b7} {done} of {total} done"),
             Self::AiAllowAll { count } => format!("Allow all {count}"),
             Self::AiRunMadeChanges { steps } => format!(
-                "In this run the assistant made {} to the document.",
+                "The assistant made {}",
                 edits::count(*steps, "change")
             ),
             Self::AiUndoRun => "Undo them all".to_owned(),
@@ -2082,23 +2060,20 @@ impl Message {
             Self::AiEffortLow => "Thinking: low".to_owned(),
             Self::AiEffortMedium => "Thinking: medium".to_owned(),
             Self::AiEffortHigh => "Thinking: high".to_owned(),
-            Self::AiMode => "What it may do".to_owned(),
+            Self::AiMode => "What the assistant may do".to_owned(),
             Self::AiModeChatOnly => "Chat only".to_owned(),
-            Self::AiModeAskBeforeChanges => "Ask for approval".to_owned(),
-            Self::AiModeDoIt => "Approve for me".to_owned(),
+            Self::AiModeAskBeforeChanges => "Ask before changes".to_owned(),
+            Self::AiModeDoIt => "Make changes".to_owned(),
             Self::AiModeFree => "Full access".to_owned(),
             Self::AiModeChatOnlyWhat => {
-                "It answers questions and cannot touch the document.".to_owned()
+                "Answers questions and never touches the document".to_owned()
             }
-            Self::AiModeAskBeforeChangesWhat => {
-                "Reads freely; asks you before every change".to_owned()
-            }
+            Self::AiModeAskBeforeChangesWhat => "Asks you before each change".to_owned(),
             Self::AiModeDoItWhat => {
-                "Changes without asking; asks only before taking pages from another file"
-                    .to_owned()
+                "Makes changes without asking; each one can be undone".to_owned()
             }
             Self::AiModeFreeWhat => {
-                "Never asks, even to read other files on this computer".to_owned()
+                "Also takes pages from other files on this computer, without asking".to_owned()
             }
             Self::AgentsTitle => "Connect agents".to_owned(),
             Self::AgentsWhat => {
@@ -2123,6 +2098,7 @@ impl Message {
             Self::Done(done) => done.say(Lang::English),
             Self::Home(home) => home.say(Lang::English),
             Self::Control(control) => control.say(Lang::English),
+            Self::Assistant(said) => said.say(Lang::English),
             Self::Refused(refusal) => refusal.say(Lang::English),
             Self::Quiet => String::new(),
             Self::DrawingSpeed(speed) => format!(
@@ -2405,14 +2381,12 @@ mod tests {
     fn newest() -> Vec<Message> {
         vec![
             Message::AiCheckingConnection,
-            Message::AiNotConnectedYet,
             Message::AiThisDocumentsChat,
             Message::AiEditMeans,
             Message::AiAskAgainMeans,
             Message::AiWentBack,
             Message::AiWentBackDocumentStays,
             Message::AiPutBack,
-            Message::AiChatMenu,
             Message::AiCopyWholeChat,
             Message::AiDeleteThisChatSure,
             Message::AiThisDocument,
@@ -2432,7 +2406,6 @@ mod tests {
             Message::AiProvider,
             Message::AiAttach,
             Message::AiHistory,
-            Message::AiNewChatTitle,
             Message::AiNoChatsYet,
             Message::AiUntitledChat,
             Message::AiForgetChat,
@@ -2440,13 +2413,9 @@ mod tests {
             Message::AiKeepTheKeyMeans,
             Message::AiKeptKeyUnreadable,
             Message::AiNowOnDocument("a.pdf".to_owned()),
-            Message::AiResetToDefault,
             Message::AiFullAccessAsk,
             Message::AiFullAccessMeans,
             Message::AiFullAccessConfirm,
-            Message::AiAdd,
-            Message::AiAttachFiles,
-            Message::AiAttachFilesMeans,
             Message::AiEffortOffMeans,
             Message::AiEffortNoneMeans,
             Message::AiEffortLowMeans,
@@ -2489,16 +2458,42 @@ mod tests {
     }
 
     #[test]
+    fn the_four_modes_are_named_plainly_and_each_says_what_it_does() {
+        let say = |message: Message| message.say(Lang::English);
+        assert_eq!(say(Message::AiModeChatOnly), "Chat only");
+        assert_eq!(say(Message::AiModeAskBeforeChanges), "Ask before changes");
+        assert_eq!(say(Message::AiModeDoIt), "Make changes");
+        assert_eq!(say(Message::AiModeFree), "Full access");
+        assert!(say(Message::AiModeChatOnlyWhat).contains("never touches the document"));
+        assert!(say(Message::AiModeAskBeforeChangesWhat).contains("before each change"));
+        assert!(say(Message::AiModeDoItWhat).contains("can be undone"));
+        assert!(say(Message::AiModeFreeWhat).contains("other files"));
+    }
+
+    #[test]
+    fn the_privacy_text_does_not_promise_what_the_program_does_not_keep() {
+        let said = Message::AiPrivacy.say(Lang::English);
+        assert!(!said.contains("never written"), "{said}");
+        assert!(
+            said.contains("plain files"),
+            "chats are kept in plain files: {said}"
+        );
+        assert!(
+            said.contains("remember"),
+            "the key may be kept if asked: {said}"
+        );
+        let keeps = Message::AiKeepTheKeyMeans.say(Lang::English);
+        assert!(
+            !keeps.contains("backup") || keeps.contains("not from"),
+            "{keeps}"
+        );
+    }
+
+    #[test]
     fn a_run_is_said_in_changes_and_in_what_was_taken_back() {
         let made = |steps: usize| Message::AiRunMadeChanges { steps }.say(Lang::English);
-        assert_eq!(
-            made(1),
-            "In this run the assistant made 1 change to the document."
-        );
-        assert_eq!(
-            made(4),
-            "In this run the assistant made 4 changes to the document."
-        );
+        assert_eq!(made(1), "The assistant made 1 change");
+        assert_eq!(made(4), "The assistant made 4 changes");
         let back = |steps: usize| Message::AiRunTakenBack { steps }.say(Lang::English);
         assert_eq!(back(1), "The assistant's change was taken back.");
         assert_eq!(back(3), "The assistant's 3 changes were taken back.");

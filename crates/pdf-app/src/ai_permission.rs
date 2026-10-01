@@ -28,6 +28,14 @@ impl Mode {
             _ => None,
         }
     }
+
+    #[must_use]
+    pub const fn kept_for_next_time(self) -> Self {
+        match self {
+            Self::Free => Self::DoIt,
+            other => other,
+        }
+    }
 }
 
 pub const ALWAYS_ASK: [&str; 1] = ["insert_pages"];
@@ -106,15 +114,60 @@ pub fn decide(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use words::describe_call;
+pub use words::{Shown, describe_call, describe_change};
 
 #[cfg(not(target_arch = "wasm32"))]
 mod words {
     use pdf_agent::tools::request::Request;
 
-    use crate::wording::Lang;
+    use crate::wording::{Assistant, Lang};
 
     const MOST: usize = 200;
+
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub struct Shown {
+        pub headline: String,
+        pub before: Option<String>,
+        pub after: Option<String>,
+    }
+
+    fn page_of_block(name: &str) -> Option<usize> {
+        let rest = name.trim().strip_prefix('p')?;
+        let (page, block) = rest.split_once("-b")?;
+        block.parse::<usize>().ok()?;
+        page.parse().ok().filter(|page| *page > 0)
+    }
+
+    #[must_use]
+    pub fn describe_change(request: &Request, was: Option<&str>, lang: Lang) -> Shown {
+        let plain = || Shown {
+            headline: describe_call(request, lang),
+            before: None,
+            after: None,
+        };
+        match request {
+            Request::ReplaceText { block, find, text } => {
+                let Some(page) = page_of_block(block) else {
+                    return plain();
+                };
+                Shown {
+                    headline: Assistant::ReplaceTextOn(page).say(lang),
+                    before: find.clone().or_else(|| was.map(str::to_owned)),
+                    after: Some(text.clone()),
+                }
+            }
+            Request::AddText { page, text, .. } => Shown {
+                headline: Assistant::AddTextOn(page + 1).say(lang),
+                before: None,
+                after: Some(text.clone()),
+            },
+            Request::WritePages { markdown, .. } => Shown {
+                after: Some(markdown.clone()),
+                ..plain()
+            },
+            _ => plain(),
+        }
+    }
 
     #[must_use]
     pub fn describe_call(request: &Request, lang: Lang) -> String {

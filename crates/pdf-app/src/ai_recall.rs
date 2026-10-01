@@ -64,14 +64,13 @@ impl Recall {
 
 #[must_use]
 pub fn distinct(newest_first: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut out: Vec<String> = Vec::new();
     for question in newest_first {
-        if question.trim().is_empty() {
+        if question.trim().is_empty() || !seen.insert(question.clone()) {
             continue;
         }
-        if out.last() != Some(&question) {
-            out.push(question);
-        }
+        out.push(question);
     }
     out
 }
@@ -86,6 +85,23 @@ mod tests {
                 .into_iter()
                 .map(str::to_owned),
         )
+    }
+
+    #[test]
+    fn a_question_asked_again_is_recalled_once_at_its_newest() {
+        let said = distinct(
+            [
+                "continue",
+                "yes",
+                "continue",
+                "yes",
+                "summarise",
+                "continue",
+            ]
+            .into_iter()
+            .map(str::to_owned),
+        );
+        assert_eq!(said, ["continue", "yes", "summarise"]);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 pub const LEAST_ROWS: usize = 2;
 
-pub const LEAST_WIDTH: f32 = 70.0;
+pub const LEAST_CAPTION: f32 = 48.0;
 
 const MOST_ROWS_EVER: f32 = 512.0;
 
@@ -47,49 +47,14 @@ pub fn composer_height(rows: usize, row_height: f32, chrome: f32) -> f32 {
 }
 
 #[must_use]
-pub fn conversation_room(available: f32, composer: f32, least: f32) -> f32 {
-    (available - composer).max(least)
-}
-
-#[must_use]
-pub fn split_row(available: f32, fixed: f32, gap: f32, parts: usize) -> f32 {
-    if parts == 0 {
-        return LEAST_WIDTH;
-    }
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "a control count is small; no row has 2^24 controls in it"
-    )]
-    let parts = parts as f32;
-    ((available - fixed - gap * parts) / parts).max(LEAST_WIDTH)
-}
-
-#[must_use]
-pub fn fits_on_one_row(available: f32, widths: &[f32], gap: f32) -> bool {
-    let controls: f32 = widths.iter().sum();
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "a control count is small; no row has 2^24 controls in it"
-    )]
-    let gaps = widths.len().saturating_sub(1) as f32 * gap;
-    controls + gaps <= available
+pub fn caption_room(available: f32, gap: f32) -> Option<f32> {
+    let room = available - gap;
+    (room.is_finite() && room >= LEAST_CAPTION).then_some(room)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        LEAST_ROWS, LEAST_WIDTH, composer_height, conversation_room, fits_on_one_row, most_rows,
-        rows_shown, split_row,
-    };
-
-    #[test]
-    fn a_row_fits_only_with_its_gaps() {
-        let widths = [30.0, 110.0, 150.0, 50.0];
-        assert!(fits_on_one_row(388.0, &widths, 16.0));
-        assert!(!fits_on_one_row(387.0, &widths, 16.0));
-        assert!(!fits_on_one_row(340.0, &widths, 16.0));
-        assert!(fits_on_one_row(0.0, &[], 16.0));
-    }
+    use super::{LEAST_CAPTION, LEAST_ROWS, caption_room, composer_height, most_rows, rows_shown};
 
     #[test]
     fn the_box_shows_what_was_typed_within_its_bounds() {
@@ -125,29 +90,12 @@ mod tests {
         assert_eq!(composer_height(0, 18.0, 44.0), 80.0);
     }
 
-    #[expect(
-        clippy::float_cmp,
-        reason = "every number here is exact in binary, and the point of the \
-                  test is the exact height"
-    )]
     #[test]
-    fn the_conversation_keeps_a_floor_under_it() {
-        assert_eq!(conversation_room(300.0, 260.0, 80.0), 80.0);
-        assert_eq!(conversation_room(600.0, 260.0, 80.0), 340.0);
-    }
-
-    #[expect(
-        clippy::float_cmp,
-        reason = "every number here is exact in binary, and the point of the \
-                  test is the exact width"
-    )]
-    #[test]
-    fn controls_sharing_a_row_are_equal() {
-        assert_eq!(split_row(360.0, 30.0, 8.0, 2), 157.0);
-        let forgot_a_gap = (360.0 - 30.0 - 8.0) / 2.0;
-        assert_ne!(split_row(360.0, 30.0, 8.0, 2), forgot_a_gap);
-        assert_eq!(split_row(360.0, 0.0, 8.0, 2), 172.0);
-        assert_eq!(split_row(100.0, 30.0, 8.0, 2), LEAST_WIDTH);
-        assert_eq!(split_row(360.0, 30.0, 8.0, 0), LEAST_WIDTH);
+    fn the_model_caption_gets_what_the_row_has_left_or_goes() {
+        assert_eq!(caption_room(100.0, 8.0), Some(92.0));
+        assert_eq!(caption_room(LEAST_CAPTION + 8.0, 8.0), Some(LEAST_CAPTION));
+        assert_eq!(caption_room(LEAST_CAPTION + 7.0, 8.0), None);
+        assert_eq!(caption_room(-5.0, 8.0), None);
+        assert_eq!(caption_room(f32::NAN, 8.0), None);
     }
 }

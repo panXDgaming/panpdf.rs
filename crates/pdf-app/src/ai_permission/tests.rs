@@ -1,5 +1,8 @@
 use super::{ALWAYS_ASK, Decision, Mode, Why, decide, may_allow_all, refusal_text};
 
+#[cfg(not(target_arch = "wasm32"))]
+use super::describe_change;
+
 type Row = (Mode, &'static str, Option<(bool, bool)>, bool, Decision);
 
 const READS: Option<(bool, bool)> = Some((true, false));
@@ -478,5 +481,80 @@ mod cards {
         assert!(!said.contains('\n'));
         assert!(said.ends_with('\u{2026}'));
         assert!(said.chars().count() < 260);
+    }
+}
+
+#[test]
+fn full_access_is_not_kept_for_the_next_launch() {
+    assert_eq!(Mode::Free.kept_for_next_time(), Mode::DoIt);
+    for mode in [Mode::ChatOnly, Mode::AskBeforeChanges, Mode::DoIt] {
+        assert_eq!(mode.kept_for_next_time(), mode);
+    }
+    assert_eq!(
+        Mode::parse("free").map(Mode::kept_for_next_time),
+        Some(Mode::DoIt),
+        "a file an older version wrote does not bring it back either"
+    );
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+mod change {
+    use pdf_agent::tools::request::Request;
+
+    use super::describe_change;
+    use crate::wording::Lang;
+
+    fn replace(block: &str, find: Option<&str>, text: &str) -> Request {
+        Request::ReplaceText {
+            block: block.to_owned(),
+            find: find.map(str::to_owned),
+            text: text.to_owned(),
+        }
+    }
+
+    #[test]
+    fn a_replaced_block_shows_what_it_said_and_what_it_will_say_and_the_page() {
+        let shown = describe_change(
+            &replace("p3-b12", None, "Dear Madam"),
+            Some("Dear Sir"),
+            Lang::English,
+        );
+        assert_eq!(shown.headline, "Replace text on page 3");
+        assert_eq!(shown.before.as_deref(), Some("Dear Sir"));
+        assert_eq!(shown.after.as_deref(), Some("Dear Madam"));
+    }
+
+    #[test]
+    fn a_replaced_word_shows_the_word_and_not_the_whole_block() {
+        let shown = describe_change(
+            &replace("p2-b1", Some("teh"), "the"),
+            Some("Fix teh typo here"),
+            Lang::English,
+        );
+        assert_eq!(shown.before.as_deref(), Some("teh"));
+        assert_eq!(shown.after.as_deref(), Some("the"));
+    }
+
+    #[test]
+    fn a_deleted_block_has_a_before_and_an_empty_after() {
+        let shown = describe_change(&replace("p1-b2", None, ""), Some("old"), Lang::English);
+        assert_eq!(shown.before.as_deref(), Some("old"));
+        assert_eq!(shown.after.as_deref(), Some(""));
+    }
+
+    #[test]
+    fn a_block_with_no_readable_name_is_described_in_the_plain_way() {
+        for name in ["", "p0-b1", "p2", "b3", "pX-b1", "p2-b"] {
+            let shown = describe_change(&replace(name, None, "x"), None, Lang::English);
+            assert!(shown.before.is_none() && shown.after.is_none(), "{name}");
+            assert!(shown.headline.starts_with("Replace"), "{name}");
+        }
+    }
+
+    #[test]
+    fn a_change_that_is_not_a_text_has_only_its_sentence() {
+        let shown = describe_change(&Request::DeletePages(vec![1, 2]), None, Lang::English);
+        assert_eq!(shown.headline, "Delete pages 2 and 3");
+        assert!(shown.before.is_none() && shown.after.is_none());
     }
 }
