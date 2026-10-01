@@ -404,3 +404,72 @@ fn a_call_that_could_not_be_read_is_answered_as_failed_and_the_rest_go_on() {
     );
     assert_eq!(tools.results.len(), 1);
 }
+
+fn a_window_the_assistant_is_waiting_on() -> crate::window_state::Window {
+    let editor = pdf_app::Editor::blank(crate::chrome::A4).expect("a blank page");
+    let mut window =
+        crate::window_state::Window::new(editor, std::path::PathBuf::new(), Vec::new());
+    let waiting = call("call_9", "delete_pages");
+    window.ai.tools.take(std::slice::from_ref(&waiting));
+    window.ai.tools.sent = Some(super::Sent {
+        call: waiting,
+        request: Request::DeletePages(vec![0]),
+        was: None,
+    });
+    window
+}
+
+fn the_only_page_cannot_be_taken_out(
+    window: &mut crate::window_state::Window,
+) -> pdf_app::EditOutcome {
+    window
+        .editor
+        .begin_remove_pages(&[0])
+        .expect("an edit to try")
+        .run()
+}
+
+#[test]
+fn an_edit_that_stopped_unexpectedly_is_answered_to_the_assistant_and_not_waited_for() {
+    let mut window = a_window_the_assistant_is_waiting_on();
+    let stopped = std::thread::spawn(|| -> pdf_app::EditOutcome {
+        panic!("the edit thread stopped on purpose in this test")
+    });
+    while !stopped.is_finished() {
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    window.running = Some(crate::window_state::Running { handle: stopped });
+    window.collect(&eframe::egui::Context::default());
+    window.collect_a_sent_edit();
+    assert!(!window.ai.tools.waits_for_an_edit(), "still waiting");
+    assert!(window.ai.tools.queue.is_empty());
+    let [result] = window.ai.tools.results.as_slice() else {
+        panic!("one answer was owed: {:?}", window.ai.tools.results);
+    };
+    assert_eq!(result.call_id, "call_9");
+    assert!(result.is_error, "{result:?}");
+    assert!(result.text.contains("failed unexpectedly"), "{result:?}");
+}
+
+#[test]
+fn an_edit_refused_for_the_assistant_does_not_take_the_persons_waiting_typing_with_it() {
+    let mut control = a_window_the_assistant_is_waiting_on();
+    control.ai.tools.sent = None;
+    control.input.accept("typed meanwhile");
+    let outcome = the_only_page_cannot_be_taken_out(&mut control);
+    assert!(matches!(control.took_back(outcome), Applied::Refused(_)));
+    assert!(
+        control.input.draft().is_some(),
+        "known answer: a refusal of the person's own edit parks what was waiting"
+    );
+
+    let mut window = a_window_the_assistant_is_waiting_on();
+    window.input.accept("typed meanwhile");
+    let outcome = the_only_page_cannot_be_taken_out(&mut window);
+    assert!(matches!(window.took_back(outcome), Applied::Refused(_)));
+    assert!(window.input.draft().is_none(), "the typing was set aside");
+    assert_eq!(
+        window.input.queued_chars(),
+        "typed meanwhile".chars().count()
+    );
+}

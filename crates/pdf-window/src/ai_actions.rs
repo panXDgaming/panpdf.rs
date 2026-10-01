@@ -172,6 +172,10 @@ impl Tools {
         }
     }
 
+    pub(crate) fn waits_for_an_edit(&self) -> bool {
+        self.sent.is_some()
+    }
+
     pub(crate) fn note_applied(&mut self, applied: &Applied) {
         if self.sent.is_some() {
             self.landed = Some(applied.clone());

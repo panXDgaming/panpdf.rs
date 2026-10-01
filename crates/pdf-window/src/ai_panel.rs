@@ -1562,25 +1562,15 @@ impl Window {
             .flatten()
     }
 
-    fn the_chat_handle(&mut self, ui: &egui::Ui) {
-        let space = ui.max_rect();
-        let tall = crate::room::handle_tall(space.height());
-        if tall <= 0.0 {
-            return;
-        }
-        let strip = egui::Rect::from_min_size(
-            egui::pos2(
-                space.right() - crate::room::HANDLE_WIDE,
-                space.center().y - tall / 2.0,
-            ),
-            egui::vec2(crate::room::HANDLE_WIDE, tall),
-        );
-        let ctx = ui.ctx().clone();
+    fn the_chat_handle(&mut self, ui: &mut egui::Ui) {
+        let title = Message::AiTitle.say(self.lang);
         let mut open = false;
-        egui::Area::new(egui::Id::new("ai-handle"))
-            .order(egui::Order::Foreground)
-            .fixed_pos(strip.min)
-            .show(&ctx, |ui| {
+        egui::Panel::right("ai edge")
+            .resizable(false)
+            .exact_size(crate::room::HANDLE_WIDE)
+            .frame(egui::Frame::NONE)
+            .show(ui, |ui| {
+                let strip = ui.max_rect();
                 let handle = ui.interact(
                     strip,
                     egui::Id::new("ai-panel-handle"),
@@ -1594,23 +1584,19 @@ impl Window {
                     open = true;
                 }
                 let visuals = ui.visuals();
-                let ink = if live {
-                    visuals.selection.stroke.color
+                let (fill, ink) = if live {
+                    (
+                        visuals.widgets.hovered.weak_bg_fill,
+                        visuals.selection.stroke.color,
+                    )
                 } else {
-                    visuals.weak_text_color()
-                };
-                let fill = if live {
-                    visuals.widgets.hovered.bg_fill
-                } else {
-                    visuals.widgets.inactive.bg_fill
+                    (visuals.panel_fill, visuals.weak_text_color())
                 };
                 let painter = ui.painter();
-                painter.rect_filled(strip, 4.0, fill);
-                painter.rect_stroke(
-                    strip,
-                    4.0,
-                    egui::Stroke::new(1.0, visuals.widgets.noninteractive.bg_stroke.color),
-                    egui::StrokeKind::Inside,
+                painter.rect_filled(strip, 0.0, fill);
+                painter.line_segment(
+                    [strip.left_top(), strip.left_bottom()],
+                    visuals.widgets.noninteractive.bg_stroke,
                 );
                 let middle = strip.center();
                 let arm = egui::Stroke::new(1.6, ink);
@@ -1628,7 +1614,7 @@ impl Window {
                     ],
                     arm,
                 );
-                handle.on_hover_text(Message::AiTitle.say(self.lang));
+                handle.on_hover_text(title);
             });
         if open {
             let now = ui.input(|input| input.time);

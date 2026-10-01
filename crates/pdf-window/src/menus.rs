@@ -94,7 +94,7 @@ impl Window {
                         Command::Insert => self.insert_menu(ui, working),
                         Command::Page => self.page_menu(ui, working),
                         Command::Tools => self.tools_menu(ui, with_document),
-                        Command::View => self.view_menu(ui, working),
+                        Command::View => self.view_menu(ui, (working, with_document)),
                         #[cfg(not(target_arch = "wasm32"))]
                         Command::Help => self.help_menu(ui),
                         _ => {}
@@ -351,7 +351,7 @@ impl Window {
         let _ = (&ctx, with_document);
     }
 
-    fn view_menu(&mut self, ui: &mut egui::Ui, working: bool) {
+    fn view_menu(&mut self, ui: &mut egui::Ui, (working, with_document): (bool, bool)) {
         let ctx = ui.ctx().clone();
         let lang = self.lang;
         let say = |command| Message::Command(command).say(lang);
@@ -370,6 +370,16 @@ impl Window {
             self.fold_the_pages(!pages, now);
         }
         let _ = ui.checkbox(&mut self.show_contents, say(Command::Contents));
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let mut assistant = self.ai.open;
+            let shown = egui::Checkbox::new(&mut assistant, say(Command::AiAssistant));
+            if ui.add_enabled(with_document, shown).changed() {
+                self.toggle_the_assistant(&ctx);
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        let _ = with_document;
         ui.separator();
         submenu_button(&ctx, lang, Command::Frames).ui(ui, |ui| {
             let all = item(Command::ShowFrames).selected(self.show_frames);

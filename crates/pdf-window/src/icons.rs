@@ -86,13 +86,6 @@ pub(crate) enum Icon {
         expect(dead_code, reason = "the assistant panel is not built for the browser")
     )]
     Stop,
-    #[cfg_attr(
-        target_arch = "wasm32",
-        expect(
-            dead_code,
-            reason = "the assistant panel that closes is not built for the browser"
-        )
-    )]
     Close,
     #[cfg_attr(
         target_arch = "wasm32",

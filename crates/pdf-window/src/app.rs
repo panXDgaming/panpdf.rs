@@ -522,7 +522,7 @@ impl Window {
         });
     }
 
-    fn collect(&mut self, ctx: &egui::Context) {
+    pub(crate) fn collect(&mut self, ctx: &egui::Context) {
         let Some(running) = &self.running else { return };
         if !running.handle.is_finished() {
             ctx.request_repaint();
@@ -539,6 +539,12 @@ impl Window {
             ));
             self.editor.say(Message::EditFailedUnexpectedly);
             self.editor.abandon_record("the edit thread panicked");
+            #[cfg(not(target_arch = "wasm32"))]
+            self.ai
+                .tools
+                .note_applied(&Applied::Refused(pdf_app::wording::Refusal::from(
+                    Message::EditFailedUnexpectedly.say(self.lang),
+                )));
             self.save_after_the_field = false;
             self.saving_then_leaving = None;
             return;
@@ -553,22 +559,7 @@ impl Window {
         }
     }
 
-    pub(crate) fn took_back(&mut self, outcome: pdf_app::EditOutcome) -> Applied {
-        let applied = self.editor.adopt(outcome);
-        #[cfg(not(target_arch = "wasm32"))]
-        if let Applied::Refused(refusal) = &applied {
-            crate::reporting::say(
-                pdf_app::trouble::Kind::Refused,
-                &Message::Refused(refusal.clone()).say(pdf_app::wording::Lang::English),
-            );
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            self.ai.tools.note_applied(&applied);
-            if self.editor.pages_redrawn() {
-                self.ai.tools.pages_moved();
-            }
-        }
+    fn follow_the_pages_redrawn(&mut self) {
         if self.editor.pages_redrawn() {
             if self.turning_to.is_none() {
                 self.chosen_pages.clear();
@@ -609,6 +600,29 @@ impl Window {
             self.renumber = None;
             self.page_preview = None;
         }
+    }
+
+    pub(crate) fn took_back(&mut self, outcome: pdf_app::EditOutcome) -> Applied {
+        #[cfg(not(target_arch = "wasm32"))]
+        let by_the_assistant = self.ai.tools.waits_for_an_edit();
+        #[cfg(target_arch = "wasm32")]
+        let by_the_assistant = false;
+        let applied = self.editor.adopt(outcome);
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Applied::Refused(refusal) = &applied {
+            crate::reporting::say(
+                pdf_app::trouble::Kind::Refused,
+                &Message::Refused(refusal.clone()).say(pdf_app::wording::Lang::English),
+            );
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.ai.tools.note_applied(&applied);
+            if self.editor.pages_redrawn() {
+                self.ai.tools.pages_moved();
+            }
+        }
+        self.follow_the_pages_redrawn();
         if self.editor.pages_redrawn() {
             self.search_the_document_again();
         }
@@ -641,7 +655,11 @@ impl Window {
                 Applied::Refused(reason) => TextLanding::Refused(Message::Refused(reason.clone())),
                 _ => TextLanding::Unchanged,
             };
-            let refused = self.input.landed(landing);
+            let refused = if by_the_assistant {
+                0
+            } else {
+                self.input.landed(landing)
+            };
             if refused > 0 {
                 let said = Message::AndPressesRefused {
                     said: Box::new(self.editor.status().clone()),
@@ -1589,6 +1607,90 @@ mod persistence_tests {
         ));
     }
 
+    fn press(window: &mut Window, key: egui::Key) {
+        let ctx = egui::Context::default();
+        let mut input = egui::RawInput {
+            modifiers: egui::Modifiers::COMMAND,
+            ..egui::RawInput::default()
+        };
+        input.events.push(egui::Event::Key {
+            key,
+            physical_key: Some(key),
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::COMMAND,
+        });
+        let _ = ctx.run_ui(input, |ui| window.read_the_shortcuts(ui.ctx()));
+    }
+
+    #[test]
+    fn ctrl_n_starts_a_new_document_only_when_no_dialog_is_asking_something() {
+        let mut free = window();
+        press(&mut free, egui::Key::N);
+        assert!(
+            free.untitled,
+            "known answer: with nothing open it starts one"
+        );
+
+        let mut asked = window();
+        asked.leaving = Some(Leaving::Close);
+        press(&mut asked, egui::Key::N);
+        assert!(
+            !asked.untitled,
+            "a new document replaced one under a dialog"
+        );
+        assert_eq!(asked.opened, PathBuf::from("/missing/original.pdf"));
+    }
+
+    #[test]
+    fn ctrl_d_opens_the_properties_only_when_no_dialog_is_asking_something() {
+        let mut free = window();
+        press(&mut free, egui::Key::D);
+        assert!(
+            free.properties.is_some(),
+            "known answer: with nothing open it opens them"
+        );
+
+        let mut asked = window();
+        asked.leaving = Some(Leaving::Close);
+        press(&mut asked, egui::Key::D);
+        assert!(asked.properties.is_none(), "properties stacked on a dialog");
+    }
+
+    #[test]
+    fn the_window_is_titled_by_its_file_and_marks_only_unsaved_work() {
+        let mut window = window();
+        assert_eq!(window.window_title_now(), "original.pdf \u{2014} PanPDF");
+        move_text(&mut window);
+        assert_eq!(
+            window.window_title_now(),
+            "\u{2022} original.pdf \u{2014} PanPDF"
+        );
+        window.home = true;
+        assert_eq!(window.window_title_now(), "PanPDF");
+    }
+
+    #[test]
+    fn the_system_is_told_the_title_only_when_it_changes() {
+        let mut window = window();
+        let ctx = egui::Context::default();
+        let told = |window: &mut Window| {
+            let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                window.keep_the_window_title(ui.ctx());
+            });
+            output.viewport_output[&egui::ViewportId::ROOT]
+                .commands
+                .iter()
+                .filter(|command| matches!(command, egui::ViewportCommand::Title(_)))
+                .count()
+        };
+        assert_eq!(told(&mut window), 1, "the first frame names the window");
+        assert_eq!(told(&mut window), 0, "the same title is not sent again");
+        move_text(&mut window);
+        assert_eq!(told(&mut window), 1, "unsaved work changes the title");
+        assert_eq!(told(&mut window), 0);
+    }
+
     #[test]
     fn the_drawn_frame_stays_on_screen_while_the_first_character_is_away() {
         use pdf_app::draft::Intent;
@@ -1824,6 +1926,40 @@ mod persistence_tests {
         assert!(!window.selected());
         window.pointing = crate::window_state::Pointing::Block { page: 0, block: 0 };
         assert!(window.selected(), "the toolbar's Delete is offered for it");
+    }
+
+    #[test]
+    fn a_chosen_link_is_something_delete_acts_on_only_with_the_link_tool() {
+        let mut window = window();
+        window.chosen_links = Some(crate::window_state::ChosenLinks {
+            page: 0,
+            links: vec![pdf_syntax::Reference::new(7, 0)],
+        });
+        assert!(!window.selected(), "known answer: another tool ignores it");
+        window.tool = crate::window_state::Tool::Link;
+        assert!(
+            window.selected(),
+            "the Delete key removes it, so Delete is offered"
+        );
+    }
+
+    #[test]
+    fn a_new_document_does_not_inherit_the_last_ones_dialogs_or_find_results() {
+        let mut window = window();
+        window.open_the_properties();
+        window.open_the_find_bar();
+        window
+            .finding
+            .as_mut()
+            .expect("the find bar opened")
+            .asked
+            .insert(3);
+        assert!(window.properties.is_some());
+        window.new_document(crate::chrome::A4);
+        assert!(window.untitled, "the new document replaced the old one");
+        assert!(window.properties.is_none(), "properties of the old file");
+        let finding = window.finding.as_ref().expect("the find bar stays open");
+        assert!(finding.asked.is_empty(), "pages the old file answered");
     }
 
     #[test]

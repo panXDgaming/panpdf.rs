@@ -587,3 +587,39 @@ pub fn pdfs_in(directory: &Path) -> Vec<PathBuf> {
     found.sort();
     found
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::{Due, Keeping, WRITE_AFTER};
+
+    #[test]
+    fn a_changed_list_is_written_a_second_after_the_first_change_and_not_at_each_page_passed() {
+        let mut keeping = Keeping::default();
+        assert_eq!(keeping.due(5.0), Due::Nothing);
+        keeping.changed(10.0);
+        keeping.changed(10.6);
+        let Due::Wait(left) = keeping.due(10.2) else {
+            panic!("a change a moment ago is not due yet");
+        };
+        assert!((left - (WRITE_AFTER - 0.2)).abs() < 1e-9, "{left}");
+        assert_eq!(
+            keeping.due(10.0 + WRITE_AFTER),
+            Due::Now,
+            "the later change did not push the writing back"
+        );
+        keeping.written();
+        assert_eq!(keeping.due(99.0), Due::Nothing);
+    }
+
+    #[test]
+    fn a_page_is_looked_at_once_however_many_frames_it_stays_in_view() {
+        let mut keeping = Keeping::default();
+        let file = Path::new("/documents/report.pdf");
+        assert!(keeping.is_new(file, 0));
+        assert!(!keeping.is_new(file, 0), "the same page again");
+        assert!(keeping.is_new(file, 1), "another page");
+        assert!(keeping.is_new(Path::new("/documents/other.pdf"), 1));
+    }
+}
