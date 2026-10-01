@@ -5,6 +5,7 @@ use std::fmt::Write as _;
 use crate::connect::ToolOffer;
 use crate::desk::{Block, Desk, MOST_CHARACTERS};
 
+mod calls;
 pub mod request;
 
 const MOST_HITS: usize = 200;
@@ -24,7 +25,10 @@ use crate::json::Json;
 pub const INSTRUCTIONS: &str = "PanPDF reads and edits PDF documents on this computer, with the same engine as the PanPDF window. \
 Start with open_document, which gives a handle every other tool takes. Read with read_text (text in blocks, each named like p3-b12) \
 or find_text, and look at a page with render_page when layout, pictures or scanned pages matter. \
-Change text with replace_text, naming a block; to change a few words, pass `find` so only those are replaced and the rest keeps its style. \
+Change text with replace_text, naming a block; to change a few words, pass `find` so only those are replaced and the rest keeps its style; \
+find_and_replace changes every place at once, and style_text changes how a block looks. mark_text highlights words, add_stamp numbers pages \
+and adds headers, footers and watermarks, bookmarks makes a table of contents, place_picture and objects handle pictures and drawings, and \
+look_closer draws part of a page larger. \
 Every change is checked by the engine before it is written, and a refusal says why. Changes stay in memory until save_document; \
 undo takes back the last one. Pages are counted from 1. Positions are points from the top-left corner of the page as shown. \
 Never set replace or set_aside_restrictions without the person's agreement.";
@@ -288,6 +292,160 @@ a check box or radio button takes the state to show (document_info lists them) o
             destructive: false,
         },
         Tool {
+            name: "find_and_replace",
+            title: "Find and replace",
+            description: "Changes every place a piece of text occurs, over the whole document or a range of pages, in one call and one \
+step the person can undo. Use it for \"change Acme to Beta everywhere\" instead of one replace_text for each block. `match_case` and \
+`whole_words` narrow what is found. Each place is set again in the block's own font and size; a block that cannot be changed is left \
+alone and named in the reply, which also says how many places were replaced on each page.",
+            input: r#"{"type":"object","properties":{DOCUMENT,
+"find":{"type":"string","description":"The text to look for."},
+"replace_with":{"type":"string","description":"What it becomes. Empty deletes it. Use \\n for a new paragraph."},
+"match_case":{"type":"boolean","description":"Whether capitals must match. Default false."},
+"whole_words":{"type":"boolean","description":"Only where the text is a whole word, not part of a longer one. Default false."},
+"first_page":{"type":"integer","minimum":1,"description":"The first page to change. Default 1."},
+"last_page":{"type":"integer","minimum":1,"description":"The last page to change. Default the last page."}},
+"required":["document","find","replace_with"],"additionalProperties":false}"#,
+            read_only: false,
+            destructive: false,
+        },
+        Tool {
+            name: "style_text",
+            title: "Change how text looks",
+            description: "Changes how a block of text looks without changing its words: bold, italic, underline, size in points, colour, \
+font family, line spacing (a multiple of the text size) and alignment. Name a block from read_text or find_text. With `find`, only that \
+piece of the block -- it must occur in it exactly once -- is styled and the rest keeps its look; `align` and `line_spacing` always apply \
+to the whole block. Pass only what changes. For a heading, a bigger size and bold are what make it one.",
+            input: r#"{"type":"object","properties":{DOCUMENT,
+"block":{"type":"string","description":"A block name from read_text or find_text, like p3-b12."},
+"find":{"type":"string","description":"The piece of the block to style. Leave out to style the whole block."},
+"bold":{"type":"boolean"},"italic":{"type":"boolean"},"underline":{"type":"boolean"},
+"size":{"type":"number","minimum":1,"maximum":1000,"description":"In points."},
+"color":{"type":"string","description":"As #rrggbb."},
+"font":{"type":"string","description":"A family list_fonts names."},
+"line_spacing":{"type":"number","minimum":0.8,"maximum":10,"description":"A multiple of the text size: 1 is tight, 1.5 airy."},
+"align":{"type":"string","enum":["left","center","right","justify"]}},
+"required":["document","block"],"additionalProperties":false}"#,
+            read_only: false,
+            destructive: false,
+        },
+        Tool {
+            name: "mark_text",
+            title: "Highlight, underline or strike through text",
+            description: "Marks every place a piece of text occurs with a highlighter band, an underline or a strike-through, over the \
+whole document or a range of pages. The file has no annotation objects, so the marks are drawn on the page over the words -- as one step \
+the person can undo -- and the reply counts the places marked on each page.",
+            input: r#"{"type":"object","properties":{DOCUMENT,
+"text":{"type":"string","description":"The text to mark."},
+"how":{"type":"string","enum":["highlight","underline","strike_through"],"description":"Default highlight."},
+"color":{"type":"string","description":"As #rrggbb. Default yellow for a highlight, black for the others."},
+"match_case":{"type":"boolean","description":"Whether capitals must match. Default false."},
+"whole_words":{"type":"boolean","description":"Only where the text is a whole word. Default false."},
+"first_page":{"type":"integer","minimum":1,"description":"The first page to mark. Default 1."},
+"last_page":{"type":"integer","minimum":1,"description":"The last page to mark. Default the last page."}},
+"required":["document","text"],"additionalProperties":false}"#,
+            read_only: false,
+            destructive: false,
+        },
+        Tool {
+            name: "add_stamp",
+            title: "Page numbers, header, footer or watermark",
+            description: "Puts the same line of text on many pages at once, as the Tools menu does: page numbers, a header or footer, or a \
+watermark. `kind` chooses what it starts from (page_numbers: {page} at the bottom centre; header_footer: the file name at the top left; \
+watermark: DRAFT, large and grey, in the middle). `text` may hold {page}, {pages}, {file} and {date}. `pages` is a range like \"1-3, 5\" \
+(default all) and `only` takes the odd or the even ones. The first page stamped shows its own number unless `start_number` says \
+otherwise. One step the person can undo.",
+            input: r#"{"type":"object","properties":{DOCUMENT,
+"kind":{"type":"string","enum":["page_numbers","header_footer","watermark"]},
+"text":{"type":"string","description":"The wording, with {page}, {pages}, {file} and {date}. Default depends on `kind`."},
+"position":{"type":"string","enum":["header_left","header_centre","header_right","footer_left","footer_centre","footer_right","middle"]},
+"pages":{"type":"string","description":"Which pages, like \"1-3, 5\". Default all."},
+"only":{"type":"string","enum":["every","odd","even"]},
+"start_number":{"type":"integer","description":"The number {page} shows on the first page stamped."},
+"font":{"type":"string","description":"A family list_fonts names."},
+"size":{"type":"number","minimum":1,"maximum":500,"description":"In points."},
+"bold":{"type":"boolean"},"italic":{"type":"boolean"},
+"color":{"type":"string","description":"As #rrggbb."},
+"opacity":{"type":"number","minimum":1,"maximum":100,"description":"In percent. 100 is solid."},
+"margin":{"type":"number","minimum":0,"maximum":300,"description":"Points in from the edge. Default 36."}},
+"required":["document","kind"],"additionalProperties":false}"#,
+            read_only: false,
+            destructive: false,
+        },
+        Tool {
+            name: "bookmarks",
+            title: "Bookmarks and table of contents",
+            description: "The document's bookmarks, its table of contents in the side panel. `list` numbers them in order, nested ones \
+indented; every other action names a bookmark by that number, which changes whenever bookmarks are added, moved or deleted -- each reply \
+lists them again. `add` makes one for a `page` or a `block` (with a block, the title can be left out and the block's words are used); \
+`after` puts it next to bookmark n, `inside` as the last child of bookmark n, neither at the end. `rename`, `retarget` (a new `page`), \
+`move` (`direction` up, down, in or out) and `delete` change one. `from_headings` makes a whole nested table of contents from the text \
+set larger than the rest, as one step; when there are bookmarks already it needs replace: true, which takes them out first.",
+            input: r#"{"type":"object","properties":{DOCUMENT,
+"action":{"type":"string","enum":["list","add","rename","retarget","move","delete","from_headings"]},
+"bookmark":{"type":"integer","minimum":1,"description":"Its number in the list. For rename, retarget, move and delete."},
+"title":{"type":"string","description":"For add and rename."},
+"page":{"type":"integer","minimum":1,"description":"For add and retarget."},
+"block":{"type":"string","description":"For add: a block name from read_text, like p3-b12. Its page is where the bookmark goes."},
+"after":{"type":"integer","minimum":1,"description":"For add: the number of the bookmark it follows."},
+"inside":{"type":"integer","minimum":1,"description":"For add: the number of the bookmark it goes inside."},
+"direction":{"type":"string","enum":["up","down","in","out"],"description":"For move."},
+"replace":{"type":"boolean","description":"For from_headings: take out the bookmarks there are first."}},
+"required":["document","action"],"additionalProperties":false}"#,
+            read_only: false,
+            destructive: false,
+        },
+        Tool {
+            name: "place_picture",
+            title: "Put a picture on a page",
+            description: "Puts a picture on a page, keeping its shape: `left` and `top` are its top-left corner in points; give `width`, \
+`height` or both (it then fits inside that box), or neither for its own size, up to 200 points wide. The picture is one the person \
+attached to this chat (`attachment` is its number among the pictures attached, 1 first; leave it out for the latest) or a PNG or JPEG file \
+at `path`. One step the person can undo; objects with action list then names it.",
+            input: r#"{"type":"object","properties":{DOCUMENT,
+"page":{"type":"integer","minimum":1},
+"left":{"type":"number"},"top":{"type":"number"},
+"width":{"type":"number","exclusiveMinimum":0},"height":{"type":"number","exclusiveMinimum":0},
+"attachment":{"type":"integer","minimum":1,"description":"Which attached picture. Default the latest."},
+"path":{"type":"string","description":"A PNG or JPEG file on this computer. A path that starts with ~ is taken from the home folder."}},
+"required":["document","page","left","top"],"additionalProperties":false}"#,
+            read_only: false,
+            destructive: false,
+        },
+        Tool {
+            name: "objects",
+            title: "Pictures, drawings and text blocks of a page",
+            description: "The pictures, drawings and text blocks of one page, and moving, resizing and deleting them. `list` (with \
+`page`) gives each picture or drawing a name like p3-o2 with its box [left, top, right, bottom] in points from the top-left of the page, \
+and lists the text blocks with their names like p3-b12. `move` puts an object's top-left corner at `left` and `top` (either or both), \
+`resize` sets `width` and/or `height` (one alone keeps its shape; the top-left corner stays) and `delete` removes a picture or drawing \
+(undo brings it back). A text block can be moved by its name, but is made larger with style_text and deleted with replace_text. A \
+name is good until that page changes: list again after any change.",
+            input: r#"{"type":"object","properties":{DOCUMENT,
+"action":{"type":"string","enum":["list","move","resize","delete"]},
+"page":{"type":"integer","minimum":1,"description":"For list."},
+"object":{"type":"string","description":"A name from list, like p3-o2 (or p3-b12 to move a text block)."},
+"left":{"type":"number"},"top":{"type":"number"},
+"width":{"type":"number","exclusiveMinimum":0},"height":{"type":"number","exclusiveMinimum":0}},
+"required":["document","action"],"additionalProperties":false}"#,
+            read_only: false,
+            destructive: false,
+        },
+        Tool {
+            name: "look_closer",
+            title: "Look closer at part of a page",
+            description: "Draws a rectangle of a page larger, as a PNG picture, to read small print or check a detail: `left`, `top`, \
+`right` and `bottom` are in points from the top-left of the page as shown, and `dpi` is how large (default 200, at most 600; the \
+picture's longer side is at most 2400 pixels). Cheaper than render_page when only a part of the page matters.",
+            input: r#"{"type":"object","properties":{DOCUMENT,
+"page":{"type":"integer","minimum":1},
+"left":{"type":"number"},"top":{"type":"number"},"right":{"type":"number"},"bottom":{"type":"number"},
+"dpi":{"type":"number","minimum":20,"maximum":600,"description":"Resolution. Default 200."}},
+"required":["document","page","left","top","right","bottom"],"additionalProperties":false}"#,
+            read_only: true,
+            destructive: false,
+        },
+        Tool {
             name: "save_document",
             title: "Save",
             description: "Writes the document to a file. Without `path` it is saved as a new file beside the original, named ...-edited.pdf. \
@@ -362,6 +520,14 @@ the person may also type an answer of their own, or skip the question.",
 "description":{"type":"string","description":"What choosing it means, in one short sentence."}},
 "required":["label"],"additionalProperties":false}}},
 "required":["question","options"],"additionalProperties":false}"#,
+            read_only: true,
+            destructive: false,
+        },
+        Tool {
+            name: "go_to_page",
+            title: "Show a page",
+            description: "Scrolls the person's window to a page, so they see what you are working on. It changes nothing in the document.",
+            input: r#"{"type":"object","properties":{DOCUMENT,"page":{"type":"integer","minimum":1}},"required":["document","page"],"additionalProperties":false}"#,
             read_only: true,
             destructive: false,
         },
@@ -593,6 +759,22 @@ only for short symbols (`$x^2$`, `$\\alpha$`): a long formula inside a line is f
 one row of text. In a table cell, keep formulas short for the same reason.\n\
 - **No emoji or pictographs on a page.** The page's fonts do not draw them and they are left \
 out. Use words, numbers and plain marks instead.\n\
+- **The same change in many places** -- \"change every Acme to Beta\": find_and_replace, once, \
+over the whole document or a range of pages, never one replace_text after another.\n\
+- **How text looks** -- bold, italic, size, colour, font, spacing, alignment: style_text on the \
+block, with `find` for a few words of it.\n\
+- **Marking words** -- highlight, underline or strike through every place a text occurs: \
+mark_text.\n\
+- **Page numbers, a header, a footer, a watermark** -- add_stamp, once for all the pages.\n\
+- **Bookmarks and a table of contents** -- bookmarks: `list` first, then add, rename, move or \
+delete by number; `from_headings` makes the whole nested table from the headings in one step. \
+A contents page of words is written with write_pages.\n\
+- **Pictures** -- place_picture puts one the person attached (or a file) on a page; objects \
+lists the pictures, drawings and text blocks of a page by name and moves, resizes or deletes \
+them.\n\
+- **Showing the person** -- go_to_page scrolls their window to the page you are working on. \
+For small print or a detail, look_closer draws just that rectangle larger, which costs far \
+less than a whole page with render_page.\n\
 \n\
 ## Asking the person\n\
 \n\
@@ -716,6 +898,14 @@ pub fn call(desk: &mut Desk, name: &str, arguments: &Json) -> Result<Answer, Str
         "rotate_pages" => rotate_pages(desk, &args),
         "insert_pages" => insert_pages(desk, &args),
         "undo" | "redo" => walk(desk, &args, name == "undo"),
+        "find_and_replace" => calls::find_and_replace(desk, &args),
+        "style_text" => calls::style_text(desk, &args),
+        "mark_text" => calls::mark_text(desk, &args),
+        "add_stamp" => calls::add_stamp(desk, &args),
+        "bookmarks" => calls::bookmarks(desk, &args),
+        "place_picture" => calls::place_picture(desk, &args),
+        "objects" => calls::objects(desk, &args),
+        "look_closer" => calls::look_closer(desk, &args),
         "save_document" => save_document(desk, &args),
         _ => Err(format!("there is no tool called {name}")),
     }
@@ -953,11 +1143,22 @@ fn replace_text(desk: &mut Desk, args: &Args) -> Result<Answer, String> {
     let handle = args.required("document")?;
     let block = args.required("block")?;
     let replacement = args.required("text")?;
-    let now = desk.rewrite(handle, block, args.text("find"), replacement)?;
-    Ok(Answer::of(
-        format!("Done. {} now reads: {}", now.name(), clip(&now.text, 2_000)),
-        described(&now),
-    ))
+    match desk.rewrite(handle, block, args.text("find"), replacement)? {
+        Some(now) => Ok(Answer::of(
+            format!("Done. {} now reads: {}", now.name(), clip(&now.text, 2_000)),
+            described(&now),
+        )),
+        None if replacement.is_empty() => Ok(Answer::of(
+            format!(
+                "Deleted {block}. The page changed, so read_text it again before naming a block on it."
+            ),
+            Json::object([("deleted", Json::Bool(true))]),
+        )),
+        None => Ok(Answer::of(
+            "Done. The block could not be read back: read_text that page again.",
+            Json::Null,
+        )),
+    }
 }
 
 fn add_text(desk: &mut Desk, args: &Args) -> Result<Answer, String> {
@@ -1032,10 +1233,7 @@ fn write_pages(desk: &mut Desk, args: &Args) -> Result<Answer, String> {
     let start = if replace {
         None
     } else {
-        desk.blocks(handle, from_page)?
-            .iter()
-            .map(|block| block.area[3])
-            .max_by(f64::total_cmp)
+        desk.bottom_of_everything(handle, from_page)?
             .map(|below| below + size)
     };
     let setting = Setting {
@@ -1201,9 +1399,7 @@ fn rotate_pages(desk: &mut Desk, args: &Args) -> Result<Answer, String> {
 fn insert_pages(desk: &mut Desk, args: &Args) -> Result<Answer, String> {
     let handle = args.required("document")?;
     let from = expand(args.required("from")?);
-    let bytes: std::sync::Arc<[u8]> = std::fs::read(&from)
-        .map_err(|error| format!("{} cannot be read: {error}", from.display()))?
-        .into();
+    let bytes: std::sync::Arc<[u8]> = crate::desk::read_a_file(&from)?.into();
     let other =
         pdf_bytes::ByteStore::new(pdf_bytes::SourceId::new(1), std::sync::Arc::clone(&bytes));
     let password = args

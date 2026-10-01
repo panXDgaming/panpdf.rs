@@ -568,11 +568,11 @@ fn an_edit_refused_for_the_assistant_does_not_take_the_persons_waiting_typing_wi
     );
 }
 
-fn tool(id: &str, name: &str, arguments: &str) -> ToolCall {
+pub(super) fn tool(id: &str, name: &str, arguments: &str) -> ToolCall {
     ToolCall::asked(id, name, Json::parse(arguments).expect("JSON"))
 }
 
-fn land_what_was_sent(window: &mut crate::window_state::Window) {
+pub(super) fn land_what_was_sent(window: &mut crate::window_state::Window) {
     let context = eframe::egui::Context::default();
     for _ in 0..5_000 {
         window.collect(&context);
@@ -585,7 +585,7 @@ fn land_what_was_sent(window: &mut crate::window_state::Window) {
     window.collect_a_sent_edit();
 }
 
-fn run(window: &mut crate::window_state::Window, call: &ToolCall) -> ToolResult {
+pub(super) fn run(window: &mut crate::window_state::Window, call: &ToolCall) -> ToolResult {
     window.ai.tools.take(std::slice::from_ref(call));
     window.ai.tools.revision_before = window.editor.revision();
     match window.perform(call) {
@@ -603,12 +603,12 @@ fn run(window: &mut crate::window_state::Window, call: &ToolCall) -> ToolResult 
         .expect("the call was answered")
 }
 
-fn a_blank_window() -> crate::window_state::Window {
+pub(super) fn a_blank_window() -> crate::window_state::Window {
     let editor = pdf_app::Editor::blank(crate::chrome::A4).expect("a blank page");
     crate::window_state::Window::new(editor, std::path::PathBuf::new(), Vec::new())
 }
 
-fn undo_steps_left(window: &mut crate::window_state::Window) -> usize {
+pub(super) fn undo_steps_left(window: &mut crate::window_state::Window) -> usize {
     let mut steps = 0;
     while window.editor.can_undo() {
         assert!(matches!(window.editor.undo(), Applied::Changed { .. }));

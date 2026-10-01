@@ -3,13 +3,15 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use pdf_bytes::{ByteStore, SourceId};
-use pdf_edit::{BlockRange, BlockReading, ClusterRef, Command, LineEnd, SourceAnchor};
+use pdf_edit::{BlockRange, BlockReading, ClusterRef, Command, SourceAnchor};
 use pdf_paint::Point;
 use pdf_session::{PageView, Session};
 
 pub const MOST_CHARACTERS: usize = 60_000;
 
 pub const MOST_PIXELS: f64 = 2_400.0;
+
+pub const MOST_FILE_BYTES: u64 = 512 * 1024 * 1024;
 
 pub type Refused = String;
 
@@ -20,7 +22,38 @@ struct Open {
     revision: u64,
     arranged: u64,
     named: BTreeMap<(usize, usize), Named>,
+    listed: BTreeMap<(usize, usize), Listed>,
+    saved: Option<u64>,
     restrictions_set_aside: bool,
+}
+
+fn unsaved(open: &Open) -> bool {
+    match open.saved {
+        Some(saved) => saved != open.revision,
+        None => open.revision != 0 && !open.session.source().same_bytes_as(&open.original),
+    }
+}
+
+pub fn read_a_file(path: &Path) -> Result<Vec<u8>, Refused> {
+    let facts = std::fs::metadata(path)
+        .map_err(|error| format!("{} cannot be read: {error}", path.display()))?;
+    if !facts.is_file() {
+        return Err(format!("{} is not a file", path.display()));
+    }
+    if facts.len() > MOST_FILE_BYTES {
+        return Err(format!(
+            "{} is too large to open: the most is {} MB",
+            path.display(),
+            MOST_FILE_BYTES / (1024 * 1024)
+        ));
+    }
+    std::fs::read(path).map_err(|error| format!("{} cannot be read: {error}", path.display()))
+}
+
+#[derive(Clone, Debug)]
+struct Listed {
+    arranged: u64,
+    anchor: String,
 }
 
 #[derive(Clone, Debug)]
@@ -48,10 +81,10 @@ impl Block {
     }
 }
 
-struct Parts {
-    rows: Vec<Vec<ClusterRef>>,
-    frame: (f64, f64),
-    reading: BlockReading,
+pub(crate) struct Parts {
+    pub(crate) rows: Vec<Vec<ClusterRef>>,
+    pub(crate) frame: (f64, f64),
+    pub(crate) reading: BlockReading,
 }
 
 #[derive(Clone, Debug)]
@@ -91,8 +124,7 @@ impl Desk {
         password: &str,
         set_aside_restrictions: bool,
     ) -> Result<Summary, Refused> {
-        let bytes = std::fs::read(path)
-            .map_err(|error| format!("{} cannot be read: {error}", path.display()))?;
+        let bytes = read_a_file(path)?;
         let original: Arc<[u8]> = Arc::from(bytes);
         let source = ByteStore::new(SourceId::new(0), Arc::clone(&original));
         if pdf_edit::info::lock(&source, password.as_bytes()) == pdf_edit::info::Lock::Refused {
@@ -125,6 +157,8 @@ impl Desk {
                 revision: 0,
                 arranged: 0,
                 named: BTreeMap::new(),
+                listed: BTreeMap::new(),
+                saved: None,
                 restrictions_set_aside: restricted && set_aside_restrictions,
             },
         );
@@ -142,7 +176,7 @@ impl Desk {
 
     pub fn close(&mut self, handle: &str) -> Result<bool, Refused> {
         let open = self.open.remove(handle).ok_or_else(|| unknown(handle))?;
-        Ok(open.revision != 0 && !open.session.source().same_bytes_as(&open.original))
+        Ok(unsaved(&open))
     }
 
     #[must_use]
@@ -154,7 +188,7 @@ impl Desk {
                     handle.clone(),
                     open.path.clone(),
                     open.session.page_count().unwrap_or(0),
-                    !open.session.source().same_bytes_as(&open.original),
+                    unsaved(open),
                 )
             })
             .collect()
@@ -251,7 +285,7 @@ impl Desk {
         name: &str,
         find: Option<&str>,
         text: &str,
-    ) -> Result<Block, Refused> {
+    ) -> Result<Option<Block>, Refused> {
         let open = self.get(handle)?;
         let (page, index, view) = Self::resolve(open, name)?;
         let (block, parts) =
@@ -259,13 +293,14 @@ impl Desk {
         if let Some(reason) = block.fixed {
             return Err(format!("{name} cannot be rewritten: {reason}"));
         }
+        let deleting = find.is_none() && text.is_empty();
         let Parts {
             rows,
             frame,
             reading,
         } = parts;
         let range = match find {
-            None => whole(&reading),
+            None => crate::finding::whole(&reading),
             Some(find) => {
                 range_within(&reading, find).map_err(|problem| format!("{name}: {problem}"))?
             }
@@ -283,27 +318,44 @@ impl Desk {
             text,
         };
         apply(open, &command)?;
+        if deleting {
+            return Ok(None);
+        }
+        Self::read_back(open, page, block.area)
+    }
+
+    fn read_back(open: &mut Open, page: usize, area: [f64; 4]) -> Result<Option<Block>, Refused> {
         let view = view_of(&mut open.session, page)?;
         let now = (0..view.index.blocks.len())
             .filter_map(|at| read(&view, page, at).map(|(block, _)| block))
-            .filter(|now| overlaps(now.area, block.area))
-            .max_by(|one, other| {
-                overlap(one.area, block.area).total_cmp(&overlap(other.area, block.area))
-            });
-        let now = now.ok_or_else(|| {
-            "the edit was made, but the block could not be read back: read_text the page again"
-                .to_owned()
-        })?;
-        open.named.insert(
-            (page, now.index),
-            Named {
-                revision: open.revision,
-                arranged: open.arranged,
-                text: now.text.clone(),
-                area: now.area,
-            },
-        );
+            .filter(|now| overlaps(now.area, area))
+            .max_by(|one, other| overlap(one.area, area).total_cmp(&overlap(other.area, area)));
+        if let Some(now) = &now {
+            open.named.insert(
+                (page, now.index),
+                Named {
+                    revision: open.revision,
+                    arranged: open.arranged,
+                    text: now.text.clone(),
+                    area: now.area,
+                },
+            );
+        }
         Ok(now)
+    }
+
+    pub fn style(
+        &mut self,
+        handle: &str,
+        name: &str,
+        find: Option<&str>,
+        look: &crate::styling::Look,
+    ) -> Result<Block, Refused> {
+        let open = self.get(handle)?;
+        let (page, index, view) = Self::resolve(open, name)?;
+        let (command, block) = crate::styling::style_command(&view, page, index, find, look)?;
+        apply(open, &command)?;
+        Ok(Self::read_back(open, page, block.area)?.unwrap_or(block))
     }
 
     pub fn place_text(
@@ -316,7 +368,7 @@ impl Desk {
     ) -> Result<(), Refused> {
         let open = self.get(handle)?;
         let view = view_of(&mut open.session, page)?;
-        let frame = to_user(&view, area)?;
+        let frame = to_text_frame(&view, area)?;
         let (family, size, bold, italic, fill) = style;
         let command = Command::PlaceNewText {
             page_index: page,
@@ -330,6 +382,335 @@ impl Desk {
             paragraph: pdf_edit::ParagraphLayout::default(),
         };
         apply(open, &command)
+    }
+
+    pub fn replace_everywhere(
+        &mut self,
+        handle: &str,
+        (search, with): (&crate::finding::Search, &str),
+        (first, last): (usize, usize),
+    ) -> Result<crate::finding::Replaced, Refused> {
+        let open = self.get(handle)?;
+        let mut works = Vec::new();
+        let mut blocks = 0;
+        for page in first..=last {
+            if blocks >= crate::finding::MOST_BLOCKS {
+                break;
+            }
+            let view = view_of(&mut open.session, page)?;
+            let session = &mut open.session;
+            let work =
+                crate::finding::replacements_on(&view, page, (search, with), &mut |command| {
+                    session
+                        .plan(command)
+                        .map(drop)
+                        .map_err(|error| error.to_string())
+                });
+            blocks += work.commands.len();
+            works.push(work);
+        }
+        let replaced = crate::finding::Replaced::of(works);
+        if !replaced.commands.is_empty() {
+            open.session
+                .apply_each(&replaced.commands)
+                .map_err(|error| format!("nothing was replaced: {error}"))?;
+            open.revision += 1;
+            note_any_page_move(open);
+        }
+        Ok(replaced)
+    }
+
+    pub fn mark_text(
+        &mut self,
+        handle: &str,
+        (search, marking): (&crate::finding::Search, crate::marking::Marking),
+        (first, last): (usize, usize),
+    ) -> Result<crate::finding::Replaced, Refused> {
+        let open = self.get(handle)?;
+        let mut works = Vec::new();
+        let mut marks = 0;
+        for page in first..=last {
+            if marks >= crate::marking::MOST_MARKS {
+                break;
+            }
+            let view = view_of(&mut open.session, page)?;
+            let overlay = pdf_cli::page_overlay_view(&view, 1.0)
+                .map_err(|error| format!("page {} cannot be read: {error}", page + 1))?;
+            let work = crate::marking::marks_on(&view, page, &overlay.clusters, (search, marking));
+            marks += work.found;
+            works.push(work);
+        }
+        let marked = crate::finding::Replaced::of(works);
+        if !marked.commands.is_empty() {
+            open.session
+                .apply_each(&marked.commands)
+                .map_err(|error| format!("nothing was marked: {error}"))?;
+            open.revision += 1;
+            note_any_page_move(open);
+        }
+        Ok(marked)
+    }
+
+    pub fn stamp(
+        &mut self,
+        handle: &str,
+        asked: &crate::stamping::Asked,
+    ) -> Result<String, Refused> {
+        let open = self.get(handle)?;
+        let count = open
+            .session
+            .page_count()
+            .map_err(|error| format!("the pages cannot be counted: {error}"))?;
+        let prepared = asked.prepare(count)?;
+        let name = open
+            .path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let around = (count, name.as_str(), &crate::stamping::today());
+        let commands = prepared.commands((around.0, around.1, around.2));
+        open.session.apply_each(&commands).map_err(|error| {
+            error
+                .to_string()
+                .trim_start_matches("cannot type here: ")
+                .to_owned()
+        })?;
+        open.revision += 1;
+        note_any_page_move(open);
+        Ok(prepared.said((around.0, around.1, around.2)))
+    }
+
+    pub fn bookmarks(
+        &mut self,
+        handle: &str,
+        action: &crate::outlining::Action,
+    ) -> Result<String, Refused> {
+        use crate::outlining::{Action, Place, change_for, commands_for_headings};
+        let fonts = self.fonts.clone();
+        let open = self.get(handle)?;
+        let outline_of = |open: &Open| {
+            pdf_edit::outline::read_outline(open.session.source(), open.session.credential())
+                .map_err(|error| format!("the bookmarks cannot be read: {error}"))
+        };
+        let before = outline_of(open)?;
+        let said = match action {
+            Action::List => return Ok(crate::outlining::listing(&before)),
+            Action::FromHeadings { replace } => {
+                if !replace && !before.is_empty() {
+                    return Err(format!(
+                        "the document already has {} bookmark{}: pass replace: true to take them \
+                         out and make new ones from the headings, or add the missing ones one by one",
+                        before.len(),
+                        if before.len() == 1 { "" } else { "s" }
+                    ));
+                }
+                let count = open
+                    .session
+                    .page_count()
+                    .map_err(|error| error.to_string())?;
+                let mut pages = Vec::with_capacity(count);
+                for page in 0..count {
+                    let view = view_of(&mut open.session, page)?;
+                    let blocks = (0..view.index.blocks.len())
+                        .filter_map(|index| read_block(&view, page, index))
+                        .collect();
+                    pages.push((page, blocks));
+                }
+                let headings = crate::outlining::headings_in(&pages);
+                if headings.is_empty() {
+                    return Err(
+                        "no heading was found: the text is all of one size, or none is \
+                                set larger than the rest"
+                            .to_owned(),
+                    );
+                }
+                let first = crate::outlining::first_new_object(
+                    open.session.source(),
+                    open.session.credential(),
+                    fonts,
+                    headings[0].page,
+                )?;
+                let removing: &[pdf_edit::outline::Bookmark] = if *replace { &before } else { &[] };
+                let commands = commands_for_headings(&headings, first, removing);
+                open.session
+                    .apply_each(&commands)
+                    .map_err(|error| format!("no bookmark was made: {error}"))?;
+                open.revision += 1;
+                crate::outlining::said_headings(
+                    &headings,
+                    removing.iter().filter(|book| book.depth == 0).count(),
+                )
+            }
+            other => {
+                let block = match other {
+                    Action::Add {
+                        place: Place::Block(name),
+                        ..
+                    } => {
+                        let (page, index, view) = Self::resolve(open, name)?;
+                        let (block, _) = read(&view, page, index)
+                            .ok_or_else(|| format!("{name} cannot be read as text"))?;
+                        Some((page, block.text))
+                    }
+                    _ => None,
+                };
+                let pages = open
+                    .session
+                    .page_count()
+                    .map_err(|error| error.to_string())?;
+                let change = change_for(&before, other, (block.as_ref(), pages))?;
+                let page_index = match &change {
+                    pdf_edit::outline::Change::Add { page, .. }
+                    | pdf_edit::outline::Change::Retarget { page, .. } => *page,
+                    _ => 0,
+                };
+                let said = crate::outlining::said_change(&change, &before);
+                apply(open, &Command::ChangeOutline { page_index, change })?;
+                said
+            }
+        };
+        let after = outline_of(open)?;
+        Ok(format!("{said}\n{}", crate::outlining::listing(&after)))
+    }
+
+    pub fn bottom_of_everything(
+        &mut self,
+        handle: &str,
+        page: usize,
+    ) -> Result<Option<f64>, Refused> {
+        let open = self.get(handle)?;
+        let view = view_of(&mut open.session, page)?;
+        let overlay = pdf_cli::page_overlay_view(&view, 1.0)
+            .map_err(|error| format!("page {} cannot be read: {error}", page + 1))?;
+        Ok((0..view.index.blocks.len())
+            .filter_map(|index| read_block(&view, page, index))
+            .map(|block| block.area[3])
+            .chain(overlay.objects.iter().map(|object| object.box_pixels[3]))
+            .max_by(f64::total_cmp))
+    }
+
+    pub fn place_picture(
+        &mut self,
+        handle: &str,
+        asked: &crate::pictures::Asked,
+        file: Arc<[u8]>,
+    ) -> Result<[f64; 4], Refused> {
+        let open = self.get(handle)?;
+        let view = view_of(&mut open.session, asked.page)?;
+        let page = page_size_of(&view)?;
+        let area = crate::pictures::fit(asked, crate::pictures::size_of(&file)?, page)?;
+        let placement = crate::pictures::placement(&view, area)?;
+        apply(
+            open,
+            &Command::PlaceNewImage {
+                page_index: asked.page,
+                placement,
+                file,
+            },
+        )?;
+        open.listed.retain(|(page, _), _| *page != asked.page);
+        Ok(area)
+    }
+
+    pub fn objects(
+        &mut self,
+        handle: &str,
+        action: &crate::objects::Action,
+    ) -> Result<String, Refused> {
+        use crate::objects::{Action, Name, listing, object_name, parse_name, the_object};
+        let open = self.get(handle)?;
+        let count = open
+            .session
+            .page_count()
+            .map_err(|error| error.to_string())?;
+        if let Action::List { page } = action {
+            let view = view_of(&mut open.session, *page)?;
+            let overlay = pdf_cli::page_overlay_view(&view, 1.0)
+                .map_err(|error| format!("page {} cannot be read: {error}", page + 1))?;
+            for (index, object) in overlay.objects.iter().enumerate() {
+                open.listed.insert(
+                    (*page, index),
+                    Listed {
+                        arranged: open.arranged,
+                        anchor: object.anchor.clone(),
+                    },
+                );
+            }
+            let blocks: Vec<Block> = (0..view.index.blocks.len())
+                .filter_map(|index| read_block(&view, *page, index))
+                .collect();
+            return Ok(listing(*page, &overlay.objects, &blocks));
+        }
+        let (Action::Move { object, .. }
+        | Action::Resize { object, .. }
+        | Action::Delete { object }) = action
+        else {
+            return Err("that is not a change to an object".to_owned());
+        };
+        let name = parse_name(object)?;
+        if name.page() >= count {
+            return Err(no_page(name.page(), count));
+        }
+        let (command, said) = match name {
+            Name::Object { page, index } => {
+                let listed = open.listed.get(&(page, index)).cloned();
+                if listed
+                    .as_ref()
+                    .is_some_and(|listed| listed.arranged != open.arranged)
+                {
+                    return Err(format!(
+                        "{object} was listed before the pages were moved about, and its page \
+                         number no longer means the page it meant: call list_objects again"
+                    ));
+                }
+                let view = view_of(&mut open.session, page)?;
+                let overlay = pdf_cli::page_overlay_view(&view, 1.0)
+                    .map_err(|error| format!("page {} cannot be read: {error}", page + 1))?;
+                let (_, found) = the_object(
+                    &overlay.objects,
+                    index,
+                    listed.as_ref().map(|listed| listed.anchor.as_str()),
+                    object,
+                )?;
+                crate::objects::command_on_object(&view, page, found, action)?
+            }
+            Name::Block { .. } => {
+                let (page, index, view) = Self::resolve(open, object)?;
+                crate::objects::command_on_block(&view, page, index, action)?
+            }
+        };
+        apply(open, &command)?;
+        let page = name.page();
+        open.listed.retain(|(held, _), _| *held != page);
+        let named = match name {
+            Name::Object { index, .. } => object_name(page, index),
+            Name::Block { .. } => object.clone(),
+        };
+        Ok(format!(
+            "{named}: {said} The page changed, so list_objects (and read_text) again before naming anything on it."
+        ))
+    }
+
+    pub fn look_closer(
+        &mut self,
+        handle: &str,
+        page: usize,
+        region: [f64; 4],
+        dpi: f64,
+    ) -> Result<(Vec<u8>, u32, u32), Refused> {
+        let open = self.get(handle)?;
+        let count = open
+            .session
+            .page_count()
+            .map_err(|error| error.to_string())?;
+        if page >= count {
+            return Err(no_page(page, count));
+        }
+        let view = open
+            .session
+            .page_for_display(page)
+            .map_err(|error| format!("page {} cannot be read: {error}", page + 1))?;
+        region_picture_of(&view, region, dpi)
     }
 
     #[must_use]
@@ -426,11 +807,16 @@ impl Desk {
             return Err(format!("{} is not a file", destination.display()));
         }
         let source = open.session.source().clone();
-        let directory = destination
+        let target = if exists {
+            std::fs::canonicalize(destination).unwrap_or_else(|_| destination.to_owned())
+        } else {
+            destination.to_owned()
+        };
+        let directory = target
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
             .unwrap_or_else(|| Path::new("."));
-        let name = destination
+        let name = target
             .file_name()
             .ok_or_else(|| "a file name is needed".to_owned())?;
         let mut temporary_name = std::ffi::OsString::from(".");
@@ -447,7 +833,10 @@ impl Desk {
                 file.write_all(run)?;
             }
             file.sync_all()?;
-            std::fs::rename(&temporary, destination)
+            if exists && let Ok(held) = std::fs::metadata(&target) {
+                std::fs::set_permissions(&temporary, held.permissions())?;
+            }
+            std::fs::rename(&temporary, &target)
         })();
         if let Err(error) = written {
             let _ = std::fs::remove_file(&temporary);
@@ -459,6 +848,7 @@ impl Desk {
         if same_file {
             open.original = Arc::from(source.to_vec());
         }
+        open.saved = Some(open.revision);
         Ok(source.len() as u64)
     }
 
@@ -493,6 +883,42 @@ pub fn picture_of(view: &PageView, dpi: f64) -> Result<(Vec<u8>, u32, u32), Refu
     Ok((png, canvas.width, canvas.height))
 }
 
+pub fn page_size_of(view: &PageView) -> Result<[f64; 2], Refused> {
+    let device = device(view)?;
+    Ok([f64::from(device.width), f64::from(device.height)])
+}
+
+pub fn region_picture_of(
+    view: &PageView,
+    region: [f64; 4],
+    dpi: f64,
+) -> Result<(Vec<u8>, u32, u32), Refused> {
+    let device = device(view)?;
+    let page = [f64::from(device.width), f64::from(device.height)];
+    let kept = [
+        region[0].clamp(0.0, page[0]),
+        region[1].clamp(0.0, page[1]),
+        region[2].clamp(0.0, page[0]),
+        region[3].clamp(0.0, page[1]),
+    ];
+    let (wide, high) = (kept[2] - kept[0], kept[3] - kept[1]);
+    if wide < 1.0 || high < 1.0 {
+        return Err(format!(
+            "the region [{:.0}, {:.0}, {:.0}, {:.0}] has nothing of the page in it: the page is \
+             {:.0} x {:.0} pt, and a region is [left, top, right, bottom] from the top-left",
+            region[0], region[1], region[2], region[3], page[0], page[1]
+        ));
+    }
+    let scale = (dpi / 72.0).min(MOST_PIXELS / wide.max(high)).max(0.05);
+    let user = to_user(view, kept)?;
+    let (canvas, _) = pdf_cli::render_region_view(view, scale, user)
+        .map_err(|error| format!("it cannot be drawn at that resolution: {error}"))?
+        .ok_or_else(|| "that region touches no pixel of this page".to_owned())?;
+    let png = pdf_edit::png::write((canvas.width, canvas.height), &canvas.to_rgb8(), None)
+        .map_err(str::to_owned)?;
+    Ok((png, canvas.width, canvas.height))
+}
+
 #[must_use]
 pub fn text_of_page(view: &PageView, page: usize, most: usize) -> String {
     let mut text = String::new();
@@ -512,7 +938,7 @@ pub fn text_of_page(view: &PageView, page: usize, most: usize) -> String {
     text
 }
 
-fn view_of(session: &mut Session, page: usize) -> Result<Arc<PageView>, Refused> {
+pub(crate) fn view_of(session: &mut Session, page: usize) -> Result<Arc<PageView>, Refused> {
     let count = session.page_count().map_err(|error| error.to_string())?;
     if page >= count {
         return Err(no_page(page, count));
@@ -553,7 +979,7 @@ fn parse_name(name: &str) -> Result<(usize, usize), Refused> {
     Ok((page - 1, block - 1))
 }
 
-fn device(view: &PageView) -> Result<pdf_render::DeviceTransform, Refused> {
+pub(crate) fn device(view: &PageView) -> Result<pdf_render::DeviceTransform, Refused> {
     pdf_render::DeviceTransform::for_page(
         &view.program.geometry,
         1.0,
@@ -562,7 +988,10 @@ fn device(view: &PageView) -> Result<pdf_render::DeviceTransform, Refused> {
     .map_err(|_| "this page has no size".to_owned())
 }
 
-fn to_shown(device: &pdf_render::DeviceTransform, [x0, y0, x1, y1]: [f64; 4]) -> [f64; 4] {
+pub(crate) fn to_shown(
+    device: &pdf_render::DeviceTransform,
+    [x0, y0, x1, y1]: [f64; 4],
+) -> [f64; 4] {
     let corners = [(x0, y0), (x0, y1), (x1, y0), (x1, y1)]
         .map(|(x, y)| device.matrix.transform(Point { x, y }));
     let left = corners
@@ -586,6 +1015,21 @@ fn to_shown(device: &pdf_render::DeviceTransform, [x0, y0, x1, y1]: [f64; 4]) ->
 
 pub fn to_user(view: &PageView, area: [f64; 4]) -> Result<[f64; 4], Refused> {
     to_user_with(&device(view)?.matrix, area)
+}
+
+pub fn to_text_frame(view: &PageView, area: [f64; 4]) -> Result<[f64; 4], Refused> {
+    to_text_frame_with(&device(view)?.matrix, area)
+}
+
+pub fn to_text_frame_with(shown: &pdf_paint::Matrix, area: [f64; 4]) -> Result<[f64; 4], Refused> {
+    if shown.b.abs() > 1e-9 || shown.c.abs() > 1e-9 {
+        return Err(
+            "this page is shown turned, and new text on a turned page is not laid out \
+                    yet: turn the page back before writing on it"
+                .to_owned(),
+        );
+    }
+    to_user_with(shown, area)
 }
 
 pub fn to_user_with(
@@ -670,7 +1114,7 @@ pub fn shown_sizes(geometries: &[pdf_content::PageGeometry]) -> Vec<[f64; 2]> {
         .collect()
 }
 
-fn read(view: &PageView, page: usize, index: usize) -> Option<(Block, Parts)> {
+pub(crate) fn read(view: &PageView, page: usize, index: usize) -> Option<(Block, Parts)> {
     let semantic = view.index.blocks.get(index)?;
     let rows: Vec<Vec<ClusterRef>> = semantic
         .lines
@@ -729,85 +1173,22 @@ fn read(view: &PageView, page: usize, index: usize) -> Option<(Block, Parts)> {
     ))
 }
 
-fn units(reading: &BlockReading) -> Vec<((usize, usize), String)> {
-    let mut out = Vec::new();
-    for (line, read) in reading.lines.iter().enumerate() {
-        for (stop, cluster) in read.clusters.iter().enumerate() {
-            out.push(((line, stop), cluster.clone()));
-        }
-        let last = line + 1 == reading.lines.len();
-        match read.end {
-            _ if last => {}
-            LineEnd::Wrap => {}
-            LineEnd::WrapWithSpace => out.push(((line, read.clusters.len()), " ".to_owned())),
-            _ => out.push(((line, read.clusters.len()), "\n".to_owned())),
-        }
-    }
-    out
-}
-
-fn whole(reading: &BlockReading) -> BlockRange {
-    let last = reading.lines.len().saturating_sub(1);
-    let stops = reading
-        .lines
-        .get(last)
-        .map_or(0, |line| line.clusters.len());
-    BlockRange::Between {
-        from: (0, 0),
-        to: (last, stops),
-    }
-}
-
 pub fn range_within(reading: &BlockReading, find: &str) -> Result<BlockRange, String> {
     if find.is_empty() {
         return Err("`find` is empty".to_owned());
     }
-    let units = units(reading);
-    let mut text = String::new();
-    let mut starts = Vec::with_capacity(units.len() + 1);
-    for (_, unit) in &units {
-        starts.push(text.len());
-        text.push_str(unit);
-    }
-    starts.push(text.len());
-    let found: Vec<usize> = text.match_indices(find).map(|(at, _)| at).collect();
-    let at = match found[..] {
-        [only] => only,
-        [] => return Err(format!("{find:?} is not in the block")),
-        _ => {
-            return Err(format!(
-                "{find:?} is in the block {} times: give more of the text around it so it is found once",
-                found.len()
-            ));
-        }
-    };
-    let end = at + find.len();
-    let first = starts.iter().position(|start| *start == at);
-    let last = starts.iter().position(|start| *start == end);
-    let (Some(first), Some(last)) = (first, last) else {
-        return Err(format!(
+    let matches = crate::finding::matches_in(reading, &crate::finding::Search::exactly(find));
+    match matches.found[..] {
+        [ref only] if matches.inside_a_character == 0 => Ok(only.range()),
+        [] if matches.inside_a_character == 0 => Err(format!("{find:?} is not in the block")),
+        [] => Err(format!(
             "{find:?} starts or ends inside one character of the block: include the whole character"
-        ));
-    };
-    let position = |unit: usize| -> (usize, usize) {
-        units.get(unit).map_or_else(
-            || {
-                let line = reading.lines.len().saturating_sub(1);
-                (
-                    line,
-                    reading
-                        .lines
-                        .get(line)
-                        .map_or(0, |read| read.clusters.len()),
-                )
-            },
-            |(position, _)| *position,
-        )
-    };
-    Ok(BlockRange::Between {
-        from: position(first),
-        to: position(last),
-    })
+        )),
+        _ => Err(format!(
+            "{find:?} is in the block {} times: give more of the text around it so it is found once",
+            matches.found.len() + matches.inside_a_character
+        )),
+    }
 }
 
 #[cfg(test)]

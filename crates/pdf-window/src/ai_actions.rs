@@ -12,6 +12,8 @@ use pdf_app::wording::{Done, Lang, Message};
 
 use crate::window_state::Window;
 
+mod editing;
+
 const WAIT: Duration = Duration::from_secs(30);
 
 const MOST_SEARCHED: usize = 120;
@@ -75,6 +77,8 @@ pub(crate) struct Tools {
     sent: Option<Sent>,
     landed: Option<Applied>,
     gathering: Option<Gathering>,
+    sweeping: Option<editing::Sweeping>,
+    listed: BTreeMap<(usize, usize), editing::Listed>,
     named: BTreeMap<(usize, usize), Named>,
     arranged: u64,
     renumbered: u64,
@@ -142,6 +146,7 @@ impl Tools {
         self.sent = None;
         self.landed = None;
         self.gathering = None;
+        self.sweeping = None;
         self.allowed_now = None;
         self.allowed_all = None;
         self.question = None;
@@ -170,6 +175,7 @@ impl Tools {
         self.question = None;
         self.waiting = None;
         self.gathering = None;
+        self.sweeping = None;
         self.allowed_now = None;
         self.allowed_all = None;
         self.taking_back = None;
@@ -271,6 +277,7 @@ impl Tools {
         self.queue.pop_front();
         self.waiting = None;
         self.gathering = None;
+        self.sweeping = None;
         self.allowed_now = None;
         self.results.push(result);
     }
@@ -532,13 +539,15 @@ impl Window {
     }
 
     fn decide_about(&self, call: &ToolCall) -> Decision {
+        let request = tools::request::parse(&call.name, &call.arguments).ok();
         let destructive = tools::facts(&call.name).is_some_and(|facts| facts.destructive)
-            || tools::request::parse(&call.name, &call.arguments)
-                .is_ok_and(|request| request.is_destructive());
+            || request.as_ref().is_some_and(Request::is_destructive);
+        let only_reads = request.as_ref().is_some_and(Request::only_reads);
         decide(
             self.ai.mode,
             &call.name,
-            tools::facts(&call.name).map(|facts| (facts.read_only, destructive)),
+            tools::facts(&call.name)
+                .map(|facts| (facts.read_only || only_reads, destructive && !only_reads)),
             self.ai.tools.allowed_for_chat.contains(&call.name),
         )
     }
@@ -567,6 +576,12 @@ impl Window {
             return;
         };
         let now = match (&applied, &sent.request) {
+            (
+                Applied::Changed { .. },
+                Request::ReplaceText {
+                    find: None, text, ..
+                },
+            ) if text.is_empty() => None,
             (Applied::Changed { .. }, Request::ReplaceText { .. }) => sent
                 .was
                 .and_then(|(page, area)| self.block_over(page, area)),
@@ -587,15 +602,31 @@ impl Window {
             } else {
                 sent.changed.clone()
             };
-            if !matches!(sent.request, Request::SetProperties(_)) {
+            if !matches!(
+                sent.request,
+                Request::SetProperties(_) | Request::Bookmarks(_)
+            ) {
                 self.ai.say_the_document_changed(&pages);
             }
         }
         let mut result = result_of(&sent.call.id, (&applied, &sent.request), now.as_ref());
         if let (Some(success), Applied::Changed { .. }) = (&sent.success, &applied) {
             result.text.clone_from(success);
+            if matches!(sent.request, Request::Bookmarks(_)) {
+                result.text.push('\n');
+                result.text.push_str(&self.the_bookmarks_now());
+            }
         }
         self.ai.tools.answer(result);
+    }
+
+    fn the_bookmarks_now(&self) -> String {
+        self.editor
+            .source()
+            .and_then(|source| {
+                pdf_edit::outline::read_outline(source, self.editor.credential()).ok()
+            })
+            .map_or_else(String::new, |now| pdf_agent::outlining::listing(&now))
     }
 
     fn block_over(&self, page: usize, area: [f64; 4]) -> Option<Block> {
@@ -682,6 +713,15 @@ impl Window {
                     pdf_agent::context::plan_said(steps),
                 ))
             }
+            Request::FindAndReplace { .. }
+            | Request::StyleText { .. }
+            | Request::MarkText { .. }
+            | Request::AddStamp(_)
+            | Request::Bookmarks(_)
+            | Request::PlacePicture(_)
+            | Request::Objects(_)
+            | Request::GoToPage { .. }
+            | Request::LookCloser { .. } => self.perform_editing(call, &request, pages),
         }
     }
 
@@ -1109,7 +1149,7 @@ impl Window {
         let Some(leaf) = self.editor.leaf(page).map(std::sync::Arc::clone) else {
             return Performed::NeedPages(vec![page]);
         };
-        let frame = match desk::to_user(&leaf.view, area) {
+        let frame = match desk::to_text_frame(&leaf.view, area) {
             Ok(frame) => frame,
             Err(why) => return Performed::Done(ToolResult::failed(&call.id, why)),
         };
@@ -1450,6 +1490,13 @@ fn result_of(
 
 fn what_changed(request: &Request, page: usize, now: Option<&Block>) -> String {
     match request {
+        Request::ReplaceText {
+            block,
+            find: None,
+            text,
+        } if text.is_empty() => format!(
+            "Deleted {block}. The page changed, so read_text it again before naming a block on it."
+        ),
         Request::ReplaceText { .. } => now.map_or_else(
             || "Done. The block could not be read back: read_text that page again.".to_owned(),
             |block| format!("Done. {} now reads: {}", block.name(), block.text),

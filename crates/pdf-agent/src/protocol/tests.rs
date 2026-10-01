@@ -194,3 +194,27 @@ fn a_tool_answer_carries_structured_content() {
         Some(Json::Object(_))
     ));
 }
+
+#[test]
+fn a_request_id_larger_than_a_double_holds_comes_back_as_it_was_sent() {
+    let mut server = server();
+    let reply = server
+        .answer_line(r#"{"jsonrpc":"2.0","id":9007199254740993,"method":"ping"}"#)
+        .expect("a ping is answered");
+    assert!(reply.contains(r#""id":9007199254740993"#), "{reply}");
+}
+
+#[test]
+fn a_line_that_is_not_utf8_is_answered_with_a_parse_error_and_the_next_line_still_works() {
+    let mut server = server();
+    let reply = server
+        .answer_bytes(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"p\xe9ng\"}")
+        .expect("a bad line is answered");
+    let reply = Json::parse(&reply).expect("the answer is JSON");
+    assert_eq!(error_code(&reply), Some(-32700.0));
+    let next = server
+        .answer_bytes(b"{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"ping\"}\n")
+        .expect("the next line is answered");
+    assert!(next.contains("\"id\":2"), "{next}");
+    assert!(!next.contains("error"), "{next}");
+}

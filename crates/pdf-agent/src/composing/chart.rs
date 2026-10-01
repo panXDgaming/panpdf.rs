@@ -51,6 +51,7 @@ struct Chart {
 fn number(json: &Json) -> Option<f64> {
     match json {
         Json::Number(value) => value.is_finite().then_some(*value),
+        Json::Whole(_) => json.as_f64(),
         Json::Text(text) => text.trim().replace(',', "").parse::<f64>().ok(),
         _ => None,
     }

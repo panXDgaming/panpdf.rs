@@ -5,7 +5,7 @@ use pdf_edit::{Command, ParagraphLayout, PenStroke};
 use pdf_paint::Matrix;
 
 use super::Mark;
-use crate::desk::{steps_in_user_space_with, to_user_with};
+use crate::desk::{steps_in_user_space_with, to_text_frame_with};
 
 struct Surface {
     shown: Matrix,
@@ -72,7 +72,7 @@ pub fn as_commands(
                 style,
             } => {
                 let frame = on(&put_in, *at, page, |surface| {
-                    to_user_with(&surface.shown, *area)
+                    to_text_frame_with(&surface.shown, *area)
                 })?;
                 commands.push(Command::PlaceNewText {
                     page_index: *at,

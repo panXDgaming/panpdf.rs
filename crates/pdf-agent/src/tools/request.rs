@@ -1,7 +1,14 @@
 use std::path::PathBuf;
 
+use crate::finding::Search;
 use crate::json::Json;
+use crate::marking::Marking;
+use crate::styling::Look;
 use crate::tools::{Args, colour, expand};
+
+mod editing;
+
+pub use editing::MOST_DPI;
 
 pub const HANDLE: &str = "doc-1";
 
@@ -124,6 +131,35 @@ pub enum Request {
     UpdatePlan {
         steps: Vec<PlanStep>,
     },
+    FindAndReplace {
+        search: Search,
+        with: String,
+        first: Option<usize>,
+        last: Option<usize>,
+    },
+    StyleText {
+        block: String,
+        find: Option<String>,
+        look: Look,
+    },
+    MarkText {
+        search: Search,
+        marking: Marking,
+        first: Option<usize>,
+        last: Option<usize>,
+    },
+    AddStamp(crate::stamping::Asked),
+    Bookmarks(crate::outlining::Action),
+    PlacePicture(crate::pictures::Asked),
+    Objects(crate::objects::Action),
+    GoToPage {
+        page: usize,
+    },
+    LookCloser {
+        page: usize,
+        region: [f64; 4],
+        dpi: f64,
+    },
 }
 
 impl Request {
@@ -138,24 +174,45 @@ impl Request {
                 | Self::ListFonts { .. }
                 | Self::AskPerson { .. }
                 | Self::UpdatePlan { .. }
-        )
+                | Self::GoToPage { .. }
+                | Self::LookCloser { .. }
+        ) || match self {
+            Self::Bookmarks(action) => action.only_reads(),
+            Self::Objects(action) => action.only_reads(),
+            _ => false,
+        }
     }
 
     #[must_use]
     pub const fn is_destructive(&self) -> bool {
-        matches!(
-            self,
-            Self::DeletePages(_) | Self::WritePages { replace: true, .. }
-        )
+        match self {
+            Self::DeletePages(_) | Self::WritePages { replace: true, .. } => true,
+            Self::Bookmarks(action) => action.is_destructive(),
+            Self::Objects(action) => action.is_destructive(),
+            _ => false,
+        }
     }
 
     #[must_use]
-    pub const fn counts_pages(&self) -> bool {
+    pub fn counts_pages(&self) -> bool {
         match self {
-            Self::ReadText { first, last } | Self::FindText { first, last, .. } => {
-                first.is_some() || last.is_some()
-            }
-            Self::RenderPage { .. }
+            Self::ReadText { first, last }
+            | Self::FindText { first, last, .. }
+            | Self::FindAndReplace { first, last, .. }
+            | Self::MarkText { first, last, .. } => first.is_some() || last.is_some(),
+            Self::AddStamp(asked) => !asked.pages.trim().is_empty(),
+            Self::Bookmarks(action) => matches!(
+                action,
+                crate::outlining::Action::Add {
+                    place: crate::outlining::Place::Page(_),
+                    ..
+                } | crate::outlining::Action::Retarget { .. }
+            ),
+            Self::Objects(action) => matches!(action, crate::objects::Action::List { .. }),
+            Self::PlacePicture(_)
+            | Self::GoToPage { .. }
+            | Self::LookCloser { .. }
+            | Self::RenderPage { .. }
             | Self::AddText { .. }
             | Self::WritePages { .. }
             | Self::AddBlankPage { .. }
@@ -171,7 +228,8 @@ impl Request {
             | Self::Undo
             | Self::Redo
             | Self::AskPerson { .. }
-            | Self::UpdatePlan { .. } => false,
+            | Self::UpdatePlan { .. }
+            | Self::StyleText { .. } => false,
         }
     }
 }
@@ -259,6 +317,17 @@ pub(crate) fn parse_arguments(name: &str, args: &Args) -> Result<Request, String
         "redo" => Ok(Request::Redo),
         "ask_person" => ask_person(args),
         "update_plan" => update_plan(args),
+        "find_and_replace" => editing::find_and_replace(args),
+        "style_text" => editing::style_text(args),
+        "mark_text" => editing::mark_text(args),
+        "add_stamp" => editing::add_stamp(args),
+        "bookmarks" => editing::bookmarks(args),
+        "place_picture" => editing::place_picture(args),
+        "objects" => editing::objects(args),
+        "go_to_page" => Ok(Request::GoToPage {
+            page: args.page("page")?,
+        }),
+        "look_closer" => editing::look_closer(args),
         _ => Err(format!("there is no tool called {name}")),
     }
 }
@@ -357,7 +426,7 @@ fn page_size(args: &Args) -> Result<Option<[f64; 2]>, String> {
     }
 }
 
-fn number_between(
+pub(crate) fn number_between(
     args: &Args,
     key: &str,
     (least, most): (f64, f64),
@@ -371,7 +440,7 @@ fn number_between(
         .ok_or_else(|| format!("`{key}` is a number from {least} to {most}, in points"))
 }
 
-fn optional_page(args: &Args, key: &str) -> Result<Option<usize>, String> {
+pub(crate) fn optional_page(args: &Args, key: &str) -> Result<Option<usize>, String> {
     if args.has(key) {
         args.page(key).map(Some)
     } else {

@@ -158,3 +158,97 @@ fn every_part_of_an_arriving_answer_is_read() {
         assert_eq!(read.len(), 1, "{mark:?} read as {read:?}");
     }
 }
+
+fn depth_of(blocks: &[super::tree::Block]) -> usize {
+    use super::tree::Block;
+    blocks
+        .iter()
+        .map(|block| match block {
+            Block::Quote { blocks } => 1 + depth_of(blocks),
+            Block::List(list) => {
+                1 + list
+                    .items
+                    .iter()
+                    .map(|item| depth_of(item))
+                    .max()
+                    .unwrap_or(0)
+            }
+            _ => 0,
+        })
+        .max()
+        .unwrap_or(0)
+}
+
+#[test]
+fn a_reply_of_fifty_thousand_open_brackets_is_read_as_the_text_it_is_and_in_good_time() {
+    let text = "[".repeat(50_000);
+    let found = super::inlines::inlines(&text);
+    let said: String = found.iter().map(super::tree::Inline::plain).collect();
+    assert_eq!(
+        said, text,
+        "no link was found, so every bracket is a letter"
+    );
+    let angles = "<a ".repeat(50_000);
+    let said: String = super::inlines::inlines(&angles)
+        .iter()
+        .map(super::tree::Inline::plain)
+        .collect();
+    assert_eq!(said, angles);
+    let mut ticks = String::new();
+    for count in 1..400 {
+        ticks.push('a');
+        ticks.push_str(&"`".repeat(count));
+    }
+    let said: String = super::inlines::inlines(&ticks)
+        .iter()
+        .map(super::tree::Inline::plain)
+        .collect();
+    assert_eq!(
+        said.len(),
+        ticks.len(),
+        "backticks that close nothing are letters"
+    );
+    let stars = "a* ".repeat(40_000);
+    let found = super::inlines::inlines(&stars);
+    assert!(!found.is_empty());
+}
+
+#[test]
+fn links_nested_past_what_is_followed_are_text_and_ordinary_ones_still_link() {
+    let nested = format!("{}x{}", "[".repeat(5_000), "](u)".repeat(5_000));
+    let found = super::inlines::inlines(&nested);
+    assert!(
+        !found.is_empty(),
+        "it was read, and the stack is still there"
+    );
+    let ordinary = super::inlines::inlines("see [the docs](https://example.com/a) now");
+    assert!(
+        ordinary.iter().any(|inline| matches!(
+            inline,
+            super::tree::Inline::Link { to, .. } if to == "https://example.com/a"
+        )),
+        "negative control: an ordinary link is found: {ordinary:?}"
+    );
+    let two = super::inlines::inlines("[a [b](u2)](u1)");
+    assert!(
+        two.iter()
+            .any(|inline| matches!(inline, super::tree::Inline::Link { .. })),
+        "a link inside a link's words is still read: {two:?}"
+    );
+}
+
+#[test]
+fn quotes_and_lists_nested_a_hundred_thousand_deep_are_read_to_a_depth_and_the_rest_is_text() {
+    let quotes = format!("{} deep", ">".repeat(100_000));
+    let blocks = super::blocks::blocks(&quotes);
+    assert!(depth_of(&blocks) <= 17, "{}", depth_of(&blocks));
+    let lists = format!("{}end", "- ".repeat(30_000));
+    let blocks = super::blocks::blocks(&lists);
+    assert!(depth_of(&blocks) <= 17, "{}", depth_of(&blocks));
+    let small = super::blocks::blocks("> a\n> > b\n\n- one\n  - two\n");
+    assert_eq!(
+        depth_of(&small),
+        2,
+        "negative control: ordinary nesting is read"
+    );
+}

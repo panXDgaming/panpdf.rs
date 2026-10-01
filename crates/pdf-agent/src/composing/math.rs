@@ -645,7 +645,44 @@ fn attach(base: Node, up: bool, script: Node) -> Node {
     }
 }
 
+pub const MOST_LETTERS: usize = 20_000;
+
+const MOST_NESTING: usize = 48;
+
+const MOST_COMMANDS: usize = 500;
+
+#[must_use]
+pub fn too_tangled(latex: &str) -> bool {
+    let mut depth: usize = 0;
+    let mut commands = 0;
+    for (counted, letter) in latex.chars().enumerate() {
+        if counted >= MOST_LETTERS {
+            return true;
+        }
+        match letter {
+            '{' => {
+                depth += 1;
+                if depth > MOST_NESTING {
+                    return true;
+                }
+            }
+            '}' => depth = depth.saturating_sub(1),
+            '\\' => {
+                commands += 1;
+                if commands > MOST_COMMANDS {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
 fn read(latex: &str) -> Node {
+    if too_tangled(latex) {
+        return Node::Row(vec![atom(latex.trim(), Class::Upright)]);
+    }
     Reader::new(latex).row(Stop::End)
 }
 
@@ -1480,6 +1517,12 @@ pub(crate) fn set_out(
     space_before: f64,
 ) -> Result<(), String> {
     let size = style.size;
+    if too_tangled(latex) {
+        return Err(format!(
+            "a formula is nested more than {MOST_NESTING} braces deep, holds more than \
+             {MOST_COMMANDS} commands or is longer than {MOST_LETTERS} letters: write it shorter"
+        ));
+    }
     let node = read(latex);
     let laid = {
         let setter = Setter {
@@ -1514,6 +1557,34 @@ pub(crate) fn set_out(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_formula_nested_or_run_on_without_end_is_left_as_written_not_followed_into_the_stack() {
+        let braces = format!("{}x{}", "{".repeat(50_000), "}".repeat(50_000));
+        assert!(too_tangled(&braces));
+        assert_eq!(
+            linear(&braces),
+            braces,
+            "shown as it was written, and quickly"
+        );
+        let roots = r"\sqrt".repeat(20_000);
+        assert!(
+            too_tangled(&roots),
+            "a chain of commands with no braces at all"
+        );
+        assert_eq!(linear(&roots), roots.trim());
+        let fractions = format!("{}1{}", r"\frac{".repeat(1_000), "}{2}".repeat(1_000));
+        assert!(too_tangled(&fractions));
+        assert!(
+            too_tangled(&"x".repeat(30_000)),
+            "a formula of 30,000 letters"
+        );
+        assert!(
+            !too_tangled(r"\frac{a^2 + b^2}{\sqrt{c}}"),
+            "negative control: an ordinary formula"
+        );
+        assert_eq!(linear(r"x^2"), "x²");
+    }
 
     #[test]
     fn mathematics_in_a_line_reads_as_it_is_meant() {

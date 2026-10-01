@@ -123,11 +123,22 @@ same engine, driven by an AI agent instead of a person. It depends on
 proved and undoable in the same history -- an agent can do nothing a person
 at the window could not, and is refused in the same words. It speaks MCP
 (JSON-RPC over standard input and output) with a JSON reader of its own, and
-no registry crate. Nothing depends on it.
+no registry crate. Only `pdf-app` and `pdf-window` depend on it, and only on
+targets other than the browser.
 
-The window depends on it for one thing only: `pdf_agent::connect`, which is
-how the AI panel reaches a model. It never speaks MCP itself, and the desk
-that holds an agent's open documents is not reached from UI code.
+The window uses it for more than the connection to a model
+(`pdf_agent::connect`): the table of tools and the typed request each one
+reads as (`tools`), the reading of a page into named blocks (`desk::read_block`),
+the plan, the history of a chat, and the page tools the window and the MCP server
+share. `finding`, `marking`, `styling`, `stamping`, `outlining`, `objects` and
+`pictures` each turn what a model asked for into `pdf_edit::Command`s from a
+page's `PageView`, so that the window applies them through
+`Editor::begin_command` and `begin_commands`, and the desk applies them to its
+own session, each call one undo step. A change that touches several blocks of
+one page is applied last block first, because a block's place in the page's
+content is its offset in the stream, and the engine refuses a command whose
+offset an earlier one in the same step has moved. The window never speaks MCP
+itself.
 
 Where a line of text ends is `pdf-edit`'s `layout`, and nothing else's:
 `breaks` answers where a line *may* end, `lines` where lines *do* end given
@@ -341,7 +352,7 @@ change here; an edge added needs a reason above.
 | `pdf-app` | `pdf-agent`, `pdf-bytes`, `pdf-cli`, `pdf-content`, `pdf-convert` (its catalogue only, which builds for the browser), `pdf-edit`, `pdf-heap`, `pdf-ocr`, `pdf-paint`, `pdf-print`, `pdf-render`, `pdf-semantics`, `pdf-session`, `pdf-syntax` |
 | `pdf-window` | `pdf-agent`, `pdf-app`, `pdf-bytes`, `pdf-cli`, `pdf-content`, `pdf-convert` (with its `run` feature, on targets other than the browser), `pdf-edit`, `pdf-heap`, `pdf-ocr`, `pdf-paint`, `pdf-print`, `pdf-render`, `pdf-semantics`, `pdf-session`, `pdf-syntax` |
 | `pdf-desktop` | `pdf-app`, `pdf-bytes`, `pdf-cli`, `pdf-edit`, `pdf-semantics`, `pdf-session`, `pdf-window` |
-| `pdf-agent` | `pdf-bytes`, `pdf-cli`, `pdf-content`, `pdf-edit`, `pdf-paint`, `pdf-render`, `pdf-semantics`, `pdf-session` |
+| `pdf-agent` | `pdf-bytes`, `pdf-cli`, `pdf-content`, `pdf-edit`, `pdf-paint`, `pdf-render`, `pdf-semantics`, `pdf-session`, `pdf-syntax` (only to name the bookmarks of a table of contents before they are written, so that the whole table is one change) |
 
 A crate in `convert/` may depend on the engine crates `pdf-bytes`,
 `pdf-syntax`, `pdf-security`, `pdf-font`, `pdf-content`, `pdf-paint`,

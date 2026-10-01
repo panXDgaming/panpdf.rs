@@ -7,6 +7,8 @@ const VERSION: u32 = 1;
 
 const MOST_KEPT_TEXT_BYTES: usize = 100_000;
 
+const MOST_KEPT_RESULT_CHARACTERS: usize = 20_000;
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Chat {
     pub id: String,
@@ -106,7 +108,7 @@ pub fn write_turns(chat: &Chat, turns: &[Turn]) -> String {
 
 #[must_use]
 pub fn read(text: &str) -> Option<Chat> {
-    let value = Json::parse(text).ok()?;
+    let value = Json::parse_stored(text).ok()?;
     let version = value.get("version")?.as_count()?;
     if version > VERSION as usize {
         return None;
@@ -272,10 +274,19 @@ fn call_in(value: &Json) -> Option<ToolCall> {
     })
 }
 
+fn kept_result(text: &str) -> String {
+    if text.chars().count() <= MOST_KEPT_RESULT_CHARACTERS {
+        return text.to_owned();
+    }
+    let mut kept: String = text.chars().take(MOST_KEPT_RESULT_CHARACTERS).collect();
+    kept.push_str("\n(cut short when this chat was saved: ask again for the rest)");
+    kept
+}
+
 fn result_out(result: &ToolResult) -> Json {
     Json::object([
         ("call_id", Json::text(&result.call_id)),
-        ("text", Json::text(&result.text)),
+        ("text", Json::text(kept_result(&result.text))),
         ("is_error", Json::Bool(result.is_error)),
     ])
 }

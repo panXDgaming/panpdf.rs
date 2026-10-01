@@ -165,6 +165,15 @@ mod words {
                 after: Some(markdown.clone()),
                 ..plain()
             },
+            Request::FindAndReplace { search, with, .. } => Shown {
+                before: Some(search.wanted.clone()),
+                after: Some(with.clone()),
+                ..plain()
+            },
+            Request::AddStamp(asked) => Shown {
+                after: asked.wording.clone(),
+                ..plain()
+            },
             _ => plain(),
         }
     }
@@ -327,6 +336,197 @@ mod words {
             Request::UpdatePlan { steps } => {
                 format!("Show you its plan, {} steps", steps.len())
             }
+            Request::FindAndReplace {
+                search,
+                with,
+                first,
+                last,
+            } => {
+                let find = clip(&search.wanted);
+                let with = clip(with);
+                let how = match (search.match_case, search.whole_words) {
+                    (true, true) => ", matching capitals, whole words only",
+                    (true, false) => ", matching capitals",
+                    (false, true) => ", whole words only",
+                    (false, false) => "",
+                };
+                let range = pages_range(*first, *last);
+                if with.is_empty() {
+                    format!("Delete every \u{201c}{find}\u{201d}{range}{how}")
+                } else {
+                    format!(
+                        "Replace every \u{201c}{find}\u{201d} with \u{201c}{with}\u{201d}{range}{how}"
+                    )
+                }
+            }
+            Request::StyleText { block, find, look } => {
+                let words = look.words();
+                match find {
+                    Some(find) => format!(
+                        "Change how \u{201c}{}\u{201d} in block {block} looks: {words}",
+                        clip(find)
+                    ),
+                    None => format!("Change how block {block} looks: {words}"),
+                }
+            }
+            Request::MarkText {
+                search,
+                marking,
+                first,
+                last,
+            } => {
+                let doing = match marking.how {
+                    pdf_agent::marking::How::Highlight => "Highlight",
+                    pdf_agent::marking::How::Underline => "Underline",
+                    pdf_agent::marking::How::StrikeThrough => "Strike through",
+                };
+                format!(
+                    "{doing} every \u{201c}{}\u{201d}{}",
+                    clip(&search.wanted),
+                    pages_range(*first, *last)
+                )
+            }
+            Request::AddStamp(asked) => stamp_sentence(asked),
+            Request::Bookmarks(action) => bookmark_sentence(action),
+            Request::PlacePicture(asked) => {
+                let from = match &asked.source {
+                    pdf_agent::pictures::Source::Attachment(None) => {
+                        "the picture attached to this chat".to_owned()
+                    }
+                    pdf_agent::pictures::Source::Attachment(Some(number)) => {
+                        format!("attached picture {number}")
+                    }
+                    pdf_agent::pictures::Source::File(path) => {
+                        format!("the file {}", path.display())
+                    }
+                };
+                format!(
+                    "Put {from} on page {} at left {:.0}, top {:.0}",
+                    asked.page + 1,
+                    asked.left,
+                    asked.top
+                )
+            }
+            Request::Objects(action) => object_sentence(action),
+            Request::GoToPage { page } => format!("Show page {} in the window", page + 1),
+            Request::LookCloser { page, region, .. } => format!(
+                "Look closer at the part [{:.0}, {:.0}, {:.0}, {:.0}] of page {}",
+                region[0],
+                region[1],
+                region[2],
+                region[3],
+                page + 1
+            ),
+        }
+    }
+
+    fn pages_range(first: Option<usize>, last: Option<usize>) -> String {
+        match (first, last) {
+            (None, None) => " in the whole document".to_owned(),
+            (Some(first), Some(last)) if first == last => format!(" on page {}", first + 1),
+            (first, last) => format!(
+                " on pages {} to {}",
+                first.unwrap_or(0) + 1,
+                last.map_or_else(|| "the last".to_owned(), |last| (last + 1).to_string())
+            ),
+        }
+    }
+
+    fn stamp_sentence(asked: &pdf_agent::stamping::Asked) -> String {
+        use pdf_agent::stamping::{Kind, spot_as_str};
+        let what = match asked.kind {
+            Kind::PageNumbers => "page numbers",
+            Kind::HeaderFooter => "a header or footer",
+            Kind::Watermark => "a watermark",
+        };
+        let place = asked.spot.map_or_else(String::new, |spot| {
+            format!(" at {}", spot_as_str(spot).replace('_', " "))
+        });
+        let which = if asked.pages.trim().is_empty() {
+            "every page".to_owned()
+        } else {
+            format!("pages {}", asked.pages.trim())
+        };
+        let only = match asked.only {
+            pdf_edit::stamp::Only::Every => "",
+            pdf_edit::stamp::Only::Odd => ", the odd ones only",
+            pdf_edit::stamp::Only::Even => ", the even ones only",
+        };
+        let wording = asked
+            .wording
+            .as_deref()
+            .map_or_else(String::new, |wording| {
+                format!(": \u{201c}{}\u{201d}", clip(wording))
+            });
+        format!("Put {what}{place} on {which}{only}{wording}")
+    }
+
+    fn bookmark_sentence(action: &pdf_agent::outlining::Action) -> String {
+        use pdf_agent::outlining::{Action, Place};
+        match action {
+            Action::List => "List the bookmarks".to_owned(),
+            Action::Add { title, place, .. } => {
+                let title = title.as_deref().map_or_else(String::new, |title| {
+                    format!(" \u{201c}{}\u{201d}", clip(title))
+                });
+                match place {
+                    Place::Page(page) => format!("Add the bookmark{title} for page {}", page + 1),
+                    Place::Block(block) => format!("Add the bookmark{title} for block {block}"),
+                }
+            }
+            Action::Rename { bookmark, title } => {
+                format!(
+                    "Rename bookmark {bookmark} to \u{201c}{}\u{201d}",
+                    clip(title)
+                )
+            }
+            Action::Retarget { bookmark, page } => {
+                format!("Make bookmark {bookmark} go to page {}", page + 1)
+            }
+            Action::Move { bookmark, step } => {
+                format!("Move bookmark {bookmark} {}", step.as_str())
+            }
+            Action::Delete { bookmark } => format!("Delete bookmark {bookmark}"),
+            Action::FromHeadings { replace: false } => {
+                "Make a table of contents from the headings".to_owned()
+            }
+            Action::FromHeadings { replace: true } => {
+                "Make a table of contents from the headings, taking out the bookmarks there are"
+                    .to_owned()
+            }
+        }
+    }
+
+    fn object_sentence(action: &pdf_agent::objects::Action) -> String {
+        use pdf_agent::objects::Action;
+        match action {
+            Action::List { page } => format!(
+                "List the pictures, drawings and text blocks of page {}",
+                page + 1
+            ),
+            Action::Move { object, left, top } => {
+                let at = match (left, top) {
+                    (Some(left), Some(top)) => format!("left {left:.0}, top {top:.0}"),
+                    (Some(left), None) => format!("left {left:.0}"),
+                    (None, Some(top)) => format!("top {top:.0}"),
+                    (None, None) => "a new place".to_owned(),
+                };
+                format!("Move {object} to {at}")
+            }
+            Action::Resize {
+                object,
+                width,
+                height,
+            } => {
+                let size = match (width, height) {
+                    (Some(width), Some(height)) => format!("{width:.0} x {height:.0} pt"),
+                    (Some(width), None) => format!("{width:.0} pt wide"),
+                    (None, Some(height)) => format!("{height:.0} pt tall"),
+                    (None, None) => "a new size".to_owned(),
+                };
+                format!("Resize {object} to {size}")
+            }
+            Action::Delete { object } => format!("Delete {object}"),
         }
     }
 

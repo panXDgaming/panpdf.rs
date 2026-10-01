@@ -1,10 +1,51 @@
+use std::cell::Cell;
+
 use super::tree::Inline;
+
+const MOST_LOOKING_AHEAD: usize = 400_000;
+
+const MOST_NESTING: usize = 8;
+
+struct Limits {
+    budget: Cell<usize>,
+    depth: usize,
+}
+
+impl Limits {
+    fn spend(&self) -> bool {
+        let left = self.budget.get();
+        if left == 0 {
+            return false;
+        }
+        self.budget.set(left - 1);
+        true
+    }
+
+    fn inside(&self) -> Self {
+        Self {
+            budget: Cell::new(self.budget.get()),
+            depth: self.depth + 1,
+        }
+    }
+
+    fn take_back(&self, inner: &Self) {
+        self.budget.set(inner.budget.get().min(self.budget.get()));
+    }
+}
 
 #[must_use]
 pub fn inlines(text: &str) -> Vec<Inline> {
+    let limits = Limits {
+        budget: Cell::new(MOST_LOOKING_AHEAD),
+        depth: 0,
+    };
+    inlines_within(text, &limits)
+}
+
+fn inlines_within(text: &str, limits: &Limits) -> Vec<Inline> {
     let letters: Vec<char> = text.chars().collect();
-    let mut pieces = scan(&letters);
-    emphasis(&mut pieces);
+    let mut pieces = scan(&letters, limits);
+    emphasis(&mut pieces, limits);
     gather(pieces)
 }
 
@@ -32,7 +73,7 @@ fn marks(letter: char) -> bool {
     clippy::too_many_lines,
     reason = "one arm per kind of mark, read as a table"
 )]
-fn scan(letters: &[char]) -> Vec<Piece> {
+fn scan(letters: &[char], limits: &Limits) -> Vec<Piece> {
     let mut out: Vec<Piece> = Vec::new();
     let mut text = String::new();
     let mut at = 0;
@@ -58,7 +99,7 @@ fn scan(letters: &[char]) -> Vec<Piece> {
                     .iter()
                     .take_while(|letter| **letter == '`')
                     .count();
-                if let Some(close) = closing_ticks(letters, at + count, count) {
+                if let Some(close) = closing_ticks(letters, at + count, count, limits) {
                     push(&mut out, &mut text);
                     let inside: String = letters[at + count..close].iter().collect();
                     out.push(Piece::Done(Inline::Code(tidy_code(&inside))));
@@ -67,7 +108,7 @@ fn scan(letters: &[char]) -> Vec<Piece> {
                 }
             }
             '<' => {
-                if let Some(close) = letters[at..].iter().position(|letter| *letter == '>') {
+                if let Some(close) = next_closing_angle(letters, at, limits) {
                     let inside: String = letters[at + 1..at + close].iter().collect();
                     if looks_like_a_link(&inside) {
                         push(&mut out, &mut text);
@@ -81,7 +122,7 @@ fn scan(letters: &[char]) -> Vec<Piece> {
                 }
             }
             '!' if letters.get(at + 1) == Some(&'[') => {
-                if let Some((node, used)) = link(letters, at + 1, true) {
+                if let Some((node, used)) = link(letters, at + 1, true, limits) {
                     push(&mut out, &mut text);
                     out.push(Piece::Done(node));
                     at = used;
@@ -89,7 +130,7 @@ fn scan(letters: &[char]) -> Vec<Piece> {
                 }
             }
             '[' => {
-                if let Some((node, used)) = link(letters, at, false) {
+                if let Some((node, used)) = link(letters, at, false, limits) {
                     push(&mut out, &mut text);
                     out.push(Piece::Done(node));
                     at = used;
@@ -159,9 +200,26 @@ fn flanking(mark: char, before: Option<char>, after: Option<char>) -> (bool, boo
     }
 }
 
-fn closing_ticks(letters: &[char], from: usize, count: usize) -> Option<usize> {
+fn next_closing_angle(letters: &[char], from: usize, limits: &Limits) -> Option<usize> {
     let mut at = from;
     while at < letters.len() {
+        if !limits.spend() {
+            return None;
+        }
+        if letters[at] == '>' {
+            return Some(at - from);
+        }
+        at += 1;
+    }
+    None
+}
+
+fn closing_ticks(letters: &[char], from: usize, count: usize, limits: &Limits) -> Option<usize> {
+    let mut at = from;
+    while at < letters.len() {
+        if !limits.spend() {
+            return None;
+        }
         if letters[at] == '`' {
             let run = letters[at..]
                 .iter()
@@ -192,12 +250,15 @@ fn looks_like_a_link(inside: &str) -> bool {
         && (inside.contains("://") || inside.starts_with("mailto:") || inside.contains('@'))
 }
 
-fn link(letters: &[char], at: usize, picture: bool) -> Option<(Inline, usize)> {
-    let close = balanced(letters, at, '[', ']')?;
+fn link(letters: &[char], at: usize, picture: bool, limits: &Limits) -> Option<(Inline, usize)> {
+    if limits.depth >= MOST_NESTING {
+        return None;
+    }
+    let close = balanced(letters, at, ('[', ']'), limits)?;
     if letters.get(close + 1) != Some(&'(') {
         return None;
     }
-    let end = balanced(letters, close + 1, '(', ')')?;
+    let end = balanced(letters, close + 1, ('(', ')'), limits)?;
     let text: String = letters[at + 1..close].iter().collect();
     let target: String = letters[close + 2..end].iter().collect();
     let to = target
@@ -205,7 +266,9 @@ fn link(letters: &[char], at: usize, picture: bool) -> Option<(Inline, usize)> {
         .map_or(target.as_str(), |(address, _)| address)
         .trim()
         .to_owned();
-    let inside = inlines(&text);
+    let deeper = limits.inside();
+    let inside = inlines_within(&text, &deeper);
+    limits.take_back(&deeper);
     Some((
         if picture {
             Inline::Image {
@@ -219,13 +282,21 @@ fn link(letters: &[char], at: usize, picture: bool) -> Option<(Inline, usize)> {
     ))
 }
 
-fn balanced(letters: &[char], from: usize, open: char, shut: char) -> Option<usize> {
+fn balanced(
+    letters: &[char],
+    from: usize,
+    (open, shut): (char, char),
+    limits: &Limits,
+) -> Option<usize> {
     if letters.get(from) != Some(&open) {
         return None;
     }
     let mut depth = 0;
     let mut at = from;
     while at < letters.len() {
+        if !limits.spend() {
+            return None;
+        }
         match letters[at] {
             '\\' => at += 1,
             letter if letter == open => depth += 1,
@@ -242,7 +313,7 @@ fn balanced(letters: &[char], from: usize, open: char, shut: char) -> Option<usi
     None
 }
 
-fn emphasis(pieces: &mut Vec<Piece>) {
+fn emphasis(pieces: &mut Vec<Piece>, limits: &Limits) {
     let mut at = 0;
     while at < pieces.len() {
         let Piece::Run {
@@ -260,7 +331,7 @@ fn emphasis(pieces: &mut Vec<Piece>) {
             at += 1;
             continue;
         }
-        let Some(open) = look_back(pieces, at, mark, count, closer_opens) else {
+        let Some(open) = look_back(pieces, at, (mark, count, closer_opens), limits) else {
             at += 1;
             continue;
         };
@@ -294,12 +365,14 @@ fn emphasis(pieces: &mut Vec<Piece>) {
 fn look_back(
     pieces: &[Piece],
     to: usize,
-    mark: char,
-    closer: usize,
-    closer_opens: bool,
+    (mark, closer, closer_opens): (char, usize, bool),
+    limits: &Limits,
 ) -> Option<usize> {
     let mut back = to;
     while back > 0 {
+        if !limits.spend() {
+            return None;
+        }
         back -= 1;
         let Piece::Run {
             mark: theirs,

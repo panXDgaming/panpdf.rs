@@ -83,7 +83,13 @@ fn a_file_of_another_kind_is_refused_by_name() {
     );
     assert!(!looks_like_pdf(b"PK\x03\x04rest of a zip"));
     assert!(looks_like_pdf(b"%PDF-1.7\n"));
-    assert!(looks_like_pdf(b"junk junk junk\n%PDF-1.4\n"));
+    assert!(looks_like_pdf(
+        b"junk junk junk\n%PDF-1.4\n%\xe2\xe3\xcf\xd3\n"
+    ));
+    assert!(
+        !looks_like_pdf(b"junk junk junk\n%PDF-1.4\n"),
+        "negative control: all text, so a note about the header and not a file with one"
+    );
 }
 
 #[test]
@@ -154,18 +160,17 @@ fn a_sound_file_is_refused_by_name() {
     clippy::cast_possible_truncation,
     reason = "a fixture's own tiny sizes and offsets, always well under u32::MAX"
 )]
-fn office_zip(path: &str, xml: &str) -> Vec<u8> {
+fn zip_with(path: &str, data: &[u8], (method, whole): (u16, usize)) -> Vec<u8> {
     let name = path.as_bytes();
-    let data = xml.as_bytes();
     let mut out = Vec::new();
     let local_at = out.len();
     out.extend_from_slice(b"PK\x03\x04");
     out.extend_from_slice(&[0; 4]);
-    out.extend_from_slice(&[0; 2]);
+    out.extend_from_slice(&method.to_le_bytes());
     out.extend_from_slice(&[0; 4]);
     out.extend_from_slice(&[0; 4]);
     out.extend_from_slice(&(data.len() as u32).to_le_bytes());
-    out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    out.extend_from_slice(&(whole as u32).to_le_bytes());
     out.extend_from_slice(&(name.len() as u16).to_le_bytes());
     out.extend_from_slice(&[0; 2]);
     out.extend_from_slice(name);
@@ -174,11 +179,11 @@ fn office_zip(path: &str, xml: &str) -> Vec<u8> {
     out.extend_from_slice(b"PK\x01\x02");
     out.extend_from_slice(&[0; 4]);
     out.extend_from_slice(&[0; 2]);
-    out.extend_from_slice(&[0; 2]);
+    out.extend_from_slice(&method.to_le_bytes());
     out.extend_from_slice(&[0; 4]);
     out.extend_from_slice(&[0; 4]);
     out.extend_from_slice(&(data.len() as u32).to_le_bytes());
-    out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    out.extend_from_slice(&(whole as u32).to_le_bytes());
     out.extend_from_slice(&(name.len() as u16).to_le_bytes());
     out.extend_from_slice(&[0; 6]);
     out.extend_from_slice(&[0; 4]);
@@ -194,6 +199,16 @@ fn office_zip(path: &str, xml: &str) -> Vec<u8> {
     out.extend_from_slice(&(cd_at as u32).to_le_bytes());
     out.extend_from_slice(&[0; 2]);
     out
+}
+
+fn office_zip(path: &str, xml: &str) -> Vec<u8> {
+    zip_with(path, xml.as_bytes(), (0, xml.len()))
+}
+
+fn deflated_office_zip(path: &str, xml: &str) -> Vec<u8> {
+    let zlib = pdf_syntax::deflate_zlib(xml.as_bytes());
+    let raw = &zlib[2..zlib.len() - 4];
+    zip_with(path, raw, (8, xml.len()))
 }
 
 #[test]
@@ -308,5 +323,75 @@ fn six_files_and_twenty_megabytes_are_the_allowance() {
         AttachError::TooLarge {
             name: "huge.bin".to_owned()
         }
+    );
+}
+
+#[test]
+fn the_runs_a_word_is_split_into_are_joined_and_only_paragraphs_and_cells_are_apart() {
+    let zip = office_zip(
+        "word/document.xml",
+        "<w:p><w:r><w:t>Hel</w:t></w:r><w:r><w:t>lo</w:t></w:r><w:r><w:t xml:space=\"preserve\"> Pan</w:t></w:r><w:r><w:t>PDF</w:t></w:r></w:p>\
+         <w:p><w:r><w:t>Next</w:t></w:r><w:r><w:br/></w:r><w:r><w:t>line</w:t></w:r></w:p>\
+         <w:tbl><w:tr><w:tc><w:p><w:t>A</w:t></w:p></w:tc><w:tc><w:p><w:t>B</w:t></w:p></w:tc></w:tr></w:tbl>",
+    );
+    let made = prepare("letter.docx", &zip).expect("a docx's words are read");
+    let said = made[0].as_text().into_owned();
+    assert_eq!(said, "Hello PanPDF Next line A B", "{said}");
+}
+
+#[test]
+fn thai_split_across_runs_stays_one_word() {
+    let zip = office_zip(
+        "word/document.xml",
+        "<w:p><w:r><w:t>\u{0e04}\u{0e27}\u{0e32}\u{0e21}</w:t></w:r><w:r><w:t>\u{0e40}\u{0e23}\u{0e47}\u{0e27}</w:t></w:r></w:p>",
+    );
+    let made = prepare("thai.docx", &zip).expect("read");
+    assert_eq!(
+        made[0].as_text(),
+        "\u{0e04}\u{0e27}\u{0e32}\u{0e21}\u{0e40}\u{0e23}\u{0e47}\u{0e27}"
+    );
+}
+
+#[test]
+fn a_docx_whose_document_is_deflated_as_real_ones_are_reads_the_same() {
+    let xml =
+        "<w:p><w:r><w:t>Hel</w:t></w:r><w:r><w:t>lo from a compressed Word file</w:t></w:r></w:p>";
+    let zip = deflated_office_zip("word/document.xml", xml);
+    let stored = office_zip("word/document.xml", xml);
+    assert_ne!(
+        zip, stored,
+        "known answer: the two fixtures are not the same bytes"
+    );
+    let made = prepare("letter.docx", &zip).expect("a deflated docx is read");
+    assert_eq!(made[0].as_text(), "Hello from a compressed Word file");
+    let same = prepare("letter.docx", &stored).expect("a stored one is read");
+    assert_eq!(same[0].as_text(), made[0].as_text());
+}
+
+#[test]
+fn a_text_file_that_quotes_the_pdf_header_is_text_and_a_real_pdf_still_is_one() {
+    let notes = b"# Notes\n\nA PDF starts with %PDF-1.7 and then a binary comment.\n";
+    assert!(!looks_like_pdf(notes));
+    let made = prepare("notes.md", notes).expect("a text file is read");
+    assert_eq!(made.len(), 1);
+    assert_eq!(made[0].kind, AttachmentKind::Text);
+    assert!(made[0].as_text().contains("%PDF-1.7"));
+
+    let real = document("is-a-pdf", "Real.");
+    assert!(looks_like_pdf(&real), "known answer: a real PDF");
+    let mut spaced = b"\n  ".to_vec();
+    spaced.extend_from_slice(&real);
+    assert!(
+        looks_like_pdf(&spaced),
+        "white space before the header is allowed"
+    );
+    let mut marked = vec![0xEF, 0xBB, 0xBF];
+    marked.extend_from_slice(&real);
+    assert!(looks_like_pdf(&marked), "so is a byte order mark");
+    let mut prefixed = b"HTTP/1.1 200 OK\r\n\r\n".to_vec();
+    prefixed.extend_from_slice(&real);
+    assert!(
+        looks_like_pdf(&prefixed),
+        "binary with the header a little way in is still a PDF"
     );
 }

@@ -833,6 +833,18 @@ impl AiState {
             .push((self.turns.len(), Message::AiRunTakenBack { steps }));
     }
 
+    #[cfg(test)]
+    pub(crate) fn hold_a_turn(&mut self, turn: Turn) {
+        self.turns.push(turn);
+    }
+
+    pub(crate) fn pictures_attached(&self) -> impl Iterator<Item = &Attachment> {
+        self.turns
+            .iter()
+            .flat_map(|turn| turn.attachments().iter())
+            .filter(|attachment| !attachment.bytes.is_empty())
+    }
+
     pub(crate) fn say_the_document_changed(&mut self, pages: &[usize]) {
         self.notes.push((
             self.turns.len(),
@@ -1278,8 +1290,8 @@ pub(crate) fn paint_badge(ui: &egui::Ui, at: egui::Pos2, badge: Badge) {
 fn tool_icon(name: &str) -> Icon {
     match name {
         "document_info" | "read_text" | "list_fonts" => Icon::Document,
-        "find_text" => Icon::ZoomIn,
-        "render_page" => Icon::Picture,
+        "find_text" | "look_closer" => Icon::ZoomIn,
+        "render_page" | "place_picture" => Icon::Picture,
         "replace_text" | "set_properties" | "fill_field" => Icon::Edit,
         "add_text" => Icon::Text,
         "write_pages" => Icon::Pen,
@@ -1292,6 +1304,13 @@ fn tool_icon(name: &str) -> Icon {
         "redo" => Icon::Redo,
         "ask_person" => Icon::RadioButton,
         "update_plan" => Icon::Checkbox,
+        "find_and_replace" => Icon::AskAgain,
+        "style_text" => Icon::Bold,
+        "mark_text" => Icon::Highlighter,
+        "add_stamp" => Icon::BringToFront,
+        "bookmarks" => Icon::NamedPlaces,
+        "objects" => Icon::Select,
+        "go_to_page" => Icon::Next,
         _ => Icon::Settings,
     }
 }
@@ -1416,6 +1435,31 @@ mod tests {
     };
     use pdf_app::ai_layout;
     use pdf_app::wording::{Lang, Message};
+
+    use crate::icons::Icon;
+
+    #[test]
+    fn every_tool_offered_has_an_icon_that_is_not_the_gear_and_a_line_for_what_it_did() {
+        let offered = pdf_agent::tools::offered_to_a_window();
+        assert!(offered.len() >= 28, "{}", offered.len());
+        for tool in offered {
+            assert!(
+                super::tool_icon(&tool.name) != Icon::Settings,
+                "{} has no icon of its own",
+                tool.name
+            );
+            assert_ne!(
+                pdf_app::ai_status::did(&tool.name, Lang::English),
+                tool.name,
+                "{} has no line for what it did",
+                tool.name
+            );
+        }
+        assert!(
+            super::tool_icon("a_tool_nobody_wrote") == Icon::Settings,
+            "negative control: an unknown tool gets the gear"
+        );
+    }
 
     fn arriving(said: &str) -> Arriving {
         Arriving {

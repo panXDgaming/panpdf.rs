@@ -297,3 +297,44 @@ fn a_long_title_in_thai_is_cut_at_its_sixtieth_letter_and_not_at_a_byte_count() 
         "cut at the space, which is past the middle"
     );
 }
+
+#[test]
+fn a_chat_of_a_hundred_long_readings_is_still_read_back_and_each_reading_is_kept_short() {
+    let reading = "ความเร็วของแสง ".repeat(4_000);
+    let mut chat = a_chat();
+    chat.turns = (0..100)
+        .map(|at| Turn::Results {
+            results: vec![ToolResult::said(format!("call_{at}"), reading.clone())],
+        })
+        .collect();
+    let written = write(&chat);
+    assert!(
+        written.len() < crate::json::MOST_BYTES,
+        "{} bytes: a hundred readings of 60,000 characters would have been more than a read can take",
+        written.len()
+    );
+    let back = read(&written).expect("it reads back");
+    assert_eq!(back.turns.len(), 100);
+    let Turn::Results { results } = &back.turns[0] else {
+        panic!("results first");
+    };
+    assert!(
+        results[0].text.chars().count() < 20_100,
+        "{}",
+        results[0].text.chars().count()
+    );
+    assert!(
+        results[0].text.ends_with("ask again for the rest)"),
+        "{}",
+        results[0].text
+    );
+    let short = Turn::Results {
+        results: vec![ToolResult::said("call_s", "Two paragraphs.")],
+    };
+    chat.turns = vec![short.clone()];
+    assert_eq!(
+        read(&write(&chat)).expect("reads").turns,
+        vec![short],
+        "negative control: a short one is as it was"
+    );
+}

@@ -7,16 +7,16 @@ use super::{
 use crate::json::Json;
 
 #[test]
-fn a_window_offers_seventeen_of_the_twenty_one_tools_and_its_own_two() {
+fn a_window_offers_twenty_five_of_the_twenty_nine_tools_and_its_own_three() {
     let offered = offered_to_a_window();
-    assert_eq!(offered.len(), 19, "{:?}", offered.len());
+    assert_eq!(offered.len(), 28, "{:?}", offered.len());
     let published = listed();
     let published = published.as_list().expect("a list");
-    assert_eq!(published.len(), 21);
+    assert_eq!(published.len(), 29);
     assert!(
         !published.iter().any(|tool| matches!(
             tool.get("name").and_then(Json::as_str),
-            Some("ask_person" | "update_plan")
+            Some("ask_person" | "update_plan" | "go_to_page")
         )),
         "the server does not publish the window's own tools"
     );
@@ -26,10 +26,12 @@ fn a_window_offers_seventeen_of_the_twenty_one_tools_and_its_own_two() {
             "{name} is not offered to a window"
         );
     }
-    for tool in offered
-        .iter()
-        .filter(|tool| !matches!(tool.name.as_str(), "ask_person" | "update_plan"))
-    {
+    for tool in offered.iter().filter(|tool| {
+        !matches!(
+            tool.name.as_str(),
+            "ask_person" | "update_plan" | "go_to_page"
+        )
+    }) {
         let same = published
             .iter()
             .find(|it| it.get("name").and_then(Json::as_str) == Some(tool.name.as_str()))
@@ -59,6 +61,8 @@ fn what_a_tool_does_is_read_from_the_same_table() {
             "list_fonts".to_owned(),
             "read_text".to_owned(),
             "render_page".to_owned(),
+            "look_closer".to_owned(),
+            "go_to_page".to_owned(),
             "ask_person".to_owned(),
             "update_plan".to_owned(),
         ])
@@ -471,4 +475,393 @@ fn a_document_written_by_the_server_is_one_step_whichever_document_it_is_written
         again.text, "There is nothing to undo.",
         "it really was one step"
     );
+}
+
+fn call_with(
+    desk: &mut crate::desk::Desk,
+    name: &str,
+    document: &str,
+    rest: &str,
+) -> super::Answer {
+    let mut arguments = Json::parse(rest).expect("JSON");
+    if let Json::Object(members) = &mut arguments {
+        members.insert("document".to_owned(), Json::text(document));
+    }
+    super::call(desk, name, &arguments).unwrap_or_else(|why| panic!("{name} {rest}: {why}"))
+}
+
+fn refused_with(desk: &mut crate::desk::Desk, name: &str, document: &str, rest: &str) -> String {
+    let mut arguments = Json::parse(rest).expect("JSON");
+    if let Json::Object(members) = &mut arguments {
+        members.insert("document".to_owned(), Json::text(document));
+    }
+    match super::call(desk, name, &arguments) {
+        Ok(answer) => panic!("{name} {rest} was accepted: {}", answer.text),
+        Err(why) => why,
+    }
+}
+
+fn two_page_desk(name: &str) -> (crate::desk::Desk, String) {
+    let folder = folder(name);
+    let path = document(&folder, "one.pdf", "Acme sells anvils. Acme ships fast.", 3);
+    let mut desk = crate::desk::Desk::with_fonts(Some(fonts()));
+    let handle = opened(&mut desk, &path);
+    call_with(&mut desk, "add_blank_page", &handle, r#"{"after_page":1}"#);
+    (desk, handle)
+}
+
+#[test]
+fn the_server_publishes_the_new_tools_with_hints_that_match_what_they_do() {
+    let published = listed();
+    let published = published.as_list().expect("a list");
+    for (name, read_only) in [
+        ("find_and_replace", false),
+        ("style_text", false),
+        ("mark_text", false),
+        ("add_stamp", false),
+        ("bookmarks", false),
+        ("place_picture", false),
+        ("objects", false),
+        ("look_closer", true),
+    ] {
+        let tool = published
+            .iter()
+            .find(|tool| tool.get("name").and_then(Json::as_str) == Some(name))
+            .unwrap_or_else(|| panic!("{name} is published"));
+        let hints = tool.get("annotations").expect("annotations");
+        assert_eq!(
+            hints.get("readOnlyHint"),
+            Some(&Json::Bool(read_only)),
+            "{name}"
+        );
+        assert_eq!(
+            hints.get("destructiveHint"),
+            Some(&Json::Bool(false)),
+            "{name}"
+        );
+    }
+    assert!(
+        !published
+            .iter()
+            .any(|tool| tool.get("name").and_then(Json::as_str) == Some("go_to_page")),
+        "scrolling a window is for the window"
+    );
+}
+
+#[test]
+fn the_server_replaces_a_word_everywhere_by_page_and_one_undo_puts_it_all_back() {
+    let (mut desk, handle) = two_page_desk("server-replace");
+    let answer = call_with(
+        &mut desk,
+        "find_and_replace",
+        &handle,
+        r#"{"find":"acme","replace_with":"Beta"}"#,
+    );
+    assert!(
+        answer
+            .text
+            .contains("Replaced 6 matches of \u{201c}acme\u{201d}"),
+        "{}",
+        answer.text
+    );
+    assert!(
+        answer.text.contains("1 page (page 1: 6)"),
+        "{}",
+        answer.text
+    );
+    let page = call_with(
+        &mut desk,
+        "read_text",
+        &handle,
+        r#"{"first_page":1,"last_page":1}"#,
+    );
+    assert!(
+        !page.text.contains("Acme") && page.text.contains("Beta sells anvils"),
+        "{}",
+        page.text
+    );
+    let none = call_with(
+        &mut desk,
+        "find_and_replace",
+        &handle,
+        r#"{"find":"Gamma","replace_with":"Delta","first_page":1,"last_page":2}"#,
+    );
+    assert!(
+        none.text.starts_with("Nothing was replaced"),
+        "{}",
+        none.text
+    );
+    assert!(
+        none.text.contains("in pages 1 to 2") || none.text.contains("not found"),
+        "{}",
+        none.text
+    );
+    call_with(&mut desk, "undo", &handle, "{}");
+    let back = call_with(
+        &mut desk,
+        "read_text",
+        &handle,
+        r#"{"first_page":1,"last_page":1}"#,
+    );
+    assert!(back.text.contains("Acme sells anvils"), "{}", back.text);
+    let nothing = call_with(&mut desk, "undo", &handle, "{}");
+    assert!(
+        nothing.text.contains("Took back the last change"),
+        "{}",
+        nothing.text
+    );
+}
+
+#[test]
+fn the_server_styles_a_block_and_marks_words_and_stamps_pages() {
+    let (mut desk, handle) = two_page_desk("server-look");
+    call_with(
+        &mut desk,
+        "read_text",
+        &handle,
+        r#"{"first_page":1,"last_page":1}"#,
+    );
+    let styled = call_with(
+        &mut desk,
+        "style_text",
+        &handle,
+        r##"{"block":"p1-b1","bold":true,"size":16,"color":"#003366"}"##,
+    );
+    assert!(
+        styled
+            .text
+            .starts_with("Styled p1-b1: bold, 16 pt, colour #003366"),
+        "{}",
+        styled.text
+    );
+    let marked = call_with(
+        &mut desk,
+        "mark_text",
+        &handle,
+        r#"{"text":"anvils","how":"underline"}"#,
+    );
+    assert!(
+        marked
+            .text
+            .contains("Marked 3 places of \u{201c}anvils\u{201d} (underlined) on 1 page"),
+        "{}",
+        marked.text
+    );
+    let stamped = call_with(
+        &mut desk,
+        "add_stamp",
+        &handle,
+        r#"{"kind":"page_numbers","text":"{page} / {pages}","font":"DejaVu Sans"}"#,
+    );
+    assert!(
+        stamped.text.contains("Stamped 2 pages at footer_centre"),
+        "{}",
+        stamped.text
+    );
+    assert!(
+        stamped.text.contains("\u{201c}1 / 2\u{201d}"),
+        "{}",
+        stamped.text
+    );
+    let second = call_with(
+        &mut desk,
+        "read_text",
+        &handle,
+        r#"{"first_page":2,"last_page":2}"#,
+    );
+    assert!(second.text.contains("2 / 2"), "{}", second.text);
+}
+
+#[test]
+fn the_server_makes_bookmarks_and_a_picture_and_looks_at_a_part_of_a_page() {
+    let (mut desk, handle) = two_page_desk("server-more");
+    let said = call_with(
+        &mut desk,
+        "bookmarks",
+        &handle,
+        r#"{"action":"add","title":"Start","page":1}"#,
+    );
+    assert!(said.text.contains("1. Start (page 1)"), "{}", said.text);
+    let listed = call_with(&mut desk, "bookmarks", &handle, r#"{"action":"list"}"#);
+    assert!(listed.text.starts_with("1 bookmark"), "{}", listed.text);
+
+    let folder = folder("server-picture");
+    let path = folder.join("logo.png");
+    std::fs::write(&path, &*crate::pictures::tests::red_square(40, 20)).expect("a picture file");
+    let placed = call_with(
+        &mut desk,
+        "place_picture",
+        &handle,
+        &format!(
+            r#"{{"page":1,"left":300,"top":300,"width":100,"path":"{}"}}"#,
+            path.display()
+        ),
+    );
+    assert!(
+        placed
+            .text
+            .contains("Placed the picture on page 1, 100 x 50 pt"),
+        "{}",
+        placed.text
+    );
+    let chat = refused_with(
+        &mut desk,
+        "place_picture",
+        &handle,
+        r#"{"page":1,"left":300,"top":300,"attachment":1}"#,
+    );
+    assert!(chat.contains("there is no chat here"), "{chat}");
+
+    let objects = call_with(
+        &mut desk,
+        "objects",
+        &handle,
+        r#"{"action":"list","page":1}"#,
+    );
+    assert!(
+        objects.text.contains("p1-o1 picture [300, 300, 400, 350]"),
+        "{}",
+        objects.text
+    );
+    let moved = call_with(
+        &mut desk,
+        "objects",
+        &handle,
+        r#"{"action":"move","object":"p1-o1","left":100,"top":600}"#,
+    );
+    assert!(
+        moved.text.contains("Moved it to left 100, top 600"),
+        "{}",
+        moved.text
+    );
+
+    let closer = call_with(
+        &mut desk,
+        "look_closer",
+        &handle,
+        r#"{"page":1,"left":30,"top":30,"right":130,"bottom":70,"dpi":144}"#,
+    );
+    assert!(closer.picture.is_some());
+    assert!(
+        closer.text.contains("drawn 200 x 80 pixels"),
+        "{}",
+        closer.text
+    );
+    let off = refused_with(
+        &mut desk,
+        "look_closer",
+        &handle,
+        r#"{"page":1,"left":900,"top":900,"right":950,"bottom":950}"#,
+    );
+    assert!(off.contains("has nothing of the page in it"), "{off}");
+}
+
+#[test]
+fn the_server_refuses_the_new_tools_in_words_for_a_document_that_is_not_open() {
+    let (mut desk, _) = two_page_desk("server-refuses");
+    for (name, rest) in [
+        ("find_and_replace", r#"{"find":"a","replace_with":"b"}"#),
+        ("style_text", r#"{"block":"p1-b1","bold":true}"#),
+        ("mark_text", r#"{"text":"a"}"#),
+        ("add_stamp", r#"{"kind":"watermark"}"#),
+        ("bookmarks", r#"{"action":"list"}"#),
+        ("objects", r#"{"action":"list","page":1}"#),
+        (
+            "look_closer",
+            r#"{"page":1,"left":0,"top":0,"right":9,"bottom":9}"#,
+        ),
+    ] {
+        let why = refused_with(&mut desk, name, "doc-9", rest);
+        assert!(
+            why.contains("no document is open as doc-9"),
+            "{name}: {why}"
+        );
+    }
+}
+
+#[test]
+fn a_dark_theme_written_beside_a_picture_leaves_the_picture_and_the_page_above_it_alone() {
+    let (mut desk, handle) = two_page_desk("dark-under");
+    desk.place_picture(
+        &handle,
+        &crate::pictures::Asked {
+            page: 1,
+            left: 100.0,
+            top: 100.0,
+            width: Some(200.0),
+            height: None,
+            source: crate::pictures::Source::Attachment(None),
+        },
+        crate::pictures::tests::red_square(40, 20),
+    )
+    .expect("a picture on the empty second page");
+    let said = call_with(
+        &mut desk,
+        "write_pages",
+        &handle,
+        r#"{"markdown":"Words below the picture.","theme":"midnight","font":"DejaVu Sans","from_page":2}"#,
+    );
+    assert!(said.text.starts_with("Written"), "{}", said.text);
+    let (source, credential) = desk.source(&handle).expect("a source");
+    let view = pdf_session::interpret_page_fully(&source, 1, &credential, None, desk.fonts())
+        .expect("the page reads");
+    let (canvas, _) = pdf_cli::render_page_view(&view, 1.0).expect("it draws");
+    let rgb = canvas.to_rgb8();
+    let across = usize::try_from(canvas.width).expect("a width");
+    let at = |x: usize, y: usize| {
+        let start = (y * across + x) * 3;
+        [rgb[start], rgb[start + 1], rgb[start + 2]]
+    };
+    let picture = at(200, 150);
+    assert!(
+        picture[0] > 150 && picture[1] < 90,
+        "the picture is still red: {picture:?}"
+    );
+    let above = at(50, 50);
+    assert!(
+        above.iter().all(|part| *part > 240),
+        "the page above is as it was: {above:?}"
+    );
+    let below = at(50, 700);
+    assert!(
+        below.iter().all(|part| *part < 60),
+        "the new part has its dark ground: {below:?}"
+    );
+}
+
+#[test]
+fn a_thai_document_with_a_symbol_the_thai_face_lacks_is_written_and_read_back_in_stand_ins() {
+    let folder = folder("thai-symbols");
+    let path = document(&folder, "one.pdf", "x", 0);
+    let mut desk = crate::desk::Desk::with_fonts(Some(fonts()));
+    let handle = opened(&mut desk, &path);
+    let said = call_with(
+        &mut desk,
+        "write_pages",
+        &handle,
+        r#"{"markdown":"ความเร็ว $v^2$ และ $\\alpha$ → 5 ถึง 9","font":"Noto Sans Thai","replace":true}"#,
+    );
+    assert!(said.text.starts_with("Written"), "{}", said.text);
+    let read = call_with(&mut desk, "read_text", &handle, "{}");
+    assert!(read.text.contains("ความเร็ว"), "{}", read.text);
+    assert!(read.text.contains("alpha"), "{}", read.text);
+    assert!(read.text.contains("->"), "{}", read.text);
+}
+
+#[test]
+fn the_instructions_name_each_editing_tool_and_say_when_to_reach_for_it() {
+    let said = window_instructions(&DocumentBrief::default());
+    for name in [
+        "find_and_replace",
+        "style_text",
+        "mark_text",
+        "add_stamp",
+        "bookmarks",
+        "place_picture",
+        "objects",
+        "go_to_page",
+        "look_closer",
+    ] {
+        assert!(said.contains(name), "the instructions never name {name}");
+    }
 }

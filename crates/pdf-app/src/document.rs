@@ -2938,6 +2938,16 @@ impl Editor {
         self.begin(Step::Batch { commands, done })
     }
 
+    pub fn try_planning(&mut self, command: &Command) -> Option<Result<(), String>> {
+        let session = self.session.as_mut()?;
+        Some(
+            session
+                .plan(command)
+                .map(drop)
+                .map_err(|error| error.to_string()),
+        )
+    }
+
     #[must_use]
     pub fn begin_undo(&mut self) -> Option<EditJob> {
         self.begin(Step::Undo)

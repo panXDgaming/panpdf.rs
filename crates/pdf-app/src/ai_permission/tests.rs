@@ -469,6 +469,100 @@ mod cards {
     }
 
     #[test]
+    fn the_editing_tools_say_what_they_would_do_before_they_do_it() {
+        let rows = [
+            (
+                "find_and_replace",
+                r#"{"find":"cat","replace_with":"dog","first_page":2,"last_page":3,"whole_words":true}"#,
+                "Replace every \u{201c}cat\u{201d} with \u{201c}dog\u{201d} on pages 2 to 3, whole words only",
+            ),
+            (
+                "find_and_replace",
+                r#"{"find":"cat","replace_with":""}"#,
+                "Delete every \u{201c}cat\u{201d} in the whole document",
+            ),
+            (
+                "style_text",
+                r#"{"block":"p2-b3","find":"Hi","italic":true}"#,
+                "Change how \u{201c}Hi\u{201d} in block p2-b3 looks: italic",
+            ),
+            (
+                "mark_text",
+                r#"{"text":"Bangkok"}"#,
+                "Highlight every \u{201c}Bangkok\u{201d} in the whole document",
+            ),
+            (
+                "mark_text",
+                r#"{"text":"old","how":"strike_through","first_page":4,"last_page":4}"#,
+                "Strike through every \u{201c}old\u{201d} on page 4",
+            ),
+            (
+                "add_stamp",
+                r#"{"kind":"page_numbers","position":"footer_centre","only":"odd"}"#,
+                "Put page numbers at footer centre on every page, the odd ones only",
+            ),
+            (
+                "add_stamp",
+                r#"{"kind":"watermark","text":"DRAFT","pages":"1-3"}"#,
+                "Put a watermark on pages 1-3: \u{201c}DRAFT\u{201d}",
+            ),
+            ("bookmarks", r#"{"action":"list"}"#, "List the bookmarks"),
+            (
+                "bookmarks",
+                r#"{"action":"add","title":"Intro","page":3}"#,
+                "Add the bookmark \u{201c}Intro\u{201d} for page 3",
+            ),
+            (
+                "bookmarks",
+                r#"{"action":"move","bookmark":2,"direction":"in"}"#,
+                "Move bookmark 2 in",
+            ),
+            (
+                "bookmarks",
+                r#"{"action":"delete","bookmark":4}"#,
+                "Delete bookmark 4",
+            ),
+            (
+                "bookmarks",
+                r#"{"action":"from_headings","replace":true}"#,
+                "Make a table of contents from the headings, taking out the bookmarks there are",
+            ),
+            (
+                "place_picture",
+                r#"{"page":2,"left":72,"top":100,"attachment":2}"#,
+                "Put attached picture 2 on page 2 at left 72, top 100",
+            ),
+            (
+                "objects",
+                r#"{"action":"list","page":1}"#,
+                "List the pictures, drawings and text blocks of page 1",
+            ),
+            (
+                "objects",
+                r#"{"action":"resize","object":"p1-o2","width":120}"#,
+                "Resize p1-o2 to 120 pt wide",
+            ),
+            (
+                "objects",
+                r#"{"action":"delete","object":"p1-o2"}"#,
+                "Delete p1-o2",
+            ),
+            ("go_to_page", r#"{"page":5}"#, "Show page 5 in the window"),
+            (
+                "look_closer",
+                r#"{"page":3,"left":10,"top":20,"right":110,"bottom":70}"#,
+                "Look closer at the part [10, 20, 110, 70] of page 3",
+            ),
+        ];
+        for (name, arguments, english) in rows {
+            let arguments = Json::parse(arguments).expect("JSON");
+            let request = pdf_agent::tools::request::parse(name, &arguments)
+                .unwrap_or_else(|why| panic!("{name} did not read: {why}"));
+            assert_eq!(describe_call(&request, Lang::English), english, "{name}");
+        }
+    }
+
+    #[test]
     fn a_long_piece_of_text_is_cut_to_one_line() {
         let said = describe_call(
             &Request::ReplaceText {

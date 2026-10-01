@@ -380,3 +380,233 @@ fn a_mark_on_a_page_that_is_not_there_is_refused_in_words() {
         .expect_err("page 5 does not exist");
     assert!(refused.contains("page 5"), "{refused}");
 }
+
+fn composed_from(markdown: &str, theme: &Theme, start: Option<f64>) -> Composed {
+    let setting = Setting {
+        sheet: A4,
+        from_page: 0,
+        start,
+        family: "Noto Sans",
+        theme,
+        body: 10.0,
+    };
+    compose(&parts(markdown, 10.0), &setting, &Even).expect("it composes")
+}
+
+fn words_of(out: &Composed) -> String {
+    texts(out)
+        .iter()
+        .map(|(text, ..)| *text)
+        .collect::<Vec<_>>()
+        .join(" ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+#[test]
+fn a_dark_page_written_under_what_is_there_is_dark_only_below_it() {
+    let midnight = theme::named("midnight").expect("midnight");
+    let under = composed_from("Words.\n", midnight, Some(300.0));
+    let Mark::Shape { fill, steps, .. } = &under.marks[0] else {
+        panic!("the paper first");
+    };
+    assert_eq!(
+        *fill, midnight.paper,
+        "the light ink has a dark ground to be read on"
+    );
+    let tops: Vec<f64> = steps
+        .iter()
+        .map(|step| match step {
+            super::PenStep::Move(at) | super::PenStep::Line(at) => at.1,
+            super::PenStep::Curve(_, _, end) => end.1,
+        })
+        .collect();
+    let least = tops.iter().copied().fold(f64::INFINITY, f64::min);
+    assert!(
+        (least - 300.0).abs() < 1e-9,
+        "the page above 300 is left as it was: {tops:?}"
+    );
+    let whole = composed_from("Words.\n", midnight, None);
+    let Mark::Shape { steps, .. } = &whole.marks[0] else {
+        panic!("the paper first");
+    };
+    let top = steps
+        .iter()
+        .map(|step| match step {
+            super::PenStep::Move(at) | super::PenStep::Line(at) => at.1,
+            super::PenStep::Curve(_, _, end) => end.1,
+        })
+        .fold(f64::INFINITY, f64::min);
+    assert!(
+        top.abs() < 1e-9,
+        "negative control: starting at the top covers the whole page"
+    );
+    let classic = theme::named("classic").expect("classic");
+    assert!(
+        composed_from("Words.\n", classic, Some(300.0))
+            .marks
+            .iter()
+            .all(|mark| !matches!(mark, Mark::Shape { fill, .. } if *fill == classic.paper)),
+        "a theme with no paper paints none"
+    );
+}
+
+#[test]
+fn a_paragraph_taller_than_a_page_is_carried_over_the_pages_and_loses_no_word() {
+    let plain = theme::named("plain").expect("plain");
+    let words: Vec<String> = (0..2_400).map(|at| format!("word{at}")).collect();
+    let paragraph = words.join(" ");
+    let out = composed(&paragraph, plain);
+    assert!(out.pages >= 2, "{} pages", out.pages);
+    for (_, area, _, _) in texts(&out) {
+        assert!(
+            area[3] <= 842.0 - 50.0 + 1e-6,
+            "runs off the page: {area:?}"
+        );
+    }
+    assert_eq!(
+        words_of(&out),
+        paragraph,
+        "every word is there, once, in order"
+    );
+    assert!(out.pieces >= 2, "the one paragraph became several frames");
+}
+
+#[test]
+fn a_bullet_taller_than_a_page_has_its_dot_once_and_a_paragraph_that_fits_is_not_split() {
+    let classic = theme::named("classic").expect("classic");
+    let words: Vec<String> = (0..2_400).map(|at| format!("w{at}")).collect();
+    let big = composed(&format!("- {}\n", words.join(" ")), classic);
+    let dots = big
+        .marks
+        .iter()
+        .filter(|mark| matches!(mark, Mark::Shape { steps, .. } if steps.len() == 5))
+        .count();
+    assert_eq!(dots, 1, "one bullet for one item");
+    let small = composed("A short paragraph that fits where it is.\n", classic);
+    assert_eq!(
+        texts(&small).len(),
+        1,
+        "negative control: a paragraph that fits is one frame"
+    );
+}
+
+#[test]
+fn a_code_block_taller_than_a_page_is_boxed_page_by_page_and_keeps_every_line() {
+    let classic = theme::named("classic").expect("classic");
+    let lines: Vec<String> = (0..180).map(|at| format!("line_{at}();")).collect();
+    let markdown = format!("```\n{}\n```\n", lines.join("\n"));
+    let out = composed(&markdown, classic);
+    assert!(out.pages >= 2, "{} pages", out.pages);
+    for (_, area, _, _) in texts(&out) {
+        assert!(
+            area[3] <= 842.0 - 50.0 + 1e-6,
+            "runs off the page: {area:?}"
+        );
+    }
+    let kept: Vec<String> = texts(&out)
+        .iter()
+        .flat_map(|(text, ..)| text.lines().map(str::to_owned).collect::<Vec<_>>())
+        .collect();
+    assert_eq!(kept, lines, "every line, once, in order");
+    let boxes = out
+        .marks
+        .iter()
+        .filter(|mark| {
+            matches!(
+                mark,
+                Mark::Shape {
+                    stroke: Some(_),
+                    ..
+                }
+            )
+        })
+        .count();
+    assert_eq!(boxes, out.pages, "a box on each page the block reaches");
+}
+
+#[test]
+fn a_quote_taller_than_a_page_is_set_as_ordinary_paragraphs_rather_than_run_off_the_page() {
+    let classic = theme::named("classic").expect("classic");
+    let words: Vec<String> = (0..2_400).map(|at| format!("q{at}")).collect();
+    let out = composed(&format!("> {}\n", words.join(" ")), classic);
+    for (_, area, _, _) in texts(&out) {
+        assert!(
+            area[3] <= 842.0 - 50.0 + 1e-6,
+            "runs off the page: {area:?}"
+        );
+    }
+    assert_eq!(words_of(&out), words.join(" "));
+}
+
+struct ThaiFace;
+
+impl Measure for ThaiFace {
+    fn room(&self, text: &str, style: &Style, width: f64) -> Result<Room, String> {
+        if let Some(letter) = text
+            .chars()
+            .find(|letter| !(letter.is_ascii() || ('\u{0E00}'..='\u{0E7F}').contains(letter)))
+        {
+            return Err(format!(
+                "the face chosen does not draw what was typed ({letter:?})"
+            ));
+        }
+        Even.room(text, style, width)
+    }
+}
+
+fn composed_in_thai(markdown: &str) -> Result<Composed, String> {
+    let plain = theme::named("plain").expect("plain");
+    let setting = Setting {
+        sheet: A4,
+        from_page: 0,
+        start: None,
+        family: "Noto Sans Thai",
+        theme: plain,
+        body: 10.0,
+    };
+    compose(&parts(markdown, 10.0), &setting, &ThaiFace)
+}
+
+#[test]
+fn a_thai_paragraph_with_symbols_its_face_lacks_is_written_with_stand_ins_not_refused() {
+    let out = composed_in_thai("ความเร็ว v\u{00B2} และ \u{03B1} \u{2192} 5 \u{2264} 9\n")
+        .expect("the symbols are mended, not refused");
+    let words = texts(&out);
+    assert_eq!(words.len(), 1);
+    assert_eq!(
+        words[0].0, "ความเร็ว v^2 และ alpha -> 5 <= 9",
+        "each symbol is said in letters the face has"
+    );
+    assert!(
+        out.left_out.is_empty(),
+        "nothing was lost: {:?}",
+        out.left_out
+    );
+}
+
+#[test]
+fn a_symbol_with_no_stand_in_is_left_out_and_the_model_is_told() {
+    let out = composed_in_thai("ราคา \u{20AC} 5 บาท\n").expect("the euro sign is dropped");
+    assert_eq!(texts(&out)[0].0, "ราคา  5 บาท");
+    assert_eq!(out.left_out, "\u{20AC}");
+}
+
+#[test]
+fn a_paragraph_that_would_be_nothing_without_its_symbols_is_still_refused() {
+    let why = composed_in_thai("\u{20AC}\u{20AC}\n").expect_err("nothing is left to write");
+    assert!(why.contains("does not draw what was typed"), "{why}");
+    assert!(
+        composed_in_thai("plain words\n").is_ok(),
+        "negative control: a paragraph the face draws whole"
+    );
+}
+
+#[test]
+fn a_cell_of_a_table_gets_the_same_mending_as_a_paragraph() {
+    let out = composed_in_thai("| a | b |\n|---|---|\n| ความเร็ว | \u{03B1} \u{2192} 1 |\n")
+        .expect("a table cell is mended too");
+    let said: Vec<&str> = texts(&out).iter().map(|(text, ..)| *text).collect();
+    assert!(said.contains(&"alpha -> 1"), "{said:?}");
+}
