@@ -1,0 +1,19 @@
+[package]
+name = "convert-ooxml"
+description = "What every Office Open XML package needs, and the complex-script slots"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+convert-xml.workspace = true
+convert-zip = { workspace = true, features = ["deflate"] }
+convert-structure.workspace = true
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

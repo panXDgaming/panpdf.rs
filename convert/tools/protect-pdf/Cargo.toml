@@ -1,0 +1,26 @@
+[package]
+name = "protect-pdf"
+description = "Protect a PDF with a password (AES-256) and choose what it allows"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "protect-pdf"
+path = "src/main.rs"
+
+[dependencies]
+convert-pdfdoc.workspace = true
+convert-pdftool.workspace = true
+pdf-security.workspace = true
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

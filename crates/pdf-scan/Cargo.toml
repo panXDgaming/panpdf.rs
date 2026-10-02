@@ -1,0 +1,11 @@
+[package]
+name = "pdf-scan"
+description = "Finding a sheet of paper in a camera picture, and flattening it"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true

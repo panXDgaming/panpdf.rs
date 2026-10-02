@@ -552,8 +552,19 @@ struct Renderer<'a> {
     limits: RenderLimits,
     report: &'a mut RenderReport,
     outlines: std::collections::HashMap<(usize, u16), Arc<Outlines>>,
-    clip_cache: Option<(Vec<pdf_bytes::SourceSpan>, std::sync::Arc<Mask>)>,
-    soft_mask_cache: Option<(pdf_bytes::SourceSpan, std::sync::Arc<Mask>)>,
+    clip_cache: Option<(ClipKey, std::sync::Arc<Mask>)>,
+    soft_mask_cache: Option<(SoftMaskKey, std::sync::Arc<Mask>)>,
+}
+
+type ClipKey = (
+    Vec<(pdf_bytes::SourceSpan, [u64; 6], bool)>,
+    (u32, u32, u32, u32),
+);
+
+type SoftMaskKey = (pdf_bytes::SourceSpan, [u64; 6], (u32, u32, u32, u32));
+
+fn matrix_bits(matrix: Matrix) -> [u64; 6] {
+    [matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f].map(f64::to_bits)
 }
 
 impl Renderer<'_> {
@@ -1445,9 +1456,7 @@ impl Renderer<'_> {
         };
         let mut over_white = Canvas::blank(width, height);
         let mut over_black = Canvas::blank(width, height);
-        for pixel in &mut over_black.pixels {
-            *pixel = [0.0, 0.0, 0.0];
-        }
+        over_black.pixels.fill([0.0, 0.0, 0.0]);
         for canvas in [&mut over_white, &mut over_black] {
             let mut renderer = Renderer {
                 outlines: std::collections::HashMap::new(),
@@ -1613,11 +1622,20 @@ impl Renderer<'_> {
         if state.clip_paths.is_empty() {
             return Ok(None);
         }
-        let key: Vec<pdf_bytes::SourceSpan> = state
-            .clip_paths
-            .iter()
-            .map(|clip| clip.provenance)
-            .collect();
+        let key: ClipKey = (
+            state
+                .clip_paths
+                .iter()
+                .map(|clip| {
+                    (
+                        clip.provenance,
+                        matrix_bits(clip.ctm.value),
+                        clip.rule == FillRule::EvenOdd,
+                    )
+                })
+                .collect(),
+            window,
+        );
 
         if let Some((cached_key, mask)) = &self.clip_cache
             && *cached_key == key
@@ -1645,8 +1663,13 @@ impl Renderer<'_> {
         mask: &pdf_paint::SoftMaskPaint,
         window: (u32, u32, u32, u32),
     ) -> Result<Option<std::sync::Arc<Mask>>, RenderError> {
+        let key: SoftMaskKey = (
+            mask.dictionary_span,
+            matrix_bits(mask.group.state.ctm.value),
+            window,
+        );
         if let Some((cached, coverage)) = &self.soft_mask_cache
-            && *cached == mask.dictionary_span
+            && *cached == key
         {
             return Ok(Some(std::sync::Arc::clone(coverage)));
         }
@@ -1688,12 +1711,10 @@ impl Renderer<'_> {
         let mut over_second = Canvas::window(x0, y0, width, height);
         #[allow(clippy::cast_possible_truncation)]
         let first = [backdrop[0] as f32, backdrop[1] as f32, backdrop[2] as f32];
-        for pixel in &mut over_first.pixels {
-            *pixel = first;
-        }
-        for pixel in &mut over_second.pixels {
-            *pixel = if luminosity { first } else { [0.0, 0.0, 0.0] };
-        }
+        over_first.pixels.fill(first);
+        over_second
+            .pixels
+            .fill(if luminosity { first } else { [0.0, 0.0, 0.0] });
         let saved_clip = self.clip_cache.take();
         let saved_soft = self.soft_mask_cache.take();
         for canvas in [&mut over_first, &mut over_second] {
@@ -1727,7 +1748,7 @@ impl Renderer<'_> {
             coverage.push(value.clamp(0.0, 1.0));
         }
         let coverage = std::sync::Arc::new(Mask::from_coverage(x0, y0, width, height, coverage));
-        self.soft_mask_cache = Some((mask.dictionary_span, std::sync::Arc::clone(&coverage)));
+        self.soft_mask_cache = Some((key, std::sync::Arc::clone(&coverage)));
         Ok(Some(coverage))
     }
 
@@ -2731,6 +2752,94 @@ mod tests {
         assert_pixel(&even_odd, 10, 10, [0.0, 0.0, 0.0], 0.0);
     }
 
+    fn objects_page_fixture(resources: &[u8], content: &[u8], objects: &[&[u8]]) -> ByteStore {
+        let mut bytes = b"%PDF-1.7\n".to_vec();
+        let mut offsets = Vec::new();
+        offsets.push(bytes.len());
+        bytes.extend_from_slice(b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+        offsets.push(bytes.len());
+        bytes.extend_from_slice(b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n");
+        offsets.push(bytes.len());
+        bytes.extend_from_slice(
+            b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Contents 4 0 R /Resources << ",
+        );
+        bytes.extend_from_slice(resources);
+        bytes.extend_from_slice(b" >> >>\nendobj\n");
+        offsets.push(bytes.len());
+        bytes.extend_from_slice(
+            format!("4 0 obj\n<< /Length {} >>\nstream\n", content.len()).as_bytes(),
+        );
+        bytes.extend_from_slice(content);
+        bytes.extend_from_slice(b"\nendstream\nendobj\n");
+        for (index, object) in objects.iter().enumerate() {
+            offsets.push(bytes.len());
+            bytes.extend_from_slice(format!("{} 0 obj\n", index + 5).as_bytes());
+            bytes.extend_from_slice(object);
+            bytes.extend_from_slice(b"\nendobj\n");
+        }
+        let xref = bytes.len();
+        let size = offsets.len() + 1;
+        bytes.extend_from_slice(format!("xref\n0 {size}\n0000000000 65535 f \n").as_bytes());
+        for offset in offsets {
+            bytes.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        bytes.extend_from_slice(
+            format!("trailer\n<< /Size {size} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n")
+                .as_bytes(),
+        );
+        ByteStore::new(SourceId::new(92), Arc::<[u8]>::from(bytes))
+    }
+
+    fn form_object(entries: &str, content: &str) -> Vec<u8> {
+        format!(
+            "<< /Type /XObject /Subtype /Form {entries} /Length {} >>\nstream\n{content}\nendstream",
+            content.len()
+        )
+        .into_bytes()
+    }
+
+    #[test]
+    fn a_form_drawn_twice_is_clipped_where_each_copy_is() {
+        let square = form_object(
+            "/BBox [0 0 20 20] /Resources << >>",
+            "0 0.6 0.3 rg 0 0 20 20 re f",
+        );
+        let source = objects_page_fixture(
+            b"/XObject << /F 5 0 R >>",
+            b"q 1 0 0 1 10 10 cm /F Do Q q 1 0 0 1 60 60 cm /F Do Q",
+            &[&square],
+        );
+        let (canvas, report) = render_source(&source);
+        let green = [0.0, 0.6, 0.3];
+        assert!((canvas.ink_fraction() - 0.08).abs() < f64::EPSILON);
+        assert_pixel(&canvas, 20, 80, green, 0.01);
+        assert_pixel(&canvas, 70, 30, green, 0.01);
+        assert_pixel(&canvas, 45, 50, [1.0, 1.0, 1.0], 0.0);
+        assert_eq!(report.drawn, 2);
+    }
+
+    #[test]
+    fn a_soft_mask_set_inside_a_form_drawn_twice_covers_each_copy() {
+        let square = form_object(
+            "/BBox [0 0 20 20] /Resources << /ExtGState << /M << /SMask << /S /Luminosity /G 6 0 R >> >> >> >>",
+            "/M gs 0 0.6 0.3 rg 0 0 20 20 re f",
+        );
+        let mask = form_object(
+            "/BBox [0 0 20 20] /Group << /S /Transparency /CS /DeviceGray >> /Resources << >>",
+            "1 g 0 0 20 20 re f",
+        );
+        let source = objects_page_fixture(
+            b"/XObject << /F 5 0 R >>",
+            b"q 1 0 0 1 10 10 cm /F Do Q q 1 0 0 1 60 60 cm /F Do Q",
+            &[&square, &mask],
+        );
+        let (canvas, _) = render_source(&source);
+        let green = [0.0, 0.6, 0.3];
+        assert_pixel(&canvas, 20, 80, green, 0.01);
+        assert_pixel(&canvas, 70, 30, green, 0.01);
+        assert_pixel(&canvas, 45, 50, [1.0, 1.0, 1.0], 0.0);
+    }
+
     #[test]
     fn a_clip_removes_exactly_the_area_outside_it() {
         let (canvas, _) = render(
@@ -3205,7 +3314,9 @@ mod tests {
         canvas.pixels[1] = [0.2, 0.4, 0.6];
         let rgba: Vec<u8> = canvas
             .to_rgb8()
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .flat_map(|pixel| [pixel[0], pixel[1], pixel[2], 255])
             .collect();
         assert_eq!(canvas.to_rgba8(), rgba);

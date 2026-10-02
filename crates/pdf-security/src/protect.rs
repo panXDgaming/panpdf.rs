@@ -384,7 +384,7 @@ mod tests {
         let at = hex.find("/Perms <").expect("it is written") + "/Perms <".len();
         let digits = &hex[at..at + 32];
         let mut block = [0_u8; 16];
-        for (byte, pair) in block.iter_mut().zip(digits.as_bytes().chunks_exact(2)) {
+        for (byte, pair) in block.iter_mut().zip(digits.as_bytes().as_chunks::<2>().0) {
             *byte = u8::from_str_radix(std::str::from_utf8(pair).expect("ASCII"), 16)
                 .expect("hexadecimal");
         }

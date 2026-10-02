@@ -8,6 +8,9 @@ use std::sync::mpsc::{Receiver, TryRecvError, channel};
 pub(crate) enum Kind {
     Pdfs,
     Pictures,
+    PicturesAndPdfs,
+    Endings(&'static [&'static str]),
+    Ending(&'static str),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -95,10 +98,40 @@ fn programs(_question: &Question) -> Vec<(String, Vec<String>)> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn patterns(kind: Kind) -> &'static str {
+fn patterns(kind: Kind) -> String {
+    let both = |endings: &[&str]| {
+        endings
+            .iter()
+            .flat_map(|ending| {
+                [
+                    format!("*.{}", ending.to_ascii_lowercase()),
+                    format!("*.{}", ending.to_ascii_uppercase()),
+                ]
+            })
+            .collect::<Vec<String>>()
+            .join(" ")
+    };
     match kind {
-        Kind::Pdfs => "*.pdf *.PDF",
-        Kind::Pictures => "*.png *.jpg *.jpeg *.PNG *.JPG *.JPEG",
+        Kind::Pdfs => "*.pdf *.PDF".to_owned(),
+        Kind::Pictures => "*.png *.jpg *.jpeg *.PNG *.JPG *.JPEG".to_owned(),
+        Kind::PicturesAndPdfs => "*.png *.jpg *.jpeg *.pdf *.PNG *.JPG *.JPEG *.PDF".to_owned(),
+        Kind::Endings(endings) => both(endings),
+        Kind::Ending(ending) => both(&[ending]),
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn kind_name(kind: Kind) -> String {
+    match kind {
+        Kind::Pdfs => "PDF".to_owned(),
+        Kind::Pictures => "PNG, JPEG".to_owned(),
+        Kind::PicturesAndPdfs => "PNG, JPEG, PDF".to_owned(),
+        Kind::Endings(endings) => endings
+            .iter()
+            .map(|ending| ending.to_ascii_uppercase())
+            .collect::<Vec<String>>()
+            .join(", "),
+        Kind::Ending(ending) => ending.to_ascii_uppercase(),
     }
 }
 
@@ -117,12 +150,9 @@ pub(crate) fn zenity(question: &Question) -> Vec<String> {
         format!("--title={}", question.title),
         format!("--filename={}", start(question)),
     ];
-    let name = match question.kind {
-        Kind::Pdfs => "PDF",
-        Kind::Pictures => "PNG, JPEG",
-    };
     arguments.push(format!(
-        "--file-filter={name} | {}",
+        "--file-filter={} | {}",
+        kind_name(question.kind),
         patterns(question.kind)
     ));
     if question.naming.is_some() {
@@ -253,6 +283,20 @@ mod tests {
         assert!(!save.iter().any(|argument| argument.contains("overwrite")));
         let several = zenity(&question(None, true));
         assert!(several.contains(&"--multiple".to_owned()));
+    }
+
+    #[test]
+    fn the_desktop_dialog_for_the_chat_shows_pictures_and_pdfs() {
+        let mut ask = question(None, false);
+        ask.kind = Kind::PicturesAndPdfs;
+        let shown = zenity(&ask);
+        let filter = shown
+            .iter()
+            .find(|argument| argument.starts_with("--file-filter="))
+            .expect("a filter");
+        assert!(filter.contains("*.pdf"), "{filter}");
+        assert!(filter.contains("*.png"), "{filter}");
+        assert!(filter.contains("*.JPG"), "{filter}");
     }
 
     #[test]

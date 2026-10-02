@@ -13,6 +13,15 @@ pub struct Grey {
     pub pixels: Vec<u8>,
 }
 
+impl Grey {
+    #[must_use]
+    pub fn pgm(&self) -> Vec<u8> {
+        let mut bytes = format!("P5\n{} {}\n255\n", self.width, self.height).into_bytes();
+        bytes.extend_from_slice(&self.pixels);
+        bytes
+    }
+}
+
 #[derive(Debug)]
 pub enum OcrError {
     NotInstalled,
@@ -210,9 +219,7 @@ impl Tesseract {
             text
         });
         if let Some(mut stdin) = child.stdin.take() {
-            let written = stdin
-                .write_all(format!("P5\n{} {}\n255\n", image.width, image.height).as_bytes())
-                .and_then(|()| stdin.write_all(&image.pixels));
+            let written = stdin.write_all(&image.pgm());
             drop(stdin);
             if let Err(error) = written {
                 let _ = child.kill();
@@ -313,6 +320,18 @@ mod tests {
     use std::sync::atomic::AtomicBool;
 
     use super::{Grey, OcrError, Tesseract, failure, is_code};
+
+    #[test]
+    fn a_grey_image_is_written_as_a_pgm() {
+        let grey = Grey {
+            width: 3,
+            height: 2,
+            pixels: vec![0, 128, 255, 1, 2, 3],
+        };
+        let mut want = b"P5\n3 2\n255\n".to_vec();
+        want.extend_from_slice(&[0, 128, 255, 1, 2, 3]);
+        assert_eq!(grey.pgm(), want);
+    }
 
     #[test]
     fn a_language_code_cannot_be_an_argument() {

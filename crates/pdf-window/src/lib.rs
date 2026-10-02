@@ -13,6 +13,7 @@ mod chooser;
 mod chrome;
 mod clipboard;
 mod contents;
+mod dialog;
 mod draw_pen;
 mod draw_shape;
 mod drawing_speed;
@@ -32,6 +33,7 @@ mod link_tool;
 mod live_typing;
 #[cfg(not(target_arch = "wasm32"))]
 mod memory;
+mod menus;
 mod meter;
 mod moment;
 mod naming;
@@ -50,14 +52,29 @@ mod properties;
 mod reporting;
 mod room;
 pub mod save_file;
+mod shortcuts;
 mod stamp_tool;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod startup;
+mod status_line;
 mod system_dialog;
 mod take_out;
 mod text;
+#[cfg(not(target_arch = "wasm32"))]
+mod tools_marks;
+#[cfg(not(target_arch = "wasm32"))]
+mod tools_page;
+#[cfg(not(target_arch = "wasm32"))]
+mod tools_room;
+#[cfg(not(target_arch = "wasm32"))]
+mod tools_run;
+#[cfg(not(target_arch = "wasm32"))]
+mod tools_screens;
+#[cfg(not(target_arch = "wasm32"))]
+mod tools_settings;
 mod trace;
 mod unlock;
+mod view_mode;
 mod window_state;
 
 pub use window_state::ZOOMS;

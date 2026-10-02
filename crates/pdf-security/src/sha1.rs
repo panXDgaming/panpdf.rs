@@ -32,8 +32,8 @@ impl Running {
         let Self { mut state, blocks } = self;
         blocks.finish(8, |block| compress(&mut state, block));
         let mut digest = [0u8; 20];
-        for (out, word) in digest.chunks_exact_mut(4).zip(state) {
-            out.copy_from_slice(&word.to_be_bytes());
+        for (out, word) in digest.as_chunks_mut::<4>().0.iter_mut().zip(state) {
+            *out = word.to_be_bytes();
         }
         digest
     }
@@ -48,8 +48,8 @@ pub(crate) fn sha1(data: &[u8]) -> [u8; 20] {
 
 fn compress(state: &mut [u32; 5], block: &[u8; 64]) {
     let mut w = [0u32; 80];
-    for (word, octets) in w.iter_mut().zip(block.chunks_exact(4)) {
-        *word = u32::from_be_bytes(octets.try_into().expect("four octets"));
+    for (word, octets) in w.iter_mut().zip(block.as_chunks::<4>().0) {
+        *word = u32::from_be_bytes(*octets);
     }
     for index in 16..80 {
         w[index] = (w[index - 3] ^ w[index - 8] ^ w[index - 14] ^ w[index - 16]).rotate_left(1);

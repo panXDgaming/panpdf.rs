@@ -870,7 +870,9 @@ impl Interpreter {
 fn text_string(bytes: &[u8]) -> String {
     if let Some(units) = bytes.strip_prefix(&[0xFE, 0xFF]) {
         let units: Vec<u16> = units
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
             .collect();
         return char::decode_utf16(units)

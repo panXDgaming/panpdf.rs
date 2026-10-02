@@ -31,13 +31,34 @@ No account &middot; nothing uploaded &middot; the file stays on your computer
 - **Straight answers** -- an edit it cannot make exactly is refused with a
   reason, never guessed.
 
-## Get it
+## Install
 
-- **In the browser:** [panpdf.org](https://panpdf.org) -- on a computer;
-  phones are not supported yet.
-- **On the desktop:** Windows, Linux and macOS from the
-  [latest release](../../releases/latest). The installers are not signed yet,
-  so your system will warn you before it runs them.
+One command, no administrator rights. Run it again to update.
+
+**Windows** -- in PowerShell:
+
+```powershell
+irm https://panpdf.org/install.ps1 | iex
+```
+
+**Linux and macOS** -- in a terminal:
+
+```sh
+curl -fsSL https://panpdf.org/install.sh | sh
+```
+
+It downloads the latest release from this page, checks it against the
+release's `SHA256SUMS`, and installs it for you alone, with a menu entry and
+the `panpdf` command. To remove it: *Settings > Apps* on Windows, or
+`curl -fsSL https://panpdf.org/install.sh | sh -s -- --uninstall`.
+
+Other ways:
+
+- **Android:** [PanPDF.apk](https://github.com/panXDgaming/panpdf.ad/releases/latest/download/PanPDF.apk)
+- **In the browser:** [panpdf.org](https://panpdf.org), nothing to install.
+- **Installers and packages** (Setup.exe, DEB, RPM, AppImage, DMG) from the
+  [latest release](../../releases/latest). They are not signed yet, so your
+  system will warn you before it runs them.
 
 ## Build it yourself
 

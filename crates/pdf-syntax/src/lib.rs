@@ -154,7 +154,12 @@ pub(crate) fn parse_header_at_ending(
     }
 
     let header_end = HEADER_PREFIX.len() + 3;
-    match tail.get(header_end) {
+    let after = source.ahead(offset + header_end, 64);
+    let blanks = after
+        .iter()
+        .take_while(|byte| matches!(byte, b' ' | b'\t'))
+        .count();
+    match after.get(blanks) {
         Some(b'\r' | b'\n') => {}
         _ if ending == LineEnding::Optional => {}
         _ => return Err(HeaderError::MissingLineEnding),
@@ -237,5 +242,18 @@ mod tests {
             parse_header_strict(&source(b"%PDF-1.7x")),
             Err(HeaderError::MissingLineEnding)
         );
+        assert_eq!(
+            parse_header_strict(&source(b"%PDF-1.7 x\n")),
+            Err(HeaderError::MissingLineEnding)
+        );
+    }
+
+    #[test]
+    fn blanks_before_the_line_ending_are_still_the_header_line() {
+        for bytes in [&b"%PDF-1.3 \n"[..], b"%PDF-1.4\t \r\n", b"%PDF-1.5  \r"] {
+            let source = ByteStore::new(SourceId::new(1), bytes);
+            let header = parse_header_strict(&source).expect("a header line with blanks");
+            assert_eq!(source.resolve(header.span()), Ok(&bytes[..8]));
+        }
     }
 }

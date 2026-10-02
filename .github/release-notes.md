@@ -17,21 +17,31 @@ you did not touch.
 
 ## What's new
 
-- **Type in any language, in any font.** A font you choose writes what you
-  type; letters it does not have go in a face of the same kind, and the
-  letters after them stay in your font. Arabic and Hebrew words typed into
-  a left-to-right line are shaped and placed whole, and text you type
-  copies out exactly as typed.
-- **Documents that ask for a password can be edited.** Every edit -- text,
-  forms, links, pages, pictures, watermarks -- now works on a file opened
-  with its password, and is saved under the same protection. Pages can be
-  added from another protected file; you are asked for its password.
-- **Pictures in protected files show their true colours.** Pictures with a
-  colour table came out in wrong colours, or not at all, in encrypted files.
-- **The assistant no longer freezes the program.** A bulleted answer could
-  make the window use memory without end. The chat is also lighter while an
-  answer arrives, and a page mixing Thai or Lao with English is written the
-  first time instead of being refused and retried.
+- **Install with one command.** Windows (PowerShell):
+  `irm https://panpdf.org/install.ps1 | iex` -- Linux and macOS:
+  `curl -fsSL https://panpdf.org/install.sh | sh`. No administrator rights,
+  a Start menu or applications-menu entry, and run it again to update.
+- **Every converter inside the program.** A Tools room on the home screen
+  and in the menus: PDF to Word, Excel, PowerPoint, JPG, HTML, Markdown and
+  text, and back; compress, repair, OCR, PDF/A, protect, unlock, sign,
+  redact and compare -- all on your computer, nothing uploaded.
+- **An assistant that finishes the job.** It plans a whole task, carries it
+  out, and everything it did can be undone in one step. It can convert,
+  make scanned pages searchable, add links, shapes and form fields, write a
+  new document from nothing -- and draw: a cartoon for a lesson, a diagram,
+  a sign. A "Get a key" link beside each provider (Gemini's is free).
+- **Nineteen shapes.** Rectangle, rounded rectangle, oval, triangles,
+  diamond, parallelogram, trapezoid, pentagon, hexagon, octagon, star,
+  heart, cross, block arrow, speech bubble, cloud, moon and lightning.
+- **Markdown, all of it.** Documents the assistant writes read every example
+  of CommonMark 0.31.2, with GitHub's tables, task lists and
+  strikethrough, footnotes, highlight, superscript and subscript, notes and
+  simple HTML -- no stray marks on the page.
+- **Read first, edit when you choose.** A document opens for reading;
+  the Edit button brings every tool. A protected document asks about its
+  restrictions only when you start editing.
+- **Calmer windows.** Menus without repeats, quieter dialogs that can be
+  moved, and High quality or Fast and light text recognition.
 
 ## Download
 

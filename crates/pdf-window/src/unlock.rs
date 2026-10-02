@@ -3,6 +3,7 @@ use eframe::egui;
 use pdf_app::wording::Message;
 
 use crate::app::name_of;
+use crate::dialog;
 use crate::window_state::Window;
 
 const WIDTH: f32 = 420.0;
@@ -30,42 +31,45 @@ impl Window {
         let lang = self.lang;
         let mut answered = false;
         let mut gave_up = false;
-        let modal = egui::Modal::new(egui::Id::new("document-locked")).show(ctx, |ui| {
-            ui.set_width(WIDTH);
-            ui.heading(Message::DocumentIsLocked(name_of(&unlock.path)).say(lang));
-            ui.add_space(4.0);
-            ui.label(if unlock.tried {
-                Message::PasswordRefused.say(lang)
+        let title = Message::DocumentIsLocked(name_of(&unlock.path)).say(lang);
+        let about = if unlock.tried {
+            Message::PasswordRefused
+        } else {
+            Message::AskForThePassword
+        };
+        let spec = dialog::Spec {
+            id: "document-locked",
+            width: WIDTH,
+        };
+        let modal = dialog::modal(ctx, &spec, |ui| {
+            let leave = Message::CancelLeaving.say(lang);
+            gave_up = dialog::header(ui, &title, None, Some(&leave));
+            let tone = if unlock.tried {
+                dialog::Tone::Warning
             } else {
-                Message::AskForThePassword.say(lang)
-            });
-            ui.add_space(6.0);
+                dialog::Tone::Calm
+            };
+            dialog::note(ui, tone, &about.say(lang));
+            ui.add_space(10.0);
             let box_ = ui.add(
                 egui::TextEdit::singleline(&mut unlock.typed)
                     .password(!unlock.shown)
                     .desired_width(f32::INFINITY)
-                    .hint_text("••••••••"),
+                    .hint_text("\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}"),
             );
             if unlock.focus {
                 box_.request_focus();
                 unlock.focus = false;
             }
             answered = box_.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
-            ui.add_space(4.0);
-            ui.checkbox(&mut unlock.shown, Message::ShowThePassword.say(lang));
             ui.add_space(6.0);
-            ui.label(
-                egui::RichText::new(Message::EitherPasswordOpensIt.say(lang))
-                    .small()
-                    .color(ui.visuals().weak_text_color()),
-            );
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
+            ui.checkbox(&mut unlock.shown, Message::ShowThePassword.say(lang));
+            ui.add_space(4.0);
+            dialog::small(ui, &Message::EitherPasswordOpensIt.say(lang));
+            dialog::footer(ui, |ui| {
                 let ready = !unlock.typed.is_empty();
-                answered |= ui
-                    .add_enabled(ready, egui::Button::new(Message::Unlock.say(lang)))
-                    .clicked();
-                gave_up |= ui.button(Message::CancelLeaving.say(lang)).clicked();
+                answered |= dialog::primary(ui, &Message::Unlock.say(lang), ready).clicked();
+                gave_up |= dialog::secondary(ui, &leave).clicked();
             });
         });
         if gave_up || modal.should_close() {

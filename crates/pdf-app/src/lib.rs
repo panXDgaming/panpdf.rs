@@ -1,11 +1,13 @@
 #![forbid(unsafe_code)]
 
 pub mod addresses;
+pub mod ai_chats;
 pub mod ai_choice;
 pub mod ai_key;
 pub mod ai_layout;
 pub mod ai_permission;
 pub mod ai_recall;
+pub mod ai_run;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod ai_status;
 pub mod arrange;
@@ -29,6 +31,7 @@ pub mod recent;
 pub mod speed;
 pub mod strip;
 pub mod tiles;
+pub mod tools;
 pub mod trouble;
 pub mod view;
 pub mod wording;

@@ -1,0 +1,20 @@
+[package]
+name = "convert-office-read"
+description = "Reading Office files: raw DEFLATE, ZIP archives, an XML pull reader, OPC relationships"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+convert-zip.workspace = true
+
+[dev-dependencies]
+pdf-syntax.workspace = true
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

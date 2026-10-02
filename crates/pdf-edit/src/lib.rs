@@ -10,6 +10,7 @@ pub mod destination;
 mod field_group;
 mod field_look;
 pub mod field_settings;
+pub mod figures;
 mod fill_field;
 pub mod form;
 mod form_edit;

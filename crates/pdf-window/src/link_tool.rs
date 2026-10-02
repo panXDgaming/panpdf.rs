@@ -8,6 +8,7 @@ use pdf_edit::link::{Arrival, Highlight, LinkBorder, Look, Target};
 use pdf_syntax::Reference;
 
 use crate::canvas::box_on_screen;
+use crate::dialog;
 use crate::field_properties::beside_or_under;
 use crate::format::{icon_button, rule};
 use crate::icons::Icon;
@@ -698,10 +699,8 @@ impl Window {
         let lang = self.lang;
         let pages = self.editor.page_count();
         let known = self.editor.named_places();
-        let placed = kept_on_screen(
-            beside_or_under(box_on_screen(laid.placed, about), ctx.content_rect()),
-            ctx.content_rect(),
-        );
+        let canvas = self.canvas;
+        let placed = beside_or_under(box_on_screen(laid.placed, about), canvas);
         let Some(draft) = self.link_draft.as_mut() else {
             return;
         };
@@ -721,6 +720,7 @@ impl Window {
             &known,
             Asking {
                 placed,
+                canvas,
                 pages,
                 making,
                 lang,
@@ -797,6 +797,7 @@ impl Window {
 
 struct Asking {
     placed: egui::Pos2,
+    canvas: egui::Rect,
     pages: usize,
     making: bool,
     lang: pdf_app::wording::Lang,
@@ -825,6 +826,7 @@ fn ask_where_it_goes(
 ) -> Answered {
     let Asking {
         placed,
+        canvas,
         pages,
         making,
         lang,
@@ -836,40 +838,33 @@ fn ask_where_it_goes(
         tab: asking.tab,
         ..Answered::default()
     };
-    egui::Window::new(Message::LinkProperties.say(lang))
-        .id(egui::Id::new((
-            "link target",
-            placed.x as i32,
-            placed.y as i32,
-        )))
-        .collapsible(false)
-        .resizable(false)
-        .default_pos(placed)
-        .fixed_size(egui::vec2(PANEL_WIDTH, 0.0))
-        .constrain(false)
-        .show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                for (choice, word) in [
-                    (LinkTab::Goes, Message::LinkGoesTo),
-                    (LinkTab::Appearance, Message::FieldAppearance),
-                ] {
-                    ui.selectable_value(&mut answered.tab, choice, word.say(lang));
-                }
-            });
-            ui.separator();
-            match answered.tab {
-                LinkTab::Goes => where_it_goes(ui, draft, (pages, names), lang),
-                LinkTab::Appearance => how_it_is_drawn(ui, &mut draft.look, lang),
-            }
-            ui.separator();
-            ui.horizontal(|ui| {
-                answered.apply = ui.button(apply_word).clicked();
-                if !making {
-                    answered.remove = ui.button(Message::TakeTheLinkOff.say(lang)).clicked();
-                }
-                answered.close = ui.button(close_word).clicked();
-            });
+    let id = egui::Id::new(("link target", placed.x as i32, placed.y as i32));
+    let title = Message::LinkProperties.say(lang);
+    dialog::beside(ctx, canvas, (id, placed), PANEL_WIDTH, |ui, room| {
+        answered.close = dialog::header(ui, &title, None, Some(&close_word));
+        let tabs = [
+            (LinkTab::Goes, Message::LinkGoesTo.say(lang)),
+            (LinkTab::Appearance, Message::FieldAppearance.say(lang)),
+        ];
+        dialog::segments(ui, "link-tab", &mut answered.tab, &tabs);
+        ui.add_space(10.0);
+        dialog::scrolling(ui, "link-body", room, |ui| match answered.tab {
+            LinkTab::Goes => where_it_goes(ui, draft, (pages, names), lang),
+            LinkTab::Appearance => how_it_is_drawn(ui, &mut draft.look, lang),
         });
+        dialog::footer_with(
+            ui,
+            |ui| {
+                if !making && dialog::secondary(ui, &Message::TakeTheLinkOff.say(lang)).clicked() {
+                    answered.remove = true;
+                }
+            },
+            |ui| {
+                answered.apply = dialog::primary(ui, &apply_word, true).clicked();
+                answered.close |= dialog::secondary(ui, &close_word).clicked();
+            },
+        );
+    });
     answered
 }
 
@@ -929,6 +924,7 @@ fn where_it_goes(
 }
 
 fn somewhere_else(ui: &mut egui::Ui, draft: &mut LinkDraft, names: &[Spot], lang: Lang) {
+    ui.add_space(8.0);
     ui.radio_value(
         &mut draft.goes,
         Goes::AnAddress,
@@ -941,6 +937,7 @@ fn somewhere_else(ui: &mut egui::Ui, draft: &mut LinkDraft, names: &[Spot], lang
                 .desired_width(PANEL_WIDTH - 24.0),
         );
     });
+    ui.add_space(8.0);
     ui.radio_value(
         &mut draft.goes,
         Goes::AName,
@@ -973,6 +970,7 @@ fn somewhere_else(ui: &mut egui::Ui, draft: &mut LinkDraft, names: &[Spot], lang
                 });
         }
     });
+    ui.add_space(8.0);
     ui.radio_value(
         &mut draft.goes,
         Goes::ADocument,
@@ -989,54 +987,45 @@ fn somewhere_else(ui: &mut egui::Ui, draft: &mut LinkDraft, names: &[Spot], lang
 
 fn how_it_is_drawn(ui: &mut egui::Ui, look: &mut Look, lang: Lang) {
     let mut visible = look.width > 0.0;
-    ui.horizontal(|ui| {
-        if ui
-            .radio_value(&mut visible, false, Message::LinkInvisible.say(lang))
-            .clicked()
-        {
-            look.width = 0.0;
-        }
-        if ui
-            .radio_value(&mut visible, true, Message::LinkVisible.say(lang))
-            .clicked()
-            && look.width <= 0.0
-        {
-            look.width = THICKNESSES[0].0;
-        }
-    });
+    let shown = [
+        (false, Message::LinkInvisible.say(lang)),
+        (true, Message::LinkVisible.say(lang)),
+    ];
+    if dialog::segments(ui, "link-visible", &mut visible, &shown) {
+        look.width = if visible { THICKNESSES[0].0 } else { 0.0 };
+    }
+    ui.add_space(8.0);
     ui.add_enabled_ui(visible, |ui| {
-        ui.horizontal(|ui| {
-            ui.label(Message::FieldLineThickness.say(lang));
-            for (width, word) in THICKNESSES {
-                let chosen = (look.width - width).abs() < 0.01;
-                if ui.selectable_label(chosen, word.say(lang)).clicked() {
-                    look.width = width;
-                }
+        dialog::labelled(ui, &Message::FieldLineThickness.say(lang), |ui| {
+            let mut at = THICKNESSES
+                .iter()
+                .position(|(width, _)| (look.width - width).abs() < 0.01);
+            let options = THICKNESSES
+                .iter()
+                .enumerate()
+                .map(|(at, (_, word))| (Some(at), word.say(lang)))
+                .collect::<Vec<_>>();
+            if dialog::segments(ui, "link-thickness", &mut at, &options)
+                && let Some((width, _)) = at.and_then(|at| THICKNESSES.get(at))
+            {
+                look.width = *width;
             }
         });
-        ui.horizontal(|ui| {
-            ui.label(Message::FieldLineStyle.say(lang));
-            for (style, word) in BORDERS {
-                if ui
-                    .selectable_label(look.style == style, word.say(lang))
-                    .clicked()
-                {
-                    look.style = style;
-                }
-            }
+        dialog::labelled(ui, &Message::FieldLineStyle.say(lang), |ui| {
+            let options = BORDERS.map(|(style, word)| (style, word.say(lang)));
+            dialog::segments(ui, "link-style", &mut look.style, &options);
         });
-        ui.horizontal(|ui| {
-            ui.label(Message::FieldBorderColour.say(lang));
+        dialog::labelled(ui, &Message::FieldBorderColour.say(lang), |ui| {
             let mut colour = colour_of(*look);
             if ui.color_edit_button_rgb(&mut colour).changed() {
                 look.colour = Some(colour.map(|part| (f64::from(part) * 1000.0).round() / 1000.0));
             }
         });
     });
-    ui.horizontal(|ui| {
-        ui.label(Message::LinkHighlight.say(lang));
+    dialog::labelled(ui, &Message::LinkHighlight.say(lang), |ui| {
         egui::ComboBox::from_id_salt("link highlight")
             .selected_text(highlight_word(look.highlight).say(lang))
+            .width(ui.available_width() - 8.0)
             .show_ui(ui, |ui| {
                 for choice in [
                     Highlight::None,
@@ -1053,22 +1042,6 @@ fn how_it_is_drawn(ui: &mut egui::Ui, look: &mut Look, lang: Lang) {
             });
     });
 }
-
-fn kept_on_screen(placed: egui::Pos2, screen: egui::Rect) -> egui::Pos2 {
-    let x = placed
-        .x
-        .min(screen.right() - PANEL_WIDTH - MARGIN)
-        .max(screen.left() + MARGIN);
-    let y = placed
-        .y
-        .min(screen.bottom() - PANEL_HEIGHT - MARGIN)
-        .max(screen.top() + MARGIN);
-    egui::pos2(x, y)
-}
-
-const PANEL_HEIGHT: f32 = 350.0;
-
-const MARGIN: f32 = 8.0;
 
 fn arrival_asked(draft: &LinkDraft) -> Result<Arrival, Message> {
     let Arrival::Percent(_) = draft.arrival else {
@@ -1212,7 +1185,6 @@ fn shortened(address: &str) -> String {
 mod tests {
     use super::{draft_of, shortened, target_of};
     use crate::window_state::{Goes, LinkDraft};
-    use eframe::egui;
     use pdf_app::document::LinkBox;
     use pdf_edit::link::{Arrival, Look, Target};
     use pdf_syntax::Reference;
@@ -1367,16 +1339,6 @@ mod tests {
         assert_eq!(panel.file, "a.pdf");
         assert_eq!(panel.page_number, "4");
         assert_eq!(panel.arrival, Arrival::FitPage);
-    }
-
-    #[test]
-    fn the_panel_is_kept_on_the_screen() {
-        let screen = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1400.0, 950.0));
-        let low = super::kept_on_screen(egui::pos2(1300.0, 900.0), screen);
-        assert!(low.x + super::PANEL_WIDTH <= screen.right(), "{low:?}");
-        assert!(low.y + super::PANEL_HEIGHT <= screen.bottom(), "{low:?}");
-        let fits = egui::pos2(300.0, 200.0);
-        assert_eq!(super::kept_on_screen(fits, screen), fits);
     }
 
     #[test]

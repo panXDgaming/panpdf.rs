@@ -15,8 +15,7 @@ use pdf_app::view::{
 use pdf_app::wording::Message;
 
 use crate::window_state::{
-    AHEAD, COARSE, KEEP_PAGE_BYTES, KEEP_PAGES, Laid, Pointing, SPARE_TEXTURES, Scene, Tool,
-    Window, ZOOMS,
+    AHEAD, COARSE, KEEP_PAGE_BYTES, KEEP_PAGES, Laid, Pointing, SPARE_TEXTURES, Scene, Tool, Window,
 };
 
 pub(crate) const DESK_MARGIN: f32 = 16.0;
@@ -24,12 +23,13 @@ pub(crate) const DESK_MARGIN: f32 = 16.0;
 impl Window {
     pub(crate) fn retire_stale(&mut self, page: usize, region: Option<[f64; 4]>) {
         let epoch = self.editor.epoch();
+        let held: std::collections::BTreeSet<usize> =
+            self.tiles.on_page(page).map(|(id, _)| id.zoom).collect();
         let touched: Option<BTreeMap<usize, [u32; 4]>> = region.map(|region| {
-            ZOOMS
-                .iter()
-                .enumerate()
-                .filter_map(|(rung, scale)| {
-                    Some((rung, self.editor.region_in_pixels(page, *scale, region)?))
+            held.iter()
+                .filter_map(|&rung| {
+                    let scale = crate::window_state::render_scale(rung)?;
+                    Some((rung, self.editor.region_in_pixels(page, scale, region)?))
                 })
                 .collect()
         });
@@ -111,6 +111,7 @@ impl Window {
             content,
         );
         let clip = ui.clip_rect().intersect(whole);
+        self.canvas = ui.clip_rect();
         let painter = ui.painter_at(clip);
 
         let band = clip.expand(AHEAD);
@@ -121,6 +122,9 @@ impl Window {
         self.laid.clear();
         let mut wanted: Vec<(f32, TileId, [u32; 4], f64)> = Vec::new();
         let mut drawn: Vec<TileId> = Vec::new();
+        let mut edges: Vec<egui::Shape> = Vec::new();
+        let beneath = painter.add(egui::Shape::Noop);
+        let edge = ui.visuals().widgets.noninteractive.bg_stroke;
         let middle = clip.center();
         let painting = crate::moment::Moment::now();
         for page in pages.clone() {
@@ -128,10 +132,18 @@ impl Window {
                 continue;
             };
             self.laid.push(laid);
+            edges.push(crate::pages::lift(laid.rect, 16));
+            edges.push(egui::Shape::rect_stroke(
+                laid.rect,
+                0.0,
+                edge,
+                egui::StrokeKind::Outside,
+            ));
             self.present(laid, band);
             self.paint_page(&painter, laid, band, middle, &mut wanted, &mut drawn);
             self.paint_live(ctx, &painter, laid);
         }
+        painter.set(beneath, egui::Shape::Vec(edges));
         let now = self.frame;
         let (pages_drawn, tiles_drawn, tiles_wanted) = (self.laid.len(), drawn.len(), wanted.len());
         for id in drawn {
@@ -159,22 +171,32 @@ impl Window {
         self.scenes.retain(|page, _| on_screen.contains(page));
         let glass = ui.painter_at(ui.clip_rect());
         let overlaying = crate::moment::Moment::now();
-        if self.show_frames {
-            for laid in self.laid.clone() {
-                let Some(scene) = self.scene_for(laid.page) else {
-                    continue;
-                };
-                if !self.tool.draws_on_the_page() {
-                    if self.framed.text {
-                        Self::blocks_overlay(&glass, laid, &scene);
-                    }
-                    Self::objects_overlay(&glass, laid, &scene, self.framed);
-                }
-                if !self.live_frame(&glass, laid) {
-                    Self::selected_block(&glass, laid, &scene);
-                }
-                self.caret_overlay(&glass, laid, &scene);
+        let hovered = self.hovered_on_the_page(ctx, &response);
+        let framed = if self.show_frames {
+            self.framed
+        } else {
+            crate::window_state::Framed::none()
+        };
+        for laid in self.laid.clone() {
+            let Some(scene) = self.scene_for(laid.page) else {
+                continue;
+            };
+            if self.viewing {
+                self.reading_overlay(&glass, laid, &scene);
+                continue;
             }
+            if !self.tool.draws_on_the_page() {
+                if framed.text {
+                    Self::blocks_overlay(&glass, laid, &scene);
+                } else if let Some(over) = hovered {
+                    Self::hovered_overlay(&glass, laid, &scene, over);
+                }
+                Self::objects_overlay(&glass, laid, &scene, framed);
+            }
+            if !self.live_frame(&glass, laid) {
+                Self::selected_block(&glass, laid, &scene);
+            }
+            self.caret_overlay(&glass, laid, &scene);
         }
         for laid in self.laid.clone() {
             self.fields_on_the_page(&glass, laid);
@@ -198,6 +220,7 @@ impl Window {
         self.link_panel(ctx);
         self.named_places_panel(ctx);
         self.stamp_panel(ctx);
+        self.picture_menu(ctx);
         self.ocr_panel(ctx);
         self.scan_notice(ctx, ui.clip_rect());
         self.print_dialog(ctx);
@@ -314,10 +337,13 @@ impl Window {
             if stale && id.zoom != rung {
                 continue;
             }
-            let (Some(scale), Some(texture)) = (ZOOMS.get(id.zoom), self.textures.get(&id)) else {
+            let (Some(scale), Some(texture)) = (
+                crate::window_state::render_scale(id.zoom),
+                self.textures.get(&id),
+            ) else {
                 continue;
             };
-            let Some(where_) = self.tile_rect(laid, box_pixels, *scale) else {
+            let Some(where_) = self.tile_rect(laid, box_pixels, scale) else {
                 continue;
             };
             if !where_.intersects(band) {
@@ -332,8 +358,8 @@ impl Window {
             drawn.push(id);
         }
         if rung != COARSE
-            && let Some(coarse) = ZOOMS.get(COARSE)
-            && let Some(page_pixels) = self.editor.page_pixels(laid.page, *coarse)
+            && let Some(coarse) = crate::window_state::render_scale(COARSE)
+            && let Some(page_pixels) = self.editor.page_pixels(laid.page, coarse)
         {
             let epoch = self.editor.epoch();
             let urgency = if self.tiles.stale_on(laid.page) {
@@ -354,27 +380,29 @@ impl Window {
                         continue;
                     }
                     if let Some(box_pixels) = tile_box(page_pixels, col, row) {
-                        wanted.push((urgency, id, box_pixels, *coarse));
+                        wanted.push((urgency, id, box_pixels, coarse));
                     }
                 }
             }
         }
 
-        let Some(scale) = ZOOMS.get(rung) else { return };
+        let Some(scale) = crate::window_state::render_scale(rung) else {
+            return;
+        };
         let epoch = self.editor.epoch();
         for (id, box_pixels, where_) in self.fine_tiles(laid, band) {
             if self.tiles.wants(id, epoch) {
-                wanted.push((where_.center().distance(middle), id, box_pixels, *scale));
+                wanted.push((where_.center().distance(middle), id, box_pixels, scale));
             }
         }
     }
 
     fn fine_tiles(&self, laid: Laid, band: egui::Rect) -> Vec<(TileId, [u32; 4], egui::Rect)> {
         let rung = self.rung();
-        let Some(scale) = ZOOMS.get(rung) else {
+        let Some(scale) = crate::window_state::render_scale(rung) else {
             return Vec::new();
         };
-        let Some(page_pixels) = self.editor.page_pixels(laid.page, *scale) else {
+        let Some(page_pixels) = self.editor.page_pixels(laid.page, scale) else {
             return Vec::new();
         };
         let visible = laid.rect.intersect(band);
@@ -398,7 +426,7 @@ impl Window {
                     row,
                 };
                 let box_pixels = tile_box(page_pixels, col, row)?;
-                let where_ = self.tile_rect(laid, box_pixels, *scale)?;
+                let where_ = self.tile_rect(laid, box_pixels, scale)?;
                 Some((id, box_pixels, where_))
             })
             .collect()
@@ -496,6 +524,72 @@ impl Window {
             };
             let view = Arc::clone(&leaf.view);
             self.painter.draw(id, view, scale, window, epoch);
+        }
+    }
+
+    fn hovered_on_the_page(
+        &self,
+        ctx: &egui::Context,
+        response: &egui::Response,
+    ) -> Option<Pointing> {
+        if self.show_frames
+            || self.drag.is_some()
+            || self.tool.draws_on_the_page()
+            || !response.hovered()
+        {
+            return None;
+        }
+        let at = ctx.input(|input| input.pointer.hover_pos())?;
+        let (page, point) = self.page_point(at)?;
+        match self.clicked_at(page, point, false) {
+            over @ (Pointing::Block { .. } | Pointing::Object { .. }) => Some(over),
+            Pointing::Text { page, block, .. } => Some(Pointing::Block { page, block }),
+            Pointing::Nothing => None,
+        }
+    }
+
+    fn hovered_overlay(painter: &egui::Painter, laid: Laid, scene: &Scene, over: Pointing) {
+        let overlay = &scene.leaf.overlay;
+        match over {
+            Pointing::Block { page, block }
+                if page == laid.page && scene.pointing.block_on(page) != Some(block) =>
+            {
+                let Some(held) = overlay.blocks.get(block) else {
+                    return;
+                };
+                let quad = Quad::from_pixels(held.quad);
+                let shown = match scene.frames.get(block) {
+                    Some(frame) if quad.upright() => Quad::of(*frame),
+                    _ => quad,
+                };
+                let outline = quad_on_screen(laid.placed, &frame_quad(&shown));
+                fill_quad(
+                    painter,
+                    outline,
+                    egui::Color32::from_rgba_unmultiplied(0, 90, 200, 14),
+                );
+                Self::dashed_frame(
+                    painter,
+                    outline,
+                    1.0,
+                    egui::Color32::from_rgba_unmultiplied(0, 90, 200, 150),
+                );
+            }
+            Pointing::Object { page, object }
+                if page == laid.page && scene.pointing.object_on(page) != Some(object) =>
+            {
+                let Some(held) = overlay.objects.get(object) else {
+                    return;
+                };
+                let frame = quad_on_screen(laid.placed, &frame_quad(&Quad::from_pixels(held.quad)));
+                stroke_quad(
+                    painter,
+                    frame,
+                    1.0,
+                    egui::Color32::from_rgba_unmultiplied(0, 130, 90, 150),
+                );
+            }
+            _ => {}
         }
     }
 
@@ -725,6 +819,19 @@ impl Window {
                 )]
                 let along = |fraction: f64| from + (to - from) * (fraction as f32);
                 painter.line_segment([along(start), along(end)], stroke);
+            }
+        }
+    }
+
+    fn reading_overlay(&self, painter: &egui::Painter, laid: Laid, scene: &Scene) {
+        let overlay = &scene.leaf.overlay;
+        for (line, from, to) in self.reading_spans(laid.page) {
+            if let Some(band) = selection_quad(&overlay.carets, &overlay.clusters, line, from, to) {
+                fill_quad(
+                    painter,
+                    quad_on_screen(laid.placed, &band),
+                    egui::Color32::from_rgba_unmultiplied(0, 90, 200, 105),
+                );
             }
         }
     }

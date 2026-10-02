@@ -24,6 +24,7 @@ pdf-syntax = { path = "../pdf-syntax" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 pdf-agent = { path = "../pdf-agent" }
+pdf-convert = { path = "../pdf-convert", features = ["run"] }
 # Both renderers, and `wgpu` tried first (`app::run`). `glow` alone meant
 # OpenGL alone, and on Windows OpenGL comes from the vendor's driver or from
 # nowhere: a fresh install, a Remote Desktop session or a virtual machine has

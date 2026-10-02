@@ -5,7 +5,7 @@ use pdf_app::live::Pending;
 use pdf_app::wording::Message;
 
 use crate::canvas::box_on_screen;
-use crate::window_state::{Laid, Pointing, Window, ZOOMS};
+use crate::window_state::{Laid, Pointing, Window};
 
 pub(crate) struct LiveTyping {
     pub(crate) page: usize,
@@ -286,10 +286,10 @@ impl Window {
         let Some(picture) = typing.picture.as_ref() else {
             return;
         };
-        let Some(drawn_at) = ZOOMS.get(picture.rung) else {
+        let Some(drawn_at) = crate::window_state::render_scale(picture.rung) else {
             return;
         };
-        let Some(page_pixels) = self.editor.page_pixels(laid.page, *drawn_at) else {
+        let Some(page_pixels) = self.editor.page_pixels(laid.page, drawn_at) else {
             return;
         };
         #[allow(clippy::cast_precision_loss)]
@@ -406,7 +406,7 @@ impl Window {
     }
 
     fn draw_live(&mut self, ctx: &egui::Context, rung: usize) {
-        let Some(scale) = ZOOMS.get(rung).copied() else {
+        let Some(scale) = crate::window_state::render_scale(rung) else {
             return;
         };
         let Some(live) = self.live.as_mut() else {

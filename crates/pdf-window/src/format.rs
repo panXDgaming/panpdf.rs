@@ -310,11 +310,12 @@ pub(crate) fn icon_button(
             visuals.text_color()
         };
         icon.draw_tinted(ui.painter(), rect.shrink(5.0), colour, enabled);
+        crate::dialog::focus_ring(ui, &response, rect, 5.0);
     }
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, hover));
     response.on_hover_text(hover)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn quiet_icon_button(ui: &mut egui::Ui, icon: Icon, hover: &str) -> egui::Response {
     const SIDE: f32 = 22.0;
     let (rect, response) = ui.allocate_exact_size(egui::vec2(SIDE, SIDE), egui::Sense::click());
@@ -328,7 +329,9 @@ pub(crate) fn quiet_icon_button(ui: &mut egui::Ui, icon: Icon, hover: &str) -> e
             visuals.weak_text_color()
         };
         icon.draw(ui.painter(), rect.shrink(4.0), colour);
+        crate::dialog::focus_ring(ui, &response, rect, 4.0);
     }
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, hover));
     response.on_hover_text(hover)
 }
 
@@ -368,6 +371,7 @@ fn opener(
         let inner =
             egui::Rect::from_min_max(rect.min, egui::pos2(rect.right() - 14.0, rect.bottom()));
         face(ui, inner);
+        crate::dialog::focus_ring(ui, &response, rect, 5.0);
     }
     response.on_hover_text(hover)
 }
@@ -467,9 +471,11 @@ fn size_box(
             if field.changed() {
                 *held = Some(text.clone());
             }
-            if field.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)) {
+            if field.lost_focus() {
+                let entered = ui.input(|input| input.key_pressed(egui::Key::Enter));
                 *held = None;
-                if text.trim() != shown
+                if entered
+                    && text.trim() != shown
                     && let Ok(points) = text.trim().parse::<f64>()
                     && points > 0.0
                 {
@@ -483,6 +489,9 @@ fn size_box(
                 false,
                 size.is_some(),
             );
+            if smaller.clicked() || larger.clicked() {
+                *held = None;
+            }
             if let Some(size) = size {
                 if smaller.clicked() {
                     chosen = Some(step_size(size, false));

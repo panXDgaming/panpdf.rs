@@ -120,14 +120,14 @@ mod tests {
     #[test]
     fn a_list_reads_back_as_it_was_written() {
         let list = vec![
-            entry("/home/someone/report.pdf", 4, 1_700_000_000),
-            entry("/home/someone/tab\there.pdf", 0, 1_600_000_000),
-            entry("/home/someone/ລາວ ไทย.pdf", 260, 5),
+            entry("/srv/papers/report.pdf", 4, 1_700_000_000),
+            entry("/srv/papers/tab\there.pdf", 0, 1_600_000_000),
+            entry("/srv/papers/ລາວ ไทย.pdf", 260, 5),
         ];
         let text = write(&list);
         assert_eq!(
             text,
-            "1700000000\t4\t/home/someone/report.pdf\n1600000000\t0\t/home/someone/tab\there.pdf\n5\t260\t/home/someone/ລາວ ไทย.pdf\n"
+            "1700000000\t4\t/srv/papers/report.pdf\n1600000000\t0\t/srv/papers/tab\there.pdf\n5\t260\t/srv/papers/ລາວ ไทย.pdf\n"
         );
         assert_eq!(read(&text), list);
     }

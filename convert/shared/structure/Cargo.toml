@@ -1,0 +1,30 @@
+[package]
+name = "convert-structure"
+description = "What a PDF page says, as structure: reading order, paragraphs, headings, lists, tables, pictures, text styles"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+# Pictures on the page, drawn alone with the engine's renderer and written as PNG.
+# Off for the tools that write text only, so they do not link the renderer.
+pictures = ["dep:pdf-render"]
+
+[dependencies]
+pdf-bytes.workspace = true
+pdf-content.workspace = true
+pdf-syntax.workspace = true
+pdf-paint.workspace = true
+pdf-semantics.workspace = true
+pdf-edit.workspace = true
+pdf-session.workspace = true
+pdf-render = { workspace = true, optional = true }
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

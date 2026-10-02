@@ -487,6 +487,51 @@ pub fn deletion_between(
     }
 }
 
+#[must_use]
+pub fn page_rows(stops: &[CaretStop]) -> Vec<usize> {
+    let mut rows: Vec<usize> = stops.iter().map(|stop| stop.line).collect();
+    rows.sort_unstable();
+    rows.dedup();
+    rows
+}
+
+#[must_use]
+pub fn text_of_spans(clusters: &[TextClusterBox], spans: &[(usize, usize, usize)]) -> String {
+    let mut out = String::new();
+    for (n, &(line, from, to)) in spans.iter().enumerate() {
+        if n > 0 {
+            out.push('\n');
+        }
+        let mut row: Vec<&TextClusterBox> = clusters
+            .iter()
+            .filter(|cluster| cluster.line == line && (from..to).contains(&cluster.index_in_line))
+            .collect();
+        row.sort_by_key(|cluster| cluster.index_in_line);
+        let infer = !row.iter().any(|cluster| is_a_gap(cluster));
+        let tallest = row
+            .iter()
+            .filter_map(|cluster| cluster.box_pixels)
+            .map(|quad| quad[3] - quad[1])
+            .fold(0.0_f64, f64::max);
+        let mut before: Option<[f64; 4]> = None;
+        for cluster in row {
+            let Some(text) = cluster.text.as_deref() else {
+                before = cluster.box_pixels.or(before);
+                continue;
+            };
+            if infer
+                && let (Some(left), Some(right)) = (before, cluster.box_pixels)
+                && right[0] - left[2] > tallest / 3.0
+            {
+                out.push(' ');
+            }
+            out.push_str(text);
+            before = cluster.box_pixels.or(before);
+        }
+    }
+    out
+}
+
 fn is_a_gap(cluster: &TextClusterBox) -> bool {
     cluster
         .text
@@ -1540,6 +1585,68 @@ mod tests {
         grow, handle_at, handles, on_the_ink, resized, run_at, selection_between, selection_quad,
         size_at, standing_block_at, stands, texture_box, toolbar_at, visible_after, zoom_anchor,
     };
+    use super::{page_rows, text_of_spans};
+
+    fn reading_cluster(
+        line: usize,
+        index_in_line: usize,
+        text: Option<&str>,
+        x: f64,
+    ) -> TextClusterBox {
+        TextClusterBox {
+            anchor: "run".to_owned(),
+            glyphs: index_in_line..index_in_line + 1,
+            box_pixels: Some([
+                x,
+                10.0 + 20.0 * f64::from(u32::try_from(line).unwrap_or(0)),
+                x + 8.0,
+                22.0 + 20.0 * f64::from(u32::try_from(line).unwrap_or(0)),
+            ]),
+            stacked: false,
+            line,
+            index_in_line,
+            text: text.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn a_reading_selection_says_its_words_and_its_rows() {
+        let clusters = vec![
+            reading_cluster(0, 0, Some("a"), 0.0),
+            reading_cluster(0, 1, Some("b"), 8.5),
+            reading_cluster(0, 2, Some(" "), 17.0),
+            reading_cluster(0, 3, Some("c"), 25.0),
+            reading_cluster(0, 4, Some("d"), 45.0),
+            reading_cluster(1, 0, Some("e"), 0.0),
+            reading_cluster(1, 1, None, 9.0),
+            reading_cluster(1, 2, Some("f"), 18.0),
+        ];
+        let mut clusters = clusters;
+        clusters.push(reading_cluster(2, 0, Some("g"), 0.0));
+        clusters.push(reading_cluster(2, 1, Some("h"), 9.0));
+        clusters.push(reading_cluster(2, 2, Some("i"), 30.0));
+        assert_eq!(
+            text_of_spans(&clusters, &[(0, 0, 5), (1, 0, 3)]),
+            "ab cd\nef"
+        );
+        assert_eq!(text_of_spans(&clusters, &[(0, 1, 4)]), "b c");
+        assert_eq!(text_of_spans(&clusters, &[(2, 0, 3)]), "gh i");
+        assert_eq!(text_of_spans(&clusters, &[]), "");
+    }
+
+    #[test]
+    fn a_page_has_every_row_its_stops_name() {
+        let stop = |line: usize| CaretStop {
+            line,
+            offset: 0,
+            at: [0.0, 0.0],
+            up: [0.0, -1.0],
+        };
+        assert_eq!(
+            page_rows(&[stop(2), stop(0), stop(2), stop(1)]),
+            vec![0, 1, 2]
+        );
+    }
 
     const fn flat() -> Placement {
         Placement {

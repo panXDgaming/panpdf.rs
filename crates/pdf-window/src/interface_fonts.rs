@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 
+use eframe::egui;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Host {
     Linux,
@@ -27,7 +29,7 @@ struct Script {
     macos: &'static [&'static str],
 }
 
-const SCRIPTS: [Script; 15] = [
+const SCRIPTS: [Script; 23] = [
     Script {
         name: "thai",
         packaged: Some("NotoSansThai-Regular.ttf"),
@@ -47,7 +49,7 @@ const SCRIPTS: [Script; 15] = [
     },
     Script {
         name: "devanagari",
-        packaged: None,
+        packaged: Some("NotoSansDevanagari-Regular.ttf"),
         linux: &["/usr/share/fonts/truetype/noto/NotoSansDevanagari-Regular.ttf"],
         windows: &["Nirmala.ttf", "Nirmala.ttc", "mangal.ttf"],
         macos: &[
@@ -57,7 +59,7 @@ const SCRIPTS: [Script; 15] = [
     },
     Script {
         name: "bengali",
-        packaged: None,
+        packaged: Some("NotoSansBengali-Regular.ttf"),
         linux: &["/usr/share/fonts/truetype/noto/NotoSansBengali-Regular.ttf"],
         windows: &["Nirmala.ttf", "Nirmala.ttc", "vrinda.ttf"],
         macos: &[
@@ -67,35 +69,35 @@ const SCRIPTS: [Script; 15] = [
     },
     Script {
         name: "tamil",
-        packaged: None,
+        packaged: Some("NotoSansTamil-Regular.ttf"),
         linux: &["/usr/share/fonts/truetype/noto/NotoSansTamil-Regular.ttf"],
         windows: &["Nirmala.ttf", "Nirmala.ttc", "latha.ttf"],
         macos: &["/System/Library/Fonts/Supplemental/Tamil Sangam MN.ttc"],
     },
     Script {
         name: "sinhala",
-        packaged: None,
+        packaged: Some("NotoSansSinhala-Regular.ttf"),
         linux: &["/usr/share/fonts/truetype/noto/NotoSansSinhala-Regular.ttf"],
         windows: &["Nirmala.ttf", "Nirmala.ttc", "iskpota.ttf"],
         macos: &["/System/Library/Fonts/Supplemental/Sinhala Sangam MN.ttc"],
     },
     Script {
         name: "khmer",
-        packaged: None,
+        packaged: Some("NotoSansKhmer-Regular.ttf"),
         linux: &["/usr/share/fonts/truetype/noto/NotoSansKhmer-Regular.ttf"],
         windows: &["KhmerUI.ttf", "daunpenh.ttf"],
         macos: &["/System/Library/Fonts/Supplemental/Khmer Sangam MN.ttf"],
     },
     Script {
         name: "myanmar",
-        packaged: None,
+        packaged: Some("NotoSansMyanmar-Regular.ttf"),
         linux: &["/usr/share/fonts/truetype/noto/NotoSansMyanmar-Regular.ttf"],
         windows: &["mmrtext.ttf"],
         macos: &["/System/Library/Fonts/Supplemental/Myanmar Sangam MN.ttc"],
     },
     Script {
         name: "arabic",
-        packaged: None,
+        packaged: Some("NotoSansArabic-Regular.ttf"),
         linux: &["/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf"],
         windows: &["segoeui.ttf", "arial.ttf"],
         macos: &[
@@ -105,7 +107,7 @@ const SCRIPTS: [Script; 15] = [
     },
     Script {
         name: "hebrew",
-        packaged: None,
+        packaged: Some("NotoSansHebrew-Regular.ttf"),
         linux: &["/usr/share/fonts/truetype/noto/NotoSansHebrew-Regular.ttf"],
         windows: &["segoeui.ttf", "arial.ttf"],
         macos: &[
@@ -115,7 +117,7 @@ const SCRIPTS: [Script; 15] = [
     },
     Script {
         name: "georgian",
-        packaged: None,
+        packaged: Some("NotoSansGeorgian-Regular.ttf"),
         linux: &["/usr/share/fonts/truetype/noto/NotoSansGeorgian-Regular.ttf"],
         windows: &["segoeui.ttf", "sylfaen.ttf"],
         macos: &[
@@ -125,7 +127,7 @@ const SCRIPTS: [Script; 15] = [
     },
     Script {
         name: "armenian",
-        packaged: None,
+        packaged: Some("NotoSansArmenian-Regular.ttf"),
         linux: &["/usr/share/fonts/truetype/noto/NotoSansArmenian-Regular.ttf"],
         windows: &["segoeui.ttf", "sylfaen.ttf"],
         macos: &[
@@ -135,13 +137,69 @@ const SCRIPTS: [Script; 15] = [
     },
     Script {
         name: "ethiopic",
-        packaged: None,
+        packaged: Some("NotoSansEthiopic-Regular.ttf"),
         linux: &["/usr/share/fonts/truetype/noto/NotoSansEthiopic-Regular.ttf"],
         windows: &["ebrima.ttf", "nyala.ttf"],
         macos: &[
             "/System/Library/Fonts/Kefa.ttc",
             "/System/Library/Fonts/Supplemental/Kefa.ttc",
         ],
+    },
+    Script {
+        name: "gurmukhi",
+        packaged: Some("NotoSansGurmukhi-Regular.ttf"),
+        linux: &["/usr/share/fonts/truetype/noto/NotoSansGurmukhi-Regular.ttf"],
+        windows: &["Nirmala.ttf", "Nirmala.ttc", "raavi.ttf"],
+        macos: &["/System/Library/Fonts/Supplemental/Gurmukhi Sangam MN.ttc"],
+    },
+    Script {
+        name: "gujarati",
+        packaged: Some("NotoSansGujarati-Regular.ttf"),
+        linux: &["/usr/share/fonts/truetype/noto/NotoSansGujarati-Regular.ttf"],
+        windows: &["Nirmala.ttf", "Nirmala.ttc", "shruti.ttf"],
+        macos: &["/System/Library/Fonts/Supplemental/Gujarati Sangam MN.ttc"],
+    },
+    Script {
+        name: "oriya",
+        packaged: Some("NotoSansOriya-Regular.ttf"),
+        linux: &["/usr/share/fonts/truetype/noto/NotoSansOriya-Regular.ttf"],
+        windows: &["Nirmala.ttf", "Nirmala.ttc", "kalinga.ttf"],
+        macos: &["/System/Library/Fonts/Supplemental/Oriya Sangam MN.ttc"],
+    },
+    Script {
+        name: "telugu",
+        packaged: Some("NotoSansTelugu-Regular.ttf"),
+        linux: &["/usr/share/fonts/truetype/noto/NotoSansTelugu-Regular.ttf"],
+        windows: &["Nirmala.ttf", "Nirmala.ttc", "gautami.ttf"],
+        macos: &["/System/Library/Fonts/Supplemental/Telugu Sangam MN.ttc"],
+    },
+    Script {
+        name: "kannada",
+        packaged: Some("NotoSansKannada-Regular.ttf"),
+        linux: &["/usr/share/fonts/truetype/noto/NotoSansKannada-Regular.ttf"],
+        windows: &["Nirmala.ttf", "Nirmala.ttc", "tunga.ttf"],
+        macos: &["/System/Library/Fonts/Supplemental/Kannada Sangam MN.ttc"],
+    },
+    Script {
+        name: "malayalam",
+        packaged: Some("NotoSansMalayalam-Regular.ttf"),
+        linux: &["/usr/share/fonts/truetype/noto/NotoSansMalayalam-Regular.ttf"],
+        windows: &["Nirmala.ttf", "Nirmala.ttc", "kartika.ttf"],
+        macos: &["/System/Library/Fonts/Supplemental/Malayalam Sangam MN.ttc"],
+    },
+    Script {
+        name: "tibetan",
+        packaged: Some("NotoSerifTibetan-Regular.ttf"),
+        linux: &["/usr/share/fonts/truetype/noto/NotoSerifTibetan-Regular.ttf"],
+        windows: &["himalaya.ttf"],
+        macos: &["/System/Library/Fonts/Supplemental/Kokonor.ttf"],
+    },
+    Script {
+        name: "thaana",
+        packaged: Some("NotoSansThaana-Regular.ttf"),
+        linux: &["/usr/share/fonts/truetype/noto/NotoSansThaana-Regular.ttf"],
+        windows: &["mvboli.ttf"],
+        macos: &[],
     },
     Script {
         name: "dejavu",
@@ -239,6 +297,46 @@ pub(crate) fn choose(
     chosen
 }
 
+#[cfg(any(target_arch = "wasm32", test))]
+pub(crate) fn held(faces: &[(String, Vec<u8>)]) -> Vec<Chosen> {
+    let mut chosen: Vec<Chosen> = Vec::new();
+    for script in &SCRIPTS {
+        let Some(file) = script.packaged else {
+            continue;
+        };
+        let Some((_, bytes)) = faces.iter().find(|(name, _)| name == file) else {
+            continue;
+        };
+        if chosen.iter().any(|earlier| earlier.path == Path::new(file)) || !looks_like_a_font(bytes)
+        {
+            continue;
+        }
+        chosen.push(Chosen {
+            name: script.name,
+            path: PathBuf::from(file),
+            bytes: bytes.clone(),
+        });
+    }
+    chosen
+}
+
+pub(crate) fn definitions(chosen: Vec<Chosen>) -> egui::FontDefinitions {
+    let names: Vec<String> = chosen.iter().map(|face| face.name.to_owned()).collect();
+    let mut fonts = egui::FontDefinitions::default();
+    for face in chosen {
+        fonts.font_data.insert(
+            face.name.to_owned(),
+            std::sync::Arc::new(egui::FontData::from_owned(face.bytes)),
+        );
+    }
+    for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+        if let Some(list) = fonts.families.get_mut(&family) {
+            list.extend(names.iter().cloned());
+        }
+    }
+    fonts
+}
+
 pub(crate) fn looks_like_a_font(bytes: &[u8]) -> bool {
     let Some(tag) = be_u32(bytes, 0) else {
         return false;
@@ -325,10 +423,12 @@ mod tests {
         let thai = paths_for(&windows, "thai");
         assert_eq!(thai[0], packaged.join("NotoSansThai-Regular.ttf"));
         assert_eq!(thai[1], fonts.join("LeelawUI.ttf"));
+        let devanagari = paths_for(&windows, "devanagari");
         assert_eq!(
-            paths_for(&windows, "devanagari")[0],
-            fonts.join("Nirmala.ttf")
+            devanagari[0],
+            packaged.join("NotoSansDevanagari-Regular.ttf")
         );
+        assert_eq!(devanagari[1], fonts.join("Nirmala.ttf"));
 
         let mac = candidates(Host::MacOs, Some(packaged), fonts);
         assert_eq!(
@@ -376,6 +476,104 @@ mod tests {
                 ("arabic", fonts.join("segoeui.ttf")),
             ]
         );
+    }
+
+    #[test]
+    fn every_script_has_a_face_the_package_carries() {
+        let manifest = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fonts/manifest.json"),
+        )
+        .expect("the font manifest is in the tree");
+        for script in &super::SCRIPTS {
+            let file = script
+                .packaged
+                .unwrap_or_else(|| panic!("{} names no packaged face", script.name));
+            assert!(
+                manifest.contains(&format!("\"file\": \"{file}\"")),
+                "{}: {file} is not in fonts/manifest.json",
+                script.name
+            );
+        }
+    }
+
+    #[test]
+    fn the_package_alone_spells_every_script() {
+        use eframe::egui;
+        use egui::epaint::text::{Fonts, TextOptions};
+
+        let packaged = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fonts/packaged");
+        let bare = Path::new("/no/windows/fonts");
+        let read = |path: &Path| std::fs::read(path).ok();
+        let words = [
+            "ສະບາຍດີ",
+            "สวัสดี",
+            "नमस्ते",
+            "হ্যালো",
+            "வணக்கம்",
+            "ආයුබෝවන්",
+            "សួស្តី",
+            "မင်္ဂလာပါ",
+            "مرحبا",
+            "שלום",
+            "გამარჯობა",
+            "Բարեւ",
+            "ሰላም",
+            "ਸਤਿ",
+            "નમસ્તે",
+            "ନମସ୍କାର",
+            "నమస్కారం",
+            "ನಮಸ್ಕಾರ",
+            "നമസ്കാരം",
+            "བཀྲ་ཤིས",
+            "ސަލާމް",
+            "你好",
+            "こんにちは",
+            "안녕하세요",
+            "Xin chào",
+            "Привет",
+            "Γειά",
+        ];
+        let font = egui::FontId::proportional(14.0);
+
+        let chosen = choose(candidates(Host::Windows, Some(&packaged), bare), read);
+        let mut fonts = Fonts::new(TextOptions::default(), super::definitions(chosen));
+        for word in words {
+            assert!(fonts.has_glyphs(&font, word), "boxes for {word}");
+        }
+
+        let nothing = choose(candidates(Host::Windows, None, bare), read);
+        let mut fonts = Fonts::new(TextOptions::default(), super::definitions(nothing));
+        assert!(!fonts.has_glyphs(&font, "สวัสดี"), "the control has no Thai");
+    }
+
+    #[test]
+    fn a_tab_uses_the_faces_it_was_handed() {
+        let packaged = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fonts/packaged");
+        let face = |file: &str| {
+            (
+                file.to_owned(),
+                std::fs::read(packaged.join(file)).expect("a packaged face"),
+            )
+        };
+        let start = [
+            face("LiberationSans-Regular.ttf"),
+            face("NotoSansLao-Regular.ttf"),
+            face("NotoSansThai-Regular.ttf"),
+        ];
+        let names = |faces: &[(String, Vec<u8>)]| -> Vec<&str> {
+            super::held(faces)
+                .iter()
+                .map(|chosen| chosen.name)
+                .collect()
+        };
+        assert_eq!(names(&start), ["thai", "lao"]);
+        let mut later = start.to_vec();
+        later.push(face("NotoSansDevanagari-Regular.ttf"));
+        later.push((
+            "NotoSansKhmer-Regular.ttf".to_owned(),
+            b"not a font".to_vec(),
+        ));
+        assert_eq!(names(&later), ["thai", "lao", "devanagari"]);
     }
 
     #[test]

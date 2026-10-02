@@ -1,0 +1,26 @@
+[package]
+name = "convert-layout"
+description = "Flow layout for new PDFs: paragraphs, Lao/Thai line breaking, lists, tables, pages, headers and footers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+# SVG pictures drawn as vector graphics (html-to-pdf); without it an SVG
+# picture is left out like any file the canvas cannot read.
+svg = ["dep:convert-svg"]
+
+[dependencies]
+convert-pdf-canvas.workspace = true
+convert-svg = { workspace = true, optional = true }
+pdf-font.workspace = true
+pdf-edit.workspace = true
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

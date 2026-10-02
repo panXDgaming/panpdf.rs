@@ -109,12 +109,27 @@ fn function(name: &str) -> Option<fn(f64) -> f64> {
     })
 }
 
+pub const MOST_TOKENS: usize = 2_000;
+
+pub const MOST_NESTING: usize = 64;
+
 struct Reader {
     tokens: Vec<Token>,
     at: usize,
+    depth: usize,
 }
 
 impl Reader {
+    fn deeper(&mut self) -> Result<(), String> {
+        self.depth += 1;
+        if self.depth > MOST_NESTING {
+            return Err(format!(
+                "the formula is nested more than {MOST_NESTING} deep: write it flatter"
+            ));
+        }
+        Ok(())
+    }
+
     fn peek(&self) -> Option<&Token> {
         self.tokens.get(self.at)
     }
@@ -161,15 +176,18 @@ impl Reader {
     }
 
     fn sign(&mut self) -> Result<Node, String> {
-        if self.symbol('-') {
+        self.deeper()?;
+        let read = if self.symbol('-') {
             self.at += 1;
-            return Ok(Node::Negate(Box::new(self.sign()?)));
-        }
-        if self.symbol('+') {
+            self.sign().map(|inside| Node::Negate(Box::new(inside)))
+        } else if self.symbol('+') {
             self.at += 1;
-            return self.sign();
-        }
-        self.power()
+            self.sign()
+        } else {
+            self.power()
+        };
+        self.depth -= 1;
+        read
     }
 
     fn power(&mut self) -> Result<Node, String> {
@@ -183,6 +201,13 @@ impl Reader {
     }
 
     fn atom(&mut self) -> Result<Node, String> {
+        self.deeper()?;
+        let read = self.atom_inside();
+        self.depth -= 1;
+        read
+    }
+
+    fn atom_inside(&mut self) -> Result<Node, String> {
         let token = self
             .peek()
             .cloned()
@@ -247,9 +272,15 @@ impl Formula {
         let mut reader = Reader {
             tokens: tokens(text)?,
             at: 0,
+            depth: 0,
         };
         if reader.tokens.is_empty() {
             return Err("the formula is empty".to_owned());
+        }
+        if reader.tokens.len() > MOST_TOKENS {
+            return Err(format!(
+                "the formula is longer than {MOST_TOKENS} terms and signs: write it shorter"
+            ));
         }
         let node = reader.sum()?;
         if reader.at < reader.tokens.len() {
@@ -289,6 +320,25 @@ mod tests {
 
     fn at(text: &str, x: f64) -> f64 {
         Formula::read(text).expect("it reads").at(x)
+    }
+
+    #[test]
+    fn a_formula_nested_or_run_on_past_what_the_stack_holds_is_refused_in_words() {
+        for opening in ["(", "-", "sin(", "|"] {
+            let deep = format!("{}x", opening.repeat(100_000));
+            let why = Formula::read(&deep).expect_err("too deep");
+            assert!(
+                why.contains("nested more than 64 deep") || why.contains("longer than"),
+                "{opening}: {why}"
+            );
+        }
+        let long = vec!["1"; 100_000].join("+");
+        let why = Formula::read(&long).expect_err("too long");
+        assert!(why.contains("longer than 2000"), "{why}");
+        let fine = format!("{}x{}", "(".repeat(30), ")".repeat(30));
+        assert!((Formula::read(&fine).expect("a formula 30 deep").at(2.0) - 2.0).abs() < 1e-12);
+        let sums = vec!["x"; 1_000].join("+");
+        assert!((Formula::read(&sums).expect("a thousand terms").at(1.0) - 1_000.0).abs() < 1e-9);
     }
 
     #[test]

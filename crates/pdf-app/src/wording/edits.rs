@@ -152,6 +152,16 @@ pub enum Done {
     Stamped {
         count: usize,
     },
+    ReplacedText {
+        count: usize,
+        pages: usize,
+    },
+    MarkedText {
+        count: usize,
+    },
+    MovedObject,
+    ResizedObject,
+    DeletedObject,
     Recognized {
         pages: usize,
         confidence: u8,
@@ -175,6 +185,10 @@ pub enum Done {
     InsertedPages {
         count: usize,
         at: usize,
+    },
+    Wrote {
+        pieces: usize,
+        pages: usize,
     },
     Undone,
     Redone,
@@ -571,8 +585,24 @@ impl Done {
             Self::AddedPage { page } => format!("Added a blank page as page {page}"),
             Self::RemovedPages { count } => format!("Deleted {}", count_pages(*count)),
             Self::Described => "Document properties saved".to_owned(),
+            Self::Wrote { pieces, pages } => format!(
+                "Wrote {} of text over {}",
+                count(*pieces, "piece"),
+                count_pages(*pages)
+            ),
             Self::RotatedPages { count } => format!("Turned {}", count_pages(*count)),
             Self::Stamped { count } => format!("Stamped {}", count_pages(*count)),
+            Self::ReplacedText { count, pages } => {
+                format!(
+                    "Replaced {} on {}",
+                    count_places(*count),
+                    count_pages(*pages)
+                )
+            }
+            Self::MarkedText { count } => format!("Marked {}", count_places(*count)),
+            Self::MovedObject => "Moved the object".to_owned(),
+            Self::ResizedObject => "Resized the object".to_owned(),
+            Self::DeletedObject => "Deleted the object".to_owned(),
             Self::Recognized {
                 pages,
                 confidence,
@@ -929,6 +959,14 @@ impl fmt::Display for Refusal {
     }
 }
 
+fn count_places(count: usize) -> String {
+    if count == 1 {
+        "1 place".to_owned()
+    } else {
+        format!("{count} places")
+    }
+}
+
 fn count_pages(count: usize) -> String {
     if count == 1 {
         "1 page".to_owned()
@@ -1046,6 +1084,30 @@ mod tests {
         let one = Done::MovedGroup { pieces: 1 };
         assert!(one.say(Lang::English).ends_with("1 piece"), "{one}");
         assert!(refusals[0].say(Lang::English).contains("right"));
+    }
+
+    #[test]
+    fn a_document_written_is_said_with_its_pieces_and_pages() {
+        let said = |pieces: usize, pages: usize| Done::Wrote { pieces, pages }.say(Lang::English);
+        assert_eq!(said(12, 3), "Wrote 12 pieces of text over 3 pages");
+        assert_eq!(said(1, 1), "Wrote 1 piece of text over 1 page");
+    }
+
+    #[test]
+    fn what_the_assistant_replaced_and_marked_is_said_in_places_and_pages() {
+        let say = |done: Done| done.say(Lang::English);
+        assert_eq!(
+            say(Done::ReplacedText { count: 7, pages: 3 }),
+            "Replaced 7 places on 3 pages"
+        );
+        assert_eq!(
+            say(Done::ReplacedText { count: 1, pages: 1 }),
+            "Replaced 1 place on 1 page"
+        );
+        assert_eq!(say(Done::MarkedText { count: 2 }), "Marked 2 places");
+        assert_eq!(say(Done::MovedObject), "Moved the object");
+        assert_eq!(say(Done::ResizedObject), "Resized the object");
+        assert_eq!(say(Done::DeletedObject), "Deleted the object");
     }
 
     #[test]

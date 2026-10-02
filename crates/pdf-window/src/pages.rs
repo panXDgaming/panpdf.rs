@@ -87,7 +87,10 @@ impl Window {
             ));
         }
         let stage = room::panel_layout(width, window);
-        let working = !self.editor.is_busy() && self.loading.is_none() && self.has_document();
+        let working = !self.editor.is_busy()
+            && self.loading.is_none()
+            && self.has_document()
+            && !self.viewing;
         let mut visible = Vec::new();
         let reserved = egui::Panel::left("pages")
             .resizable(false)
@@ -588,7 +591,9 @@ impl Window {
             if card.secondary_clicked() && !self.chosen_pages.contains(page) {
                 self.chosen_pages = std::collections::BTreeSet::from([*page]);
             }
-            card.context_menu(|ui| self.page_menu(ui, working));
+            if !self.viewing {
+                card.context_menu(|ui| self.page_menu(ui, working));
+            }
             if card.drag_started() && working && self.page_drag.is_none() {
                 let pages = if self.chosen_pages.contains(page) {
                     self.pages_acted_on()
@@ -1018,7 +1023,7 @@ impl Window {
     }
 }
 
-fn lift(rect: egui::Rect, blur: u8) -> egui::Shape {
+pub(crate) fn lift(rect: egui::Rect, blur: u8) -> egui::Shape {
     egui::Shadow {
         offset: [0, 2],
         blur,
@@ -1094,6 +1099,8 @@ impl Window {
         let view = room::View {
             pages_folded: self.pages_folded,
             pages_width: self.pages_width,
+            dark: self.dark_chosen.then_some(self.dark),
+            frames: self.show_frames,
         };
         if let Some(folder) = file.parent() {
             let _ = std::fs::create_dir_all(folder);

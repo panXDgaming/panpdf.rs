@@ -598,7 +598,9 @@ fn required_units(tokens: &[Token], index: &mut usize) -> Result<Vec<u16>, CMapE
     }
     *index += 1;
     Ok(bytes
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| u16::from(pair[0]) << 8 | u16::from(pair[1]))
         .collect())
 }
@@ -786,7 +788,9 @@ fn tokenize(source: &ByteStore, limits: CMapLimits) -> Result<Vec<Token>, CMapEr
                 return Err(CMapError::OddHexDigits);
             }
             let decoded = nibbles
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|pair| pair[0] << 4 | pair[1])
                 .collect();
             TokenKind::Hex(decoded)

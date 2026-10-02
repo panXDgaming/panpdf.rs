@@ -28,17 +28,15 @@ pub fn font_provider() -> Option<Arc<dyn pdf_content::FontProvider>> {
             match setting.as_str() {
                 "none" => None,
                 "packaged" => packaged_provider(None).map(|provider| provider as Arc<_>),
-                "system" => Some(Arc::new(pdf_content::SystemFontProvider::discover())),
+                "system" => Some(Arc::new(HostFonts::default())),
                 "" => {
-                    let host: Arc<dyn pdf_content::FontProvider> =
-                        Arc::new(pdf_content::SystemFontProvider::discover());
+                    let host: Arc<dyn pdf_content::FontProvider> = Arc::new(HostFonts::default());
                     packaged_provider(None).map_or(Some(Arc::clone(&host)), |packaged| {
                         Some(Arc::new(FamilyFirstProvider { packaged, host }))
                     })
                 }
                 "packaged+system" => {
-                    let host: Arc<dyn pdf_content::FontProvider> =
-                        Arc::new(pdf_content::SystemFontProvider::discover());
+                    let host: Arc<dyn pdf_content::FontProvider> = Arc::new(HostFonts::default());
                     packaged_provider(None).map_or(Some(Arc::clone(&host)), |packaged| {
                         Some(Arc::new(ChainProvider {
                             first: packaged,
@@ -59,6 +57,42 @@ pub fn font_provider() -> Option<Arc<dyn pdf_content::FontProvider>> {
             }
         })
         .clone()
+}
+
+#[derive(Debug, Default)]
+struct HostFonts(std::sync::OnceLock<pdf_content::SystemFontProvider>);
+
+impl HostFonts {
+    fn faces(&self) -> &pdf_content::SystemFontProvider {
+        self.0
+            .get_or_init(pdf_content::SystemFontProvider::discover)
+    }
+
+    #[cfg(test)]
+    fn discovered(&self) -> bool {
+        self.0.get().is_some()
+    }
+}
+
+impl pdf_content::FontProvider for HostFonts {
+    fn primary_face(
+        &self,
+        request: &pdf_content::FontRequest,
+    ) -> Option<pdf_content::SubstitutedFace> {
+        self.faces().primary_face(request)
+    }
+
+    fn fallback_face(
+        &self,
+        request: &pdf_content::FontRequest,
+        character: char,
+    ) -> Option<pdf_content::SubstitutedFace> {
+        self.faces().fallback_face(request, character)
+    }
+
+    fn description(&self) -> String {
+        self.faces().description()
+    }
 }
 
 #[derive(Debug)]
@@ -861,6 +895,32 @@ mod tests {
         page_run_offset,
     };
 
+    #[test]
+    fn a_letter_of_every_packaged_script_finds_its_face() {
+        use pdf_content::{FontProvider, FontRequest, FontStyle};
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fonts");
+        let provider = super::packaged_provider(Some(&root)).expect("the font package is here");
+        let request = FontRequest::for_family("Liberation Sans", FontStyle::default());
+        for (letter, family) in [
+            ('\u{0A15}', "Noto Sans Gurmukhi"),
+            ('\u{0A95}', "Noto Sans Gujarati"),
+            ('\u{0B15}', "Noto Sans Oriya"),
+            ('\u{0C15}', "Noto Sans Telugu"),
+            ('\u{0C95}', "Noto Sans Kannada"),
+            ('\u{0D15}', "Noto Sans Malayalam"),
+            ('\u{0F40}', "Noto Serif Tibetan"),
+            ('\u{0784}', "Noto Sans Thaana"),
+            ('\u{0915}', "Noto Sans Devanagari"),
+            ('\u{0E81}', "Noto Sans Lao"),
+            ('\u{0E01}', "Noto Sans Thai"),
+        ] {
+            let face = provider
+                .fallback_face(&request, letter)
+                .unwrap_or_else(|| panic!("no face for U+{:04X}", u32::from(letter)));
+            assert_eq!(face.identity.family, family, "U+{:04X}", u32::from(letter));
+        }
+    }
+
     fn assert_box(got: [f64; 4], want: [f64; 4]) {
         for (index, (left, right)) in got.iter().zip(&want).enumerate() {
             assert!(
@@ -1053,7 +1113,9 @@ mod tests {
         text.bytes()
             .filter(u8::is_ascii_hexdigit)
             .collect::<Vec<u8>>()
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|pair| {
                 u8::from_str_radix(std::str::from_utf8(pair).expect("hex digits"), 16)
                     .expect("hex byte")
@@ -1444,6 +1506,55 @@ mod tests {
         );
     }
 
+    fn objects_fixture(objects: &[String]) -> ByteStore {
+        let mut bytes = b"%PDF-1.7\n".to_vec();
+        let mut offsets = Vec::new();
+        for (index, object) in objects.iter().enumerate() {
+            offsets.push(bytes.len());
+            bytes.extend_from_slice(format!("{} 0 obj\n{object}\nendobj\n", index + 1).as_bytes());
+        }
+        let xref = bytes.len();
+        let size = objects.len() + 1;
+        bytes.extend_from_slice(format!("xref\n0 {size}\n0000000000 65535 f \n").as_bytes());
+        for offset in offsets {
+            bytes.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        bytes.extend_from_slice(
+            format!("trailer\n<< /Size {size} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n")
+                .as_bytes(),
+        );
+        ByteStore::new(SourceId::new(43), Arc::<[u8]>::from(bytes))
+    }
+
+    #[test]
+    fn the_host_fonts_are_found_only_when_a_page_needs_one() {
+        let host = Arc::new(super::HostFonts::default());
+        let fonts: Arc<dyn pdf_content::FontProvider> = host.clone();
+        pdf_session::interpret_page_for_display(
+            &page_fixture(),
+            0,
+            b"",
+            None,
+            Some(Arc::clone(&fonts)),
+        )
+        .expect("the rectangle page reads");
+        assert!(!host.discovered(), "a page with no text asked for no face");
+
+        let content = "BT /F1 12 Tf 10 50 Td (Hello) Tj ET";
+        let text_page = objects_fixture(&[
+            "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+            "<< /Type /Pages /MediaBox [0 0 200 100] /Kids [3 0 R] /Count 1 >>".to_owned(),
+            "<< /Type /Page /Parent 2 0 R /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>"
+                .to_owned(),
+            format!("<< /Length {} >>\nstream\n{content}\nendstream", content.len()),
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_owned(),
+        ]);
+        pdf_session::interpret_page_for_display(&text_page, 0, b"", None, Some(Arc::clone(&fonts)))
+            .expect("the text page reads");
+        assert!(host.discovered(), "an unembedded Helvetica asked the host");
+        assert!(!fonts.description().is_empty());
+    }
+
     fn page_fixture() -> ByteStore {
         let content = b"0.25 g 10 20 30 40 re f";
         let mut bytes = b"%PDF-1.7\n".to_vec();
@@ -1670,7 +1781,9 @@ mod tests {
         let program: Vec<u8> = {
             let digits: Vec<u8> = TINY_CFF.bytes().filter(u8::is_ascii_hexdigit).collect();
             digits
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|pair| {
                     u8::from_str_radix(std::str::from_utf8(pair).expect("hex digits"), 16)
                         .expect("hex byte")

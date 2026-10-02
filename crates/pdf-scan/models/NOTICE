@@ -1,0 +1,12 @@
+models/docquad.bin is DocQuadNet (docquadnet256_trained_opset17), the
+document corner model of MakeACopy by egdels:
+
+    https://github.com/egdels/makeacopy
+    app/src/main/assets/docquad/docquadnet256_trained_opset17.ort
+
+licensed under the Apache License, Version 2.0 (docquad-LICENSE.txt, the
+project's own LICENSE file). It was changed only in form: read from ONNX
+Runtime's .ort format, its fused convolutions written as their parts and its
+weights stored at half precision (bench/docquad_export.py).
+
+models/sheet-net.bin is PanPDF's own, trained by bench/train_seg.py.

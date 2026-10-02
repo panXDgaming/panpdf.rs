@@ -1,7 +1,7 @@
 {
  "schema": "panpdf.font-package/1",
  "package_version": "packaged-1",
- "purpose": "The faces a substitution may draw from on a machine with no fonts installed, so a fixture renders the same bytes anywhere. Chosen from what this corpus measurably asks for, not for completeness; docs/research/font-substitution-upstream.md records the comparison.",
+ "purpose": "The faces a substitution may draw from on a machine with no fonts installed, so a fixture renders the same bytes anywhere. Chosen from what this corpus measurably asks for, not for completeness; docs/research/font-substitution-upstream.md records the comparison. The browser editor fetches the faces marked \"load\": \"on-demand\" only when a character in their \"ranges\" is typed or their \"family\" is chosen (panpdf.web site/edit/index.html).",
  "sources": [
   {
    "name": "liberation",
@@ -112,6 +112,310 @@
      "url": "https://openfontlicense.org/documents/OFL.txt",
      "file": "LICENSE-saysettha-ot-OFL.txt",
      "sha256": "1d361a8f8e8ce6e68457dcd93fb56e162e6baa3bbb7e7573a290d44399f6b57e"
+    }
+   ]
+  },
+  {
+   "name": "noto-sans-hebrew",
+   "version": "notofonts.github.io@e0ad9f160a29",
+   "project": "https://github.com/notofonts/notofonts.github.io",
+   "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/e0ad9f160a2942bcdd249bb1958e8336742edef3/fonts/NotoSansHebrew/full/ttf/NotoSansHebrew-Regular.ttf",
+   "archive": "NotoSansHebrew-Regular.ttf",
+   "sha256": "671951828bd5c95db818e5bb12dcea2d0c0dda00311888522be061ee6835125e",
+   "licence": "SIL Open Font License 1.1",
+   "notices": [
+    {
+     "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/e0ad9f160a2942bcdd249bb1958e8336742edef3/fonts/LICENSE",
+     "file": "LICENSE-noto.txt",
+     "sha256": "f2095b08bed08b23a6fe26112fcd679a2bee3f002eef077eb05d215ed1051bd8"
+    }
+   ]
+  },
+  {
+   "name": "noto-sans-armenian",
+   "version": "notofonts.github.io@e0ad9f160a29",
+   "project": "https://github.com/notofonts/notofonts.github.io",
+   "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/e0ad9f160a2942bcdd249bb1958e8336742edef3/fonts/NotoSansArmenian/full/ttf/NotoSansArmenian-Regular.ttf",
+   "archive": "NotoSansArmenian-Regular.ttf",
+   "sha256": "ae242d055bb82f7c00ae02f10e8880197725805b0e4586d1b33b384a099f362a",
+   "licence": "SIL Open Font License 1.1",
+   "notices": [
+    {
+     "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/e0ad9f160a2942bcdd249bb1958e8336742edef3/fonts/LICENSE",
+     "file": "LICENSE-noto.txt",
+     "sha256": "f2095b08bed08b23a6fe26112fcd679a2bee3f002eef077eb05d215ed1051bd8"
+    }
+   ]
+  },
+  {
+   "name": "noto-sans-georgian",
+   "version": "notofonts.github.io@e0ad9f160a29",
+   "project": "https://github.com/notofonts/notofonts.github.io",
+   "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/e0ad9f160a2942bcdd249bb1958e8336742edef3/fonts/NotoSansGeorgian/full/ttf/NotoSansGeorgian-Regular.ttf",
+   "archive": "NotoSansGeorgian-Regular.ttf",
+   "sha256": "89207521ae620f9988e85f0afc26070af34fffd454c3f0cb0655e494f3f3364d",
+   "licence": "SIL Open Font License 1.1",
+   "notices": [
+    {
+     "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/e0ad9f160a2942bcdd249bb1958e8336742edef3/fonts/LICENSE",
+     "file": "LICENSE-noto.txt",
+     "sha256": "f2095b08bed08b23a6fe26112fcd679a2bee3f002eef077eb05d215ed1051bd8"
+    }
+   ]
+  },
+  {
+   "name": "noto-sans-tamil",
+   "version": "notofonts.github.io@e0ad9f160a29",
+   "project": "https://github.com/notofonts/notofonts.github.io",
+   "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/e0ad9f160a2942bcdd249bb1958e8336742edef3/fonts/NotoSansTamil/full/ttf/NotoSansTamil-Regular.ttf",
+   "archive": "NotoSansTamil-Regular.ttf",
+   "sha256": "0afbc221964b6048c6d771c525be474d21b288a621dce0fafedd695cc5c98e4e",
+   "licence": "SIL Open Font License 1.1",
+   "notices": [
+    {
+     "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/e0ad9f160a2942bcdd249bb1958e8336742edef3/fonts/LICENSE",
+     "file": "LICENSE-noto.txt",
+     "sha256": "f2095b08bed08b23a6fe26112fcd679a2bee3f002eef077eb05d215ed1051bd8"
+    }
+   ]
+  },
+  {
+   "name": "noto-sans-khmer",
+   "version": "notofonts.github.io@e0ad9f160a29",
+   "project": "https://github.com/notofonts/notofonts.github.io",
+   "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/e0ad9f160a2942bcdd249bb1958e8336742edef3/fonts/NotoSansKhmer/full/ttf/NotoSansKhmer-Regular.ttf",
+   "archive": "NotoSansKhmer-Regular.ttf",
+   "sha256": "42d70aa5d3f4191e0c3377e7e6b1b6c6e20177c6579cb63f6e8bfecfbed9e6a1",
+   "licence": "SIL Open Font License 1.1",
+   "notices": [
+    {
+     "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/e0ad9f160a2942bcdd249bb1958e8336742edef3/fonts/LICENSE",
+     "file": "LICENSE-noto.txt",
+     "sha256": "f2095b08bed08b23a6fe26112fcd679a2bee3f002eef077eb05d215ed1051bd8"
+    }
+   ]
+  },
+  {
+   "name": "noto-sans-myanmar",
+   "version": "notofonts.github.io@e0ad9f160a29",
+   "project": "https://github.com/notofonts/notofonts.github.io",
+   "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/e0ad9f160a2942bcdd249bb1958e8336742edef3/fonts/NotoSansMyanmar/full/ttf/NotoSansMyanmar-Regular.ttf",
+   "archive": "NotoSansMyanmar-Regular.ttf",
+   "sha256": "e6d59055e5e7a8cc57ad8e04150136f4fc48bc3fca6f307c5e78f40f7e560a6d",
+   "licence": "SIL Open Font License 1.1",
+   "notices": [
+    {
+     "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/e0ad9f160a2942bcdd249bb1958e8336742edef3/fonts/LICENSE",
+     "file": "LICENSE-noto.txt",
+     "sha256": "f2095b08bed08b23a6fe26112fcd679a2bee3f002eef077eb05d215ed1051bd8"
+    }
+   ]
+  },
+  {
+   "name": "noto-sans-devanagari",
+   "version": "notofonts.github.io@e0ad9f160a29",
+   "project": "https://github.com/notofonts/notofonts.github.io",
+   "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/e0ad9f160a2942bcdd249bb1958e8336742edef3/fonts/NotoSansDevanagari/full/ttf/NotoSansDevanagari-Regular.ttf",
+   "archive": "NotoSansDevanagari-Regular.ttf",
+   "sha256": "573e525d9f4923d34645fe752475419f45f8dec5a8e43f3e83c5c5f43d1f2ff9",
+   "licence": "SIL Open Font License 1.1",
+   "notices": [
+    {
+     "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/e0ad9f160a2942bcdd249bb1958e8336742edef3/fonts/LICENSE",
+     "file": "LICENSE-noto.txt",
+     "sha256": "f2095b08bed08b23a6fe26112fcd679a2bee3f002eef077eb05d215ed1051bd8"
+    }
+   ]
+  },
+  {
+   "name": "noto-sans-bengali",
+   "version": "notofonts.github.io@e0ad9f160a29",
+   "project": "https://github.com/notofonts/notofonts.github.io",
+   "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/e0ad9f160a2942bcdd249bb1958e8336742edef3/fonts/NotoSansBengali/full/ttf/NotoSansBengali-Regular.ttf",
+   "archive": "NotoSansBengali-Regular.ttf",
+   "sha256": "67e3584988627749e701ef833e9cb1964cd17343867294cb833d3ffe2e23279f",
+   "licence": "SIL Open Font License 1.1",
+   "notices": [
+    {
+     "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/e0ad9f160a2942bcdd249bb1958e8336742edef3/fonts/LICENSE",
+     "file": "LICENSE-noto.txt",
+     "sha256": "f2095b08bed08b23a6fe26112fcd679a2bee3f002eef077eb05d215ed1051bd8"
+    }
+   ]
+  },
+  {
+   "name": "noto-sans-arabic",
+   "version": "notofonts.github.io@e0ad9f160a29",
+   "project": "https://github.com/notofonts/notofonts.github.io",
+   "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/e0ad9f160a2942bcdd249bb1958e8336742edef3/fonts/NotoSansArabic/full/ttf/NotoSansArabic-Regular.ttf",
+   "archive": "NotoSansArabic-Regular.ttf",
+   "sha256": "7ed3fe069312aceac454f17cf613a30f95271d6ed7ce58005ed4d016bd3823d7",
+   "licence": "SIL Open Font License 1.1",
+   "notices": [
+    {
+     "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/e0ad9f160a2942bcdd249bb1958e8336742edef3/fonts/LICENSE",
+     "file": "LICENSE-noto.txt",
+     "sha256": "f2095b08bed08b23a6fe26112fcd679a2bee3f002eef077eb05d215ed1051bd8"
+    }
+   ]
+  },
+  {
+   "name": "noto-sans-sinhala",
+   "version": "notofonts.github.io@e0ad9f160a29",
+   "project": "https://github.com/notofonts/notofonts.github.io",
+   "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/e0ad9f160a2942bcdd249bb1958e8336742edef3/fonts/NotoSansSinhala/full/ttf/NotoSansSinhala-Regular.ttf",
+   "archive": "NotoSansSinhala-Regular.ttf",
+   "sha256": "4c1889d92394d06a3be75a78bd68adf4efdcc4dc12f98ee4ec99a02cb6d69874",
+   "licence": "SIL Open Font License 1.1",
+   "notices": [
+    {
+     "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/e0ad9f160a2942bcdd249bb1958e8336742edef3/fonts/LICENSE",
+     "file": "LICENSE-noto.txt",
+     "sha256": "f2095b08bed08b23a6fe26112fcd679a2bee3f002eef077eb05d215ed1051bd8"
+    }
+   ]
+  },
+  {
+   "name": "noto-sans-ethiopic",
+   "version": "notofonts.github.io@e0ad9f160a29",
+   "project": "https://github.com/notofonts/notofonts.github.io",
+   "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/e0ad9f160a2942bcdd249bb1958e8336742edef3/fonts/NotoSansEthiopic/full/ttf/NotoSansEthiopic-Regular.ttf",
+   "archive": "NotoSansEthiopic-Regular.ttf",
+   "sha256": "04fad43c4576285e7bbc829677396edcb4447479b47fdc356b6e073e6ac4401b",
+   "licence": "SIL Open Font License 1.1",
+   "notices": [
+    {
+     "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/e0ad9f160a2942bcdd249bb1958e8336742edef3/fonts/LICENSE",
+     "file": "LICENSE-noto.txt",
+     "sha256": "f2095b08bed08b23a6fe26112fcd679a2bee3f002eef077eb05d215ed1051bd8"
+    }
+   ]
+  },
+  {
+   "name": "noto-sans-gurmukhi",
+   "version": "notofonts.github.io@e0ad9f160a29",
+   "project": "https://github.com/notofonts/notofonts.github.io",
+   "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/e0ad9f160a2942bcdd249bb1958e8336742edef3/fonts/NotoSansGurmukhi/full/ttf/NotoSansGurmukhi-Regular.ttf",
+   "archive": "NotoSansGurmukhi-Regular.ttf",
+   "sha256": "7b2c1cfa0bc744623c7ce49eccfef440ec8419596d995bdeee973cd43f46ab00",
+   "licence": "SIL Open Font License 1.1",
+   "notices": [
+    {
+     "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/e0ad9f160a2942bcdd249bb1958e8336742edef3/fonts/LICENSE",
+     "file": "LICENSE-noto.txt",
+     "sha256": "f2095b08bed08b23a6fe26112fcd679a2bee3f002eef077eb05d215ed1051bd8"
+    }
+   ]
+  },
+  {
+   "name": "noto-sans-gujarati",
+   "version": "notofonts.github.io@e0ad9f160a29",
+   "project": "https://github.com/notofonts/notofonts.github.io",
+   "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/e0ad9f160a2942bcdd249bb1958e8336742edef3/fonts/NotoSansGujarati/full/ttf/NotoSansGujarati-Regular.ttf",
+   "archive": "NotoSansGujarati-Regular.ttf",
+   "sha256": "30ecc9188d6615bb45601daa746add60c463766324921461052443e1516dab0f",
+   "licence": "SIL Open Font License 1.1",
+   "notices": [
+    {
+     "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/e0ad9f160a2942bcdd249bb1958e8336742edef3/fonts/LICENSE",
+     "file": "LICENSE-noto.txt",
+     "sha256": "f2095b08bed08b23a6fe26112fcd679a2bee3f002eef077eb05d215ed1051bd8"
+    }
+   ]
+  },
+  {
+   "name": "noto-sans-oriya",
+   "version": "notofonts.github.io@e0ad9f160a29",
+   "project": "https://github.com/notofonts/notofonts.github.io",
+   "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/e0ad9f160a2942bcdd249bb1958e8336742edef3/fonts/NotoSansOriya/full/ttf/NotoSansOriya-Regular.ttf",
+   "archive": "NotoSansOriya-Regular.ttf",
+   "sha256": "31896b569ddb1bab60de95c3b0d390a84783b3b4134614ed2a5df60c0d525f84",
+   "licence": "SIL Open Font License 1.1",
+   "notices": [
+    {
+     "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/e0ad9f160a2942bcdd249bb1958e8336742edef3/fonts/LICENSE",
+     "file": "LICENSE-noto.txt",
+     "sha256": "f2095b08bed08b23a6fe26112fcd679a2bee3f002eef077eb05d215ed1051bd8"
+    }
+   ]
+  },
+  {
+   "name": "noto-sans-telugu",
+   "version": "notofonts.github.io@e0ad9f160a29",
+   "project": "https://github.com/notofonts/notofonts.github.io",
+   "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/e0ad9f160a2942bcdd249bb1958e8336742edef3/fonts/NotoSansTelugu/full/ttf/NotoSansTelugu-Regular.ttf",
+   "archive": "NotoSansTelugu-Regular.ttf",
+   "sha256": "e0595bcf47b907b2afb77a34ae64c3e8351f56452c66983660172c6b9ea15576",
+   "licence": "SIL Open Font License 1.1",
+   "notices": [
+    {
+     "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/e0ad9f160a2942bcdd249bb1958e8336742edef3/fonts/LICENSE",
+     "file": "LICENSE-noto.txt",
+     "sha256": "f2095b08bed08b23a6fe26112fcd679a2bee3f002eef077eb05d215ed1051bd8"
+    }
+   ]
+  },
+  {
+   "name": "noto-sans-kannada",
+   "version": "notofonts.github.io@e0ad9f160a29",
+   "project": "https://github.com/notofonts/notofonts.github.io",
+   "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/e0ad9f160a2942bcdd249bb1958e8336742edef3/fonts/NotoSansKannada/full/ttf/NotoSansKannada-Regular.ttf",
+   "archive": "NotoSansKannada-Regular.ttf",
+   "sha256": "81b587d0f850db999c64cddf823be2a2648f6244a647fa0a3fe4eea83ff01de8",
+   "licence": "SIL Open Font License 1.1",
+   "notices": [
+    {
+     "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/e0ad9f160a2942bcdd249bb1958e8336742edef3/fonts/LICENSE",
+     "file": "LICENSE-noto.txt",
+     "sha256": "f2095b08bed08b23a6fe26112fcd679a2bee3f002eef077eb05d215ed1051bd8"
+    }
+   ]
+  },
+  {
+   "name": "noto-sans-malayalam",
+   "version": "notofonts.github.io@e0ad9f160a29",
+   "project": "https://github.com/notofonts/notofonts.github.io",
+   "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/e0ad9f160a2942bcdd249bb1958e8336742edef3/fonts/NotoSansMalayalam/full/ttf/NotoSansMalayalam-Regular.ttf",
+   "archive": "NotoSansMalayalam-Regular.ttf",
+   "sha256": "d18b5c10d85bba3d3d89775484bcfa731112f501ac070793ddbda5a36992520f",
+   "licence": "SIL Open Font License 1.1",
+   "notices": [
+    {
+     "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/e0ad9f160a2942bcdd249bb1958e8336742edef3/fonts/LICENSE",
+     "file": "LICENSE-noto.txt",
+     "sha256": "f2095b08bed08b23a6fe26112fcd679a2bee3f002eef077eb05d215ed1051bd8"
+    }
+   ]
+  },
+  {
+   "name": "noto-serif-tibetan",
+   "version": "notofonts.github.io@e0ad9f160a29",
+   "project": "https://github.com/notofonts/notofonts.github.io",
+   "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/e0ad9f160a2942bcdd249bb1958e8336742edef3/fonts/NotoSerifTibetan/full/ttf/NotoSerifTibetan-Regular.ttf",
+   "archive": "NotoSerifTibetan-Regular.ttf",
+   "sha256": "2ac2555a88b5bcbbacc490003e96dd4d00d064daeee4a9465d68cf301f9886b3",
+   "licence": "SIL Open Font License 1.1",
+   "notices": [
+    {
+     "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/e0ad9f160a2942bcdd249bb1958e8336742edef3/fonts/LICENSE",
+     "file": "LICENSE-noto.txt",
+     "sha256": "f2095b08bed08b23a6fe26112fcd679a2bee3f002eef077eb05d215ed1051bd8"
+    }
+   ]
+  },
+  {
+   "name": "noto-sans-thaana",
+   "version": "notofonts.github.io@e0ad9f160a29",
+   "project": "https://github.com/notofonts/notofonts.github.io",
+   "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/e0ad9f160a2942bcdd249bb1958e8336742edef3/fonts/NotoSansThaana/full/ttf/NotoSansThaana-Regular.ttf",
+   "archive": "NotoSansThaana-Regular.ttf",
+   "sha256": "aa3ca2ec5d96984a73a8be122286cb2fa4ef3bdf5ba310df8ad797ff4aa2a238",
+   "licence": "SIL Open Font License 1.1",
+   "notices": [
+    {
+     "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/e0ad9f160a2942bcdd249bb1958e8336742edef3/fonts/LICENSE",
+     "file": "LICENSE-noto.txt",
+     "sha256": "f2095b08bed08b23a6fe26112fcd679a2bee3f002eef077eb05d215ed1051bd8"
     }
    ]
   }
@@ -283,7 +587,51 @@
    "file": "NotoSansCJKsc-Regular.otf",
    "role": "cjk-sc",
    "face_index": 0,
-   "sha256": "2c76254f6fc379fddfce0a7e84fb5385bb135d3e399294f6eeb6680d0365b74b"
+   "sha256": "2c76254f6fc379fddfce0a7e84fb5385bb135d3e399294f6eeb6680d0365b74b",
+   "load": "on-demand",
+   "family": "Noto Sans CJK SC",
+   "ranges": [
+    [
+     "1100",
+     "11FF"
+    ],
+    [
+     "2E80",
+     "2FDF"
+    ],
+    [
+     "3000",
+     "30FF"
+    ],
+    [
+     "3100",
+     "31FF"
+    ],
+    [
+     "3400",
+     "4DBF"
+    ],
+    [
+     "4E00",
+     "9FFF"
+    ],
+    [
+     "AC00",
+     "D7AF"
+    ],
+    [
+     "F900",
+     "FAFF"
+    ],
+    [
+     "FE30",
+     "FE4F"
+    ],
+    [
+     "FF00",
+     "FFEF"
+    ]
+   ]
   },
   {
    "source": "saysettha-ot",
@@ -292,6 +640,350 @@
    "role": "lao-reference",
    "face_index": 0,
    "sha256": "040e652ee34f010f8f08764b8669cac1b713eb89270f3e83e8c855e00db60bc2"
+  },
+  {
+   "source": "noto-sans-hebrew",
+   "member": "NotoSansHebrew-Regular.ttf",
+   "file": "NotoSansHebrew-Regular.ttf",
+   "role": "hebrew",
+   "face_index": 0,
+   "sha256": "671951828bd5c95db818e5bb12dcea2d0c0dda00311888522be061ee6835125e",
+   "load": "on-demand",
+   "family": "Noto Sans Hebrew",
+   "ranges": [
+    [
+     "0590",
+     "05FF"
+    ],
+    [
+     "FB1D",
+     "FB4F"
+    ]
+   ]
+  },
+  {
+   "source": "noto-sans-armenian",
+   "member": "NotoSansArmenian-Regular.ttf",
+   "file": "NotoSansArmenian-Regular.ttf",
+   "role": "armenian",
+   "face_index": 0,
+   "sha256": "ae242d055bb82f7c00ae02f10e8880197725805b0e4586d1b33b384a099f362a",
+   "load": "on-demand",
+   "family": "Noto Sans Armenian",
+   "ranges": [
+    [
+     "0530",
+     "058F"
+    ]
+   ]
+  },
+  {
+   "source": "noto-sans-georgian",
+   "member": "NotoSansGeorgian-Regular.ttf",
+   "file": "NotoSansGeorgian-Regular.ttf",
+   "role": "georgian",
+   "face_index": 0,
+   "sha256": "89207521ae620f9988e85f0afc26070af34fffd454c3f0cb0655e494f3f3364d",
+   "load": "on-demand",
+   "family": "Noto Sans Georgian",
+   "ranges": [
+    [
+     "10A0",
+     "10FF"
+    ]
+   ]
+  },
+  {
+   "source": "noto-sans-tamil",
+   "member": "NotoSansTamil-Regular.ttf",
+   "file": "NotoSansTamil-Regular.ttf",
+   "role": "tamil",
+   "face_index": 0,
+   "sha256": "0afbc221964b6048c6d771c525be474d21b288a621dce0fafedd695cc5c98e4e",
+   "load": "on-demand",
+   "family": "Noto Sans Tamil",
+   "ranges": [
+    [
+     "0B80",
+     "0BFF"
+    ]
+   ]
+  },
+  {
+   "source": "noto-sans-khmer",
+   "member": "NotoSansKhmer-Regular.ttf",
+   "file": "NotoSansKhmer-Regular.ttf",
+   "role": "khmer",
+   "face_index": 0,
+   "sha256": "42d70aa5d3f4191e0c3377e7e6b1b6c6e20177c6579cb63f6e8bfecfbed9e6a1",
+   "load": "on-demand",
+   "family": "Noto Sans Khmer",
+   "ranges": [
+    [
+     "1780",
+     "17FF"
+    ],
+    [
+     "19E0",
+     "19FF"
+    ]
+   ]
+  },
+  {
+   "source": "noto-sans-myanmar",
+   "member": "NotoSansMyanmar-Regular.ttf",
+   "file": "NotoSansMyanmar-Regular.ttf",
+   "role": "myanmar",
+   "face_index": 0,
+   "sha256": "e6d59055e5e7a8cc57ad8e04150136f4fc48bc3fca6f307c5e78f40f7e560a6d",
+   "load": "on-demand",
+   "family": "Noto Sans Myanmar",
+   "ranges": [
+    [
+     "1000",
+     "109F"
+    ],
+    [
+     "A9E0",
+     "A9FF"
+    ],
+    [
+     "AA60",
+     "AA7F"
+    ]
+   ]
+  },
+  {
+   "source": "noto-sans-devanagari",
+   "member": "NotoSansDevanagari-Regular.ttf",
+   "file": "NotoSansDevanagari-Regular.ttf",
+   "role": "devanagari",
+   "face_index": 0,
+   "sha256": "573e525d9f4923d34645fe752475419f45f8dec5a8e43f3e83c5c5f43d1f2ff9",
+   "load": "on-demand",
+   "family": "Noto Sans Devanagari",
+   "ranges": [
+    [
+     "0900",
+     "097F"
+    ],
+    [
+     "A8E0",
+     "A8FF"
+    ]
+   ]
+  },
+  {
+   "source": "noto-sans-bengali",
+   "member": "NotoSansBengali-Regular.ttf",
+   "file": "NotoSansBengali-Regular.ttf",
+   "role": "bengali",
+   "face_index": 0,
+   "sha256": "67e3584988627749e701ef833e9cb1964cd17343867294cb833d3ffe2e23279f",
+   "load": "on-demand",
+   "family": "Noto Sans Bengali",
+   "ranges": [
+    [
+     "0980",
+     "09FF"
+    ]
+   ]
+  },
+  {
+   "source": "noto-sans-arabic",
+   "member": "NotoSansArabic-Regular.ttf",
+   "file": "NotoSansArabic-Regular.ttf",
+   "role": "arabic",
+   "face_index": 0,
+   "sha256": "7ed3fe069312aceac454f17cf613a30f95271d6ed7ce58005ed4d016bd3823d7",
+   "load": "on-demand",
+   "family": "Noto Sans Arabic",
+   "ranges": [
+    [
+     "0600",
+     "06FF"
+    ],
+    [
+     "0750",
+     "077F"
+    ],
+    [
+     "08A0",
+     "08FF"
+    ],
+    [
+     "FB50",
+     "FDFF"
+    ],
+    [
+     "FE70",
+     "FEFF"
+    ]
+   ]
+  },
+  {
+   "source": "noto-sans-sinhala",
+   "member": "NotoSansSinhala-Regular.ttf",
+   "file": "NotoSansSinhala-Regular.ttf",
+   "role": "sinhala",
+   "face_index": 0,
+   "sha256": "4c1889d92394d06a3be75a78bd68adf4efdcc4dc12f98ee4ec99a02cb6d69874",
+   "load": "on-demand",
+   "family": "Noto Sans Sinhala",
+   "ranges": [
+    [
+     "0D80",
+     "0DFF"
+    ]
+   ]
+  },
+  {
+   "source": "noto-sans-ethiopic",
+   "member": "NotoSansEthiopic-Regular.ttf",
+   "file": "NotoSansEthiopic-Regular.ttf",
+   "role": "ethiopic",
+   "face_index": 0,
+   "sha256": "04fad43c4576285e7bbc829677396edcb4447479b47fdc356b6e073e6ac4401b",
+   "load": "on-demand",
+   "family": "Noto Sans Ethiopic",
+   "ranges": [
+    [
+     "1200",
+     "139F"
+    ],
+    [
+     "2D80",
+     "2DDF"
+    ]
+   ]
+  },
+  {
+   "source": "noto-sans-gurmukhi",
+   "member": "NotoSansGurmukhi-Regular.ttf",
+   "file": "NotoSansGurmukhi-Regular.ttf",
+   "role": "gurmukhi",
+   "face_index": 0,
+   "sha256": "7b2c1cfa0bc744623c7ce49eccfef440ec8419596d995bdeee973cd43f46ab00",
+   "load": "on-demand",
+   "family": "Noto Sans Gurmukhi",
+   "ranges": [
+    [
+     "0A00",
+     "0A7F"
+    ]
+   ]
+  },
+  {
+   "source": "noto-sans-gujarati",
+   "member": "NotoSansGujarati-Regular.ttf",
+   "file": "NotoSansGujarati-Regular.ttf",
+   "role": "gujarati",
+   "face_index": 0,
+   "sha256": "30ecc9188d6615bb45601daa746add60c463766324921461052443e1516dab0f",
+   "load": "on-demand",
+   "family": "Noto Sans Gujarati",
+   "ranges": [
+    [
+     "0A80",
+     "0AFF"
+    ]
+   ]
+  },
+  {
+   "source": "noto-sans-oriya",
+   "member": "NotoSansOriya-Regular.ttf",
+   "file": "NotoSansOriya-Regular.ttf",
+   "role": "oriya",
+   "face_index": 0,
+   "sha256": "31896b569ddb1bab60de95c3b0d390a84783b3b4134614ed2a5df60c0d525f84",
+   "load": "on-demand",
+   "family": "Noto Sans Oriya",
+   "ranges": [
+    [
+     "0B00",
+     "0B7F"
+    ]
+   ]
+  },
+  {
+   "source": "noto-sans-telugu",
+   "member": "NotoSansTelugu-Regular.ttf",
+   "file": "NotoSansTelugu-Regular.ttf",
+   "role": "telugu",
+   "face_index": 0,
+   "sha256": "e0595bcf47b907b2afb77a34ae64c3e8351f56452c66983660172c6b9ea15576",
+   "load": "on-demand",
+   "family": "Noto Sans Telugu",
+   "ranges": [
+    [
+     "0C00",
+     "0C7F"
+    ]
+   ]
+  },
+  {
+   "source": "noto-sans-kannada",
+   "member": "NotoSansKannada-Regular.ttf",
+   "file": "NotoSansKannada-Regular.ttf",
+   "role": "kannada",
+   "face_index": 0,
+   "sha256": "81b587d0f850db999c64cddf823be2a2648f6244a647fa0a3fe4eea83ff01de8",
+   "load": "on-demand",
+   "family": "Noto Sans Kannada",
+   "ranges": [
+    [
+     "0C80",
+     "0CFF"
+    ]
+   ]
+  },
+  {
+   "source": "noto-sans-malayalam",
+   "member": "NotoSansMalayalam-Regular.ttf",
+   "file": "NotoSansMalayalam-Regular.ttf",
+   "role": "malayalam",
+   "face_index": 0,
+   "sha256": "d18b5c10d85bba3d3d89775484bcfa731112f501ac070793ddbda5a36992520f",
+   "load": "on-demand",
+   "family": "Noto Sans Malayalam",
+   "ranges": [
+    [
+     "0D00",
+     "0D7F"
+    ]
+   ]
+  },
+  {
+   "source": "noto-serif-tibetan",
+   "member": "NotoSerifTibetan-Regular.ttf",
+   "file": "NotoSerifTibetan-Regular.ttf",
+   "role": "tibetan",
+   "face_index": 0,
+   "sha256": "2ac2555a88b5bcbbacc490003e96dd4d00d064daeee4a9465d68cf301f9886b3",
+   "load": "on-demand",
+   "family": "Noto Serif Tibetan",
+   "ranges": [
+    [
+     "0F00",
+     "0FFF"
+    ]
+   ]
+  },
+  {
+   "source": "noto-sans-thaana",
+   "member": "NotoSansThaana-Regular.ttf",
+   "file": "NotoSansThaana-Regular.ttf",
+   "role": "thaana",
+   "face_index": 0,
+   "sha256": "aa3ca2ec5d96984a73a8be122286cb2fa4ef3bdf5ba310df8ad797ff4aa2a238",
+   "load": "on-demand",
+   "family": "Noto Sans Thaana",
+   "ranges": [
+    [
+     "0780",
+     "07BF"
+    ]
+   ]
   }
  ]
 }

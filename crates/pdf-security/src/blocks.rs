@@ -26,11 +26,10 @@ impl<const WIDE: usize> Blocks<WIDE> {
             eat(&self.part);
             self.filled = 0;
         }
-        let mut whole = data.chunks_exact(WIDE);
-        for block in &mut whole {
-            eat(block.try_into().expect("a whole block"));
+        let (whole, rest) = data.as_chunks::<WIDE>();
+        for block in whole {
+            eat(block);
         }
-        let rest = whole.remainder();
         self.part[..rest.len()].copy_from_slice(rest);
         self.filled = rest.len();
     }

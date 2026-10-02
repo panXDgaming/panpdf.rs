@@ -4,7 +4,10 @@ use pdf_app::wording::Message;
 use pdf_edit::outline::{Bookmark, Change};
 use pdf_syntax::Reference;
 
-use crate::window_state::Window;
+use crate::dialog;
+use crate::format::{icon_button, quiet_icon_button};
+use crate::icons::Icon;
+use crate::window_state::{Renaming, Window};
 
 const PANEL_WIDTH: f32 = 250.0;
 const STEP: f32 = 14.0;
@@ -23,13 +26,7 @@ impl Window {
             .exact_size(PANEL_WIDTH)
             .show(ui, |ui| {
                 ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new(Message::Contents.say(lang))
-                            .size(11.0)
-                            .color(ui.visuals().weak_text_color()),
-                    );
-                });
+                dialog::panel_caption(ui, &Message::Contents.say(lang));
                 ui.add_space(4.0);
                 asked = self.contents_buttons(ui, &bookmarks);
                 ui.separator();
@@ -51,8 +48,12 @@ impl Window {
                             )]
                             ui.add_space(book.depth as f32 * STEP);
                             if book.children > 0 {
-                                let mark = if book.open { "▾" } else { "▸" };
-                                if ui.small_button(mark).clicked() {
+                                let (icon, hover) = if book.open {
+                                    (Icon::Expand, Message::BookmarkHide)
+                                } else {
+                                    (Icon::Next, Message::BookmarkShow)
+                                };
+                                if quiet_icon_button(ui, icon, &hover.say(lang)).clicked() {
                                     asked = Some(Change::Fold {
                                         bookmark: book.reference,
                                         open: !book.open,
@@ -92,7 +93,11 @@ impl Window {
                 .on_hover_text(Message::AddBookmarkSaid.say(lang))
                 .clicked()
             {
-                self.renaming = Some((None, self.title_for_this_page()));
+                self.renaming = Some(Renaming {
+                    bookmark: None,
+                    title: self.title_for_this_page(),
+                    page: self.focus,
+                });
             }
             let has = chosen.is_some();
             if ui
@@ -103,7 +108,11 @@ impl Window {
                 .clicked()
                 && let Some(book) = chosen
             {
-                self.renaming = Some((Some(book.reference), book.title.clone()));
+                self.renaming = Some(Renaming {
+                    bookmark: Some(book.reference),
+                    title: book.title.clone(),
+                    page: self.focus,
+                });
             }
             if ui
                 .add_enabled(
@@ -119,16 +128,13 @@ impl Window {
             }
         });
         ui.horizontal_wrapped(|ui| {
-            for (mark, said, step) in [
-                ("▲", Message::BookmarkUp, Step::Up),
-                ("▼", Message::BookmarkDown, Step::Down),
-                ("◀", Message::BookmarkOut, Step::Out),
-                ("▶", Message::BookmarkIn, Step::In),
+            for (icon, said, step) in [
+                (Icon::Up, Message::BookmarkUp, Step::Up),
+                (Icon::Expand, Message::BookmarkDown, Step::Down),
+                (Icon::Previous, Message::BookmarkOut, Step::Out),
+                (Icon::Next, Message::BookmarkIn, Step::In),
             ] {
-                if ui
-                    .add_enabled(idle && chosen.is_some(), egui::Button::new(mark))
-                    .on_hover_text(said.say(lang))
-                    .clicked()
+                if icon_button(ui, icon, &said.say(lang), false, idle && chosen.is_some()).clicked()
                     && let Some(book) = chosen
                 {
                     asked = moved(bookmarks, book, step);
@@ -150,7 +156,11 @@ impl Window {
     }
 
     pub(crate) fn change_the_outline(&mut self, change: Change) {
-        let job = self.editor.begin_change_outline(self.focus, change);
+        let page = match &change {
+            Change::Add { page, .. } => *page,
+            _ => self.focus,
+        };
+        let job = self.editor.begin_change_outline(page, change);
         if job.is_none() {
             self.editor.say(Message::AnotherEditIsRunning);
             return;
@@ -159,46 +169,54 @@ impl Window {
     }
 
     pub(crate) fn bookmark_name_box(&mut self, ctx: &egui::Context) {
-        let Some((bookmark, mut title)) = self.renaming.clone() else {
+        let Some(mut renaming) = self.renaming.take() else {
             return;
         };
         let lang = self.lang;
         let mut done = false;
         let mut cancelled = false;
-        egui::Window::new(Message::BookmarkName.say(lang))
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .show(ctx, |ui| {
-                let box_ = ui.add(egui::TextEdit::singleline(&mut title).desired_width(280.0));
-                box_.request_focus();
-                ui.horizontal(|ui| {
-                    done = ui.button(Message::Apply.say(lang)).clicked()
-                        || (box_.lost_focus()
-                            && ui.input(|input| input.key_pressed(egui::Key::Enter)));
-                    cancelled = ui.button(Message::CancelLeaving.say(lang)).clicked()
-                        || ui.input(|input| input.key_pressed(egui::Key::Escape));
-                });
+        let heading = Message::BookmarkName.say(lang);
+        let spec = dialog::Spec {
+            id: "bookmark-name",
+            width: 320.0,
+        };
+        let modal = dialog::modal(ctx, &spec, |ui| {
+            cancelled = dialog::header(ui, &heading, None, Some(&Message::CancelLeaving.say(lang)));
+            let box_ = ui
+                .add(egui::TextEdit::singleline(&mut renaming.title).desired_width(f32::INFINITY));
+            box_.request_focus();
+            done = box_.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
+            dialog::footer(ui, |ui| {
+                let ready = !renaming.title.trim().is_empty();
+                done |= dialog::primary(ui, &Message::Apply.say(lang), ready).clicked();
+                cancelled |= dialog::secondary(ui, &Message::CancelLeaving.say(lang)).clicked();
             });
-        self.renaming = Some((bookmark, title.clone()));
-        if cancelled {
-            self.renaming = None;
+        });
+        if cancelled || modal.should_close() {
             return;
         }
         if !done {
+            self.renaming = Some(renaming);
             return;
         }
-        self.renaming = None;
-        let change = match bookmark {
-            Some(bookmark) => Change::Rename { bookmark, title },
-            None => Change::Add {
-                title,
-                page: self.focus,
-                after: self.chosen_bookmark,
-                inside: false,
-            },
-        };
-        self.change_the_outline(change);
+        self.change_the_outline(named_change(renaming, self.chosen_bookmark));
+    }
+}
+
+fn named_change(renaming: Renaming, after: Option<Reference>) -> Change {
+    let Renaming {
+        bookmark,
+        title,
+        page,
+    } = renaming;
+    match bookmark {
+        Some(bookmark) => Change::Rename { bookmark, title },
+        None => Change::Add {
+            title,
+            page,
+            after,
+            inside: false,
+        },
     }
 }
 
@@ -245,9 +263,42 @@ fn moved(bookmarks: &[Bookmark], book: &Bookmark, step: Step) -> Option<Change> 
 
 #[cfg(test)]
 mod tests {
-    use super::{Step, moved};
+    use super::{Step, moved, named_change};
+    use crate::window_state::Renaming;
     use pdf_edit::outline::{Bookmark, Change};
     use pdf_syntax::Reference;
+
+    #[test]
+    fn a_new_bookmark_is_filed_under_the_page_it_was_named_for() {
+        let renaming = Renaming {
+            bookmark: None,
+            title: "Chapter 3".to_owned(),
+            page: 2,
+        };
+        let after = Some(Reference::new(7, 0));
+        assert_eq!(
+            named_change(renaming, after),
+            Change::Add {
+                title: "Chapter 3".to_owned(),
+                page: 2,
+                after,
+                inside: false,
+            },
+            "scrolling on to page 7 while the box is open changes nothing"
+        );
+        let rename = Renaming {
+            bookmark: Some(Reference::new(5, 0)),
+            title: "Intro".to_owned(),
+            page: 6,
+        };
+        assert_eq!(
+            named_change(rename, None),
+            Change::Rename {
+                bookmark: Reference::new(5, 0),
+                title: "Intro".to_owned(),
+            }
+        );
+    }
 
     fn at(number: u32, depth: usize, parent: Option<u32>) -> Bookmark {
         Bookmark {

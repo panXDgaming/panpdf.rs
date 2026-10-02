@@ -1,0 +1,39 @@
+[package]
+name = "image-to-pdf"
+description = "JPG, PNG and GIF pictures to one PDF, a page each"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "image-to-pdf"
+path = "src/main.rs"
+
+[features]
+default = ["browser"]
+# The browser exports; another tool linking this library turns them off.
+browser = []
+
+[dependencies]
+convert-files.workspace = true
+convert-gif.workspace = true
+convert-pdfdoc.workspace = true
+pdf-bytes.workspace = true
+pdf-edit.workspace = true
+pdf-paint.workspace = true
+pdf-session.workspace = true
+
+[dev-dependencies]
+convert-raster.workspace = true
+pdf-content.workspace = true
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

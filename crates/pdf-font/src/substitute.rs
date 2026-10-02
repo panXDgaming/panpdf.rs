@@ -929,6 +929,7 @@ pub fn coverage_faces(character: char) -> &'static [&'static str] {
         0x0C80..=0x0CFF => &["Noto Sans Kannada", "Noto Serif Kannada", "FreeSerif"],
         0x0D00..=0x0D7F => &["Noto Sans Malayalam", "Noto Serif Malayalam", "FreeSerif"],
         0x0D80..=0x0DFF => &["Noto Sans Sinhala", "Noto Serif Sinhala", "FreeSerif"],
+        0x0780..=0x07BF => &["Noto Sans Thaana"],
         0x1200..=0x139F => &["Noto Sans Ethiopic", "Noto Serif Ethiopic", "FreeSerif"],
         0x0530..=0x058F => &["Noto Sans Armenian", "Noto Serif Armenian", "DejaVu Sans"],
         0x10A0..=0x10FF => &["Noto Sans Georgian", "Noto Serif Georgian", "DejaVu Sans"],

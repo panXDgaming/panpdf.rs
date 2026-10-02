@@ -6,6 +6,7 @@ use pdf_app::wording::{Command, Lang, Message, Refusal, StampWhy};
 use pdf_edit::stamp::{Edge, Facts, Only, Side, Spot, Stamp};
 
 use crate::canvas::box_on_screen;
+use crate::dialog;
 use crate::window_state::{Laid, StampDraft, Window};
 
 const PANEL_WIDTH: f32 = 340.0;
@@ -19,15 +20,6 @@ pub(crate) enum StampKind {
 
 const WATERMARK_GREY: [f32; 3] = [0.5, 0.5, 0.5];
 const WATERMARK_OPACITY: u8 = 50;
-
-const ALONG: [(Edge, Side); 6] = [
-    (Edge::Header, Side::Left),
-    (Edge::Header, Side::Centre),
-    (Edge::Header, Side::Right),
-    (Edge::Footer, Side::Left),
-    (Edge::Footer, Side::Centre),
-    (Edge::Footer, Side::Right),
-];
 
 const TOKENS: [(&str, Message); 4] = [
     ("{page}", Message::StampTokenPage),
@@ -154,6 +146,7 @@ impl Window {
         self.see_the_stamp();
         let lang = self.lang;
         let busy = self.editor.is_busy();
+        let canvas = self.canvas;
         let pages = self
             .stamp_draft
             .as_ref()
@@ -179,60 +172,60 @@ impl Window {
         let mut apply = false;
         let mut close = false;
         let title = Message::Command(draft.door).say(lang);
-        egui::Window::new(title.trim_end_matches('\u{2026}'))
-            .id(egui::Id::new("stamp-panel"))
-            .collapsible(false)
-            .resizable(false)
-            .default_width(PANEL_WIDTH)
-            .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-12.0, 56.0))
-            .show(ctx, |ui| {
-                ui.label(
-                    egui::RichText::new(Message::StampWhy.say(lang))
-                        .size(11.0)
-                        .color(ui.visuals().weak_text_color()),
-                );
-                ui.separator();
+        let why = Message::StampWhy.say(lang);
+        let shut = Message::Close.say(lang);
+        let spec = dialog::Spec {
+            id: "stamp-panel",
+            width: PANEL_WIDTH,
+        };
+        dialog::panel(ctx, canvas, &spec, |ui, room| {
+            close = dialog::header(
+                ui,
+                title.trim_end_matches('\u{2026}'),
+                Some(&why),
+                Some(&shut),
+            );
+            dialog::scrolling(ui, "stamp-body", room, |ui| {
                 wording_box(ui, draft, lang);
-                ui.separator();
+                dialog::divide(ui);
                 where_it_goes(ui, draft, lang);
-                ui.separator();
+                dialog::divide(ui);
                 how_it_looks(ui, draft, lang);
-                ui.separator();
+                dialog::divide(ui);
                 which_pages(ui, draft, lang);
-                ui.separator();
-                match &shown {
-                    Some((page, Ok(line))) => {
-                        ui.label(
-                            Message::StampPreview {
-                                page: *page,
-                                line: line.clone(),
-                            }
-                            .say(lang),
-                        );
-                    }
-                    Some((_, Err(why))) => {
-                        ui.colored_label(ui.visuals().warn_fg_color, why.say(lang));
-                    }
-                    None => {}
-                }
-                if let Some(Err(why)) = &pages {
-                    ui.colored_label(ui.visuals().error_fg_color, why.say(lang));
-                }
-                ui.horizontal(|ui| {
-                    let count = pages
-                        .as_ref()
-                        .and_then(|pages| pages.as_ref().ok())
-                        .map_or(0, Vec::len);
-                    let refused = matches!(shown, Some((_, Err(Message::Refused(_)))));
-                    apply = ui
-                        .add_enabled(
-                            count > 0 && !busy && !refused,
-                            egui::Button::new(Message::StampApply(count).say(lang)),
-                        )
-                        .clicked();
-                    close = ui.button(Message::Close.say(lang)).clicked();
-                });
             });
+            match &shown {
+                Some((page, Ok(line))) => {
+                    ui.add_space(8.0);
+                    let said = Message::StampPreview {
+                        page: *page,
+                        line: line.clone(),
+                    };
+                    dialog::note(ui, dialog::Tone::Calm, &said.say(lang));
+                }
+                Some((_, Err(why))) => {
+                    ui.add_space(8.0);
+                    dialog::note(ui, dialog::Tone::Warning, &why.say(lang));
+                }
+                None => {}
+            }
+            if let Some(Err(why)) = &pages {
+                ui.add_space(8.0);
+                dialog::note(ui, dialog::Tone::Trouble, &why.say(lang));
+            }
+            let count = pages
+                .as_ref()
+                .and_then(|pages| pages.as_ref().ok())
+                .map_or(0, Vec::len);
+            let refused = matches!(shown, Some((_, Err(Message::Refused(_)))));
+            dialog::footer(ui, |ui| {
+                let ready = count > 0 && !busy && !refused;
+                apply = dialog::primary(ui, &Message::StampApply(count).say(lang), ready).clicked();
+                if dialog::secondary(ui, &Message::Close.say(lang)).clicked() {
+                    close = true;
+                }
+            });
+        });
         if close {
             self.stamp_draft = None;
             return;
@@ -348,129 +341,151 @@ impl Window {
 }
 
 fn wording_box(ui: &mut egui::Ui, draft: &mut StampDraft, lang: Lang) {
-    ui.label(Message::FieldText.say(lang));
+    dialog::caption(ui, &Message::FieldText.say(lang));
     ui.add(egui::TextEdit::singleline(&mut draft.wording).desired_width(f32::INFINITY));
+    ui.add_space(6.0);
     ui.horizontal_wrapped(|ui| {
-        ui.label(
-            egui::RichText::new(Message::StampInsert.say(lang))
-                .color(ui.visuals().weak_text_color()),
-        );
+        ui.spacing_mut().item_spacing = egui::vec2(4.0, 6.0);
+        dialog::small(ui, &Message::StampInsert.say(lang));
         for (token, word) in &TOKENS {
-            if ui.small_button(word.say(lang)).clicked() {
+            if ui
+                .add(
+                    egui::Button::new(egui::RichText::new(word.say(lang)).size(11.5))
+                        .corner_radius(11.0)
+                        .small()
+                        .min_size(egui::vec2(0.0, 22.0)),
+                )
+                .clicked()
+            {
                 draft.wording.push_str(token);
             }
         }
     });
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Place {
+    Header,
+    Footer,
+    Middle,
+}
+
+fn place_of(spot: Spot) -> Place {
+    match spot {
+        Spot::Along {
+            edge: Edge::Header, ..
+        } => Place::Header,
+        Spot::Along {
+            edge: Edge::Footer, ..
+        } => Place::Footer,
+        Spot::Middle => Place::Middle,
+    }
+}
+
+fn spot_for(place: Place, side: Side) -> Spot {
+    match place {
+        Place::Header => Spot::Along {
+            edge: Edge::Header,
+            side,
+        },
+        Place::Footer => Spot::Along {
+            edge: Edge::Footer,
+            side,
+        },
+        Place::Middle => Spot::Middle,
+    }
+}
+
+fn side_of(spot: Spot) -> Side {
+    match spot {
+        Spot::Along { side, .. } => side,
+        Spot::Middle => Side::Centre,
+    }
+}
+
 fn where_it_goes(ui: &mut egui::Ui, draft: &mut StampDraft, lang: Lang) {
-    ui.label(Message::StampWhere.say(lang));
-    egui::Grid::new("stamp-where")
-        .num_columns(4)
-        .spacing([6.0, 4.0])
-        .show(ui, |ui| {
-            for row in ALONG.chunks(3) {
-                let edge = row[0].0;
-                ui.label(
-                    match edge {
-                        Edge::Header => Message::StampHeader,
-                        Edge::Footer => Message::StampFooter,
-                    }
-                    .say(lang),
-                );
-                for (edge, side) in row {
-                    let spot = Spot::Along {
-                        edge: *edge,
-                        side: *side,
-                    };
-                    let word = match side {
-                        Side::Left => Message::AlignLeft,
-                        Side::Centre => Message::AlignCentre,
-                        Side::Right => Message::AlignRight,
-                    };
-                    ui.radio_value(&mut draft.spot, spot, word.say(lang));
-                }
-                ui.end_row();
-            }
-        });
-    ui.radio_value(
-        &mut draft.spot,
-        Spot::Middle,
-        Message::StampMiddle.say(lang),
-    );
+    dialog::caption(ui, &Message::StampWhere.say(lang));
+    let mut place = place_of(draft.spot);
+    let places = [
+        (Place::Header, Message::StampHeader.say(lang)),
+        (Place::Footer, Message::StampFooter.say(lang)),
+        (Place::Middle, Message::StampMiddle.say(lang)),
+    ];
+    let mut side = side_of(draft.spot);
+    let moved = dialog::segments(ui, "stamp-place", &mut place, &places);
+    if place != Place::Middle {
+        ui.add_space(6.0);
+        let sides = [
+            (Side::Left, Message::AlignLeft.say(lang)),
+            (Side::Centre, Message::AlignCentre.say(lang)),
+            (Side::Right, Message::AlignRight.say(lang)),
+        ];
+        dialog::segments(ui, "stamp-side", &mut side, &sides);
+    }
+    if moved || side != side_of(draft.spot) {
+        draft.spot = spot_for(place, side);
+    }
 }
 
 fn how_it_looks(ui: &mut egui::Ui, draft: &mut StampDraft, lang: Lang) {
-    egui::Grid::new("stamp-look")
-        .num_columns(2)
-        .spacing([8.0, 4.0])
-        .show(ui, |ui| {
-            ui.label(Message::Font.say(lang));
-            egui::ComboBox::from_id_salt("stamp-font")
-                .selected_text(draft.family.clone())
-                .width(180.0)
-                .show_ui(ui, |ui| {
-                    for family in pdf_cli::font_families() {
-                        ui.selectable_value(&mut draft.family, family.clone(), family);
-                    }
-                });
-            ui.end_row();
-            ui.label(Message::Size.say(lang));
-            ui.horizontal(|ui| {
-                ui.add(
-                    egui::DragValue::new(&mut draft.size)
-                        .range(4.0..=200.0)
-                        .speed(0.5)
-                        .suffix(" pt"),
-                );
-                ui.checkbox(&mut draft.bold, Message::Bold.say(lang));
+    dialog::caption(ui, &Message::StampLook.say(lang));
+    dialog::labelled(ui, &Message::Font.say(lang), |ui| {
+        egui::ComboBox::from_id_salt("stamp-font")
+            .selected_text(draft.family.clone())
+            .width(ui.available_width() - 8.0)
+            .show_ui(ui, |ui| {
+                for family in pdf_cli::font_families() {
+                    ui.selectable_value(&mut draft.family, family.clone(), family);
+                }
             });
-            ui.end_row();
-            ui.label(Message::StampColour.say(lang));
-            ui.color_edit_button_rgb(&mut draft.colour);
-            ui.end_row();
-            ui.label(Message::StampOpacity.say(lang));
-            ui.add(egui::Slider::new(&mut draft.opacity, 1..=100).suffix(" %"));
-            ui.end_row();
-            ui.label(Message::StampMargin.say(lang));
-            ui.add(
-                egui::DragValue::new(&mut draft.margin)
-                    .range(0.0..=288.0)
-                    .speed(0.5),
-            );
-            ui.end_row();
-        });
+    });
+    dialog::labelled(ui, &Message::Size.say(lang), |ui| {
+        ui.add(
+            egui::DragValue::new(&mut draft.size)
+                .range(4.0..=200.0)
+                .speed(0.5)
+                .suffix(" pt"),
+        );
+        ui.add_space(10.0);
+        ui.checkbox(&mut draft.bold, Message::Bold.say(lang));
+    });
+    dialog::labelled(ui, &Message::StampColour.say(lang), |ui| {
+        ui.color_edit_button_rgb(&mut draft.colour);
+    });
+    dialog::labelled(ui, &Message::StampOpacity.say(lang), |ui| {
+        ui.spacing_mut().slider_width = ui.available_width() - 64.0;
+        ui.add(egui::Slider::new(&mut draft.opacity, 1..=100).suffix(" %"));
+    });
+    dialog::labelled(ui, &Message::StampMargin.say(lang), |ui| {
+        ui.add(
+            egui::DragValue::new(&mut draft.margin)
+                .range(0.0..=288.0)
+                .speed(0.5),
+        );
+    });
 }
 
 fn which_pages(ui: &mut egui::Ui, draft: &mut StampDraft, lang: Lang) {
-    egui::Grid::new("stamp-pages")
-        .num_columns(2)
-        .spacing([8.0, 4.0])
-        .show(ui, |ui| {
-            ui.label(Message::StampPages.say(lang));
-            ui.add(
-                egui::TextEdit::singleline(&mut draft.range)
-                    .hint_text(Message::StampPagesHint.say(lang))
-                    .desired_width(180.0),
-            );
-            ui.end_row();
-            ui.label("");
-            egui::ComboBox::from_id_salt("stamp-only")
-                .selected_text(Message::StampOnly(draft.only).say(lang))
-                .show_ui(ui, |ui| {
-                    for only in [Only::Every, Only::Odd, Only::Even] {
-                        ui.selectable_value(
-                            &mut draft.only,
-                            only,
-                            Message::StampOnly(only).say(lang),
-                        );
-                    }
-                });
-            ui.end_row();
-            ui.label(Message::StampStart.say(lang));
-            ui.add(egui::DragValue::new(&mut draft.start).range(-9999..=99_999));
-            ui.end_row();
-        });
+    dialog::caption(ui, &Message::StampPages.say(lang));
+    ui.add(
+        egui::TextEdit::singleline(&mut draft.range)
+            .hint_text(Message::StampPagesHint.say(lang))
+            .desired_width(f32::INFINITY),
+    );
+    ui.add_space(6.0);
+    let options =
+        [Only::Every, Only::Odd, Only::Even].map(|only| (only, Message::StampOnly(only).say(lang)));
+    dialog::segments(ui, "stamp-only", &mut draft.only, &options);
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new(Message::StampStart.say(lang))
+                .size(13.0)
+                .color(dialog::weak(ui)),
+        );
+        ui.add_space(6.0);
+        ui.add(egui::DragValue::new(&mut draft.start).range(-9999..=99_999));
+    });
 }
 
 #[cfg(test)]

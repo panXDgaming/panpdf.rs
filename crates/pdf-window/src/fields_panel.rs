@@ -5,6 +5,9 @@ use pdf_edit::form::{FieldKind, FormField};
 use pdf_edit::tab_order::{TabOrder, in_reading_order};
 use pdf_syntax::Reference;
 
+use crate::dialog;
+use crate::format::quiet_icon_button;
+use crate::icons::Icon;
 use crate::window_state::{ChosenFields, Tool, Window};
 
 const PANEL_WIDTH: f32 = 230.0;
@@ -35,15 +38,18 @@ impl Window {
             .resizable(false)
             .exact_size(PANEL_WIDTH)
             .show(ui, |ui| {
+                ui.add_space(6.0);
+                dialog::panel_caption(ui, &Message::FieldsPanel.say(lang));
                 ui.add_space(4.0);
-                ui.heading(Message::FieldsPanel.say(lang));
                 if fields.is_empty() {
-                    ui.label(Message::NoFieldsYet.say(lang));
+                    dialog::small(ui, &Message::NoFieldsYet.say(lang));
                     return;
                 }
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     let mut page = usize::MAX;
                     for (at, (on, field)) in fields.iter().enumerate() {
+                        let first = at == 0 || fields[at - 1].0 != *on;
+                        let last = fields.get(at + 1).is_none_or(|(next, _)| next != on);
                         if *on != page {
                             page = *on;
                             ui.add_space(6.0);
@@ -88,12 +94,18 @@ impl Window {
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
-                                    if ui.small_button("▼").clicked() {
-                                        move_by = Some((page, field.widget, 1_isize));
-                                    }
-                                    if ui.small_button("▲").clicked() {
-                                        move_by = Some((page, field.widget, -1));
-                                    }
+                                    let later = Message::FieldLater.say(lang);
+                                    ui.add_enabled_ui(!last, |ui| {
+                                        if quiet_icon_button(ui, Icon::Expand, &later).clicked() {
+                                            move_by = Some((page, field.widget, 1_isize));
+                                        }
+                                    });
+                                    let earlier = Message::FieldEarlier.say(lang);
+                                    ui.add_enabled_ui(!first, |ui| {
+                                        if quiet_icon_button(ui, Icon::Up, &earlier).clicked() {
+                                            move_by = Some((page, field.widget, -1));
+                                        }
+                                    });
                                 },
                             );
                         });
@@ -136,14 +148,9 @@ impl Window {
             .into_iter()
             .map(|(widget, _)| widget)
             .collect();
-        let Some(at) = widgets.iter().position(|held| *held == widget) else {
-            return;
-        };
-        let to = at.saturating_add_signed(by);
-        if to >= widgets.len() {
+        if !moved_in_the_order(&mut widgets, widget, by) {
             return;
         }
-        widgets.swap(at, to);
         self.write_the_order(page, widgets, TabOrder::AsListed);
     }
 
@@ -157,5 +164,54 @@ impl Window {
             return;
         }
         self.send(job);
+    }
+}
+
+fn moved_in_the_order(widgets: &mut [Reference], widget: Reference, by: isize) -> bool {
+    let Some(at) = widgets.iter().position(|held| *held == widget) else {
+        return false;
+    };
+    let to = at.saturating_add_signed(by);
+    if to >= widgets.len() || to == at {
+        return false;
+    }
+    widgets.swap(at, to);
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use pdf_syntax::Reference;
+
+    use super::moved_in_the_order;
+
+    fn three() -> Vec<Reference> {
+        (1..=3).map(|number| Reference::new(number, 0)).collect()
+    }
+
+    #[test]
+    fn the_first_field_cannot_go_earlier_and_the_last_cannot_go_later() {
+        let mut widgets = three();
+        assert!(
+            !moved_in_the_order(&mut widgets, Reference::new(1, 0), -1),
+            "a move that changes nothing is not an edit"
+        );
+        assert!(!moved_in_the_order(&mut widgets, Reference::new(3, 0), 1));
+        assert_eq!(widgets, three());
+    }
+
+    #[test]
+    fn a_field_in_the_middle_swaps_with_its_neighbour() {
+        let mut widgets = three();
+        assert!(moved_in_the_order(&mut widgets, Reference::new(2, 0), 1));
+        assert_eq!(
+            widgets,
+            [
+                Reference::new(1, 0),
+                Reference::new(3, 0),
+                Reference::new(2, 0)
+            ]
+        );
+        assert!(!moved_in_the_order(&mut widgets, Reference::new(9, 0), 1));
     }
 }

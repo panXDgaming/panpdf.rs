@@ -237,7 +237,7 @@ pub(crate) fn sheet_bytes(size: [f64; 2], image: &SheetImage) -> Vec<u8> {
     bytes.extend_from_slice(&size[1].to_le_bytes());
     for line in image.rgb.chunks_exact(width * 3) {
         let start = bytes.len();
-        for pixel in line.chunks_exact(3) {
+        for pixel in line.as_chunks::<3>().0 {
             bytes.extend_from_slice(&[pixel[2], pixel[1], pixel[0]]);
         }
         bytes.resize(start + row, 0);

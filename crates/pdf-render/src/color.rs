@@ -92,10 +92,21 @@ pub fn components_to_rgb(space: &ColorSpace, components: &[f64]) -> Option<([f64
             ))
         }
         ColorSpace::DeviceRgb => Some((triple(components)?, Resolved::EXACT)),
-        ColorSpace::CalRgb(_) => Some((
-            triple(components)?,
-            Resolved::approximated(Approximation::CalibratedAsDevice),
-        )),
+        ColorSpace::CalRgb(definition) => {
+            let abc = triple(components)?;
+            match cal_rgb_to_srgb(
+                abc,
+                definition.gamma.value,
+                definition.matrix.value,
+                definition.white_point.value,
+            ) {
+                Some(rgb) => Some((rgb, Resolved::EXACT)),
+                None => Some((
+                    abc,
+                    Resolved::approximated(Approximation::CalibratedAsDevice),
+                )),
+            }
+        }
         ColorSpace::DeviceCmyk => {
             let [cyan, magenta, yellow, black] = quad(components)?;
             Some((
@@ -288,6 +299,40 @@ fn xyz_to_srgb(xyz: [f64; 3]) -> [f64; 3] {
     apply(XYZ_D65_TO_LINEAR_SRGB, xyz).map(srgb_transfer)
 }
 
+fn cal_rgb_to_srgb(
+    abc: [f64; 3],
+    gamma: [f64; 3],
+    matrix: [f64; 9],
+    white: [f64; 3],
+) -> Option<[f64; 3]> {
+    let [a, b, c] = [0, 1, 2].map(|axis| abc[axis].max(0.0).powf(gamma[axis]));
+    let xyz = [0, 1, 2]
+        .map(|row| matrix[row].mul_add(a, matrix[3 + row].mul_add(b, matrix[6 + row] * c)));
+    Some(apply(srgb_primaries_for_white(white)?, xyz).map(srgb_transfer))
+}
+
+fn srgb_primaries_for_white(white: [f64; 3]) -> Option<[[f64; 3]; 3]> {
+    let column = |x: f64, y: f64| [x / y, 1.0, (1.0 - x - y) / y];
+    let [red, green, blue] = [column(0.64, 0.33), column(0.30, 0.60), column(0.15, 0.06)];
+    let primaries = [0, 1, 2].map(|row| [red[row], green[row], blue[row]]);
+    let sums = apply(invert3(primaries)?, white);
+    let scaled = primaries.map(|row| [row[0] * sums[0], row[1] * sums[1], row[2] * sums[2]]);
+    invert3(scaled)
+}
+
+fn invert3(m: [[f64; 3]; 3]) -> Option<[[f64; 3]; 3]> {
+    let cofactor = |row: usize, col: usize| {
+        let (r0, r1) = ((row + 1) % 3, (row + 2) % 3);
+        let (c0, c1) = ((col + 1) % 3, (col + 2) % 3);
+        m[r0][c0].mul_add(m[r1][c1], -(m[r0][c1] * m[r1][c0]))
+    };
+    let determinant = (0..3).fold(0.0, |sum, col| m[0][col].mul_add(cofactor(0, col), sum));
+    if !determinant.is_finite() || determinant.abs() < 1e-12 {
+        return None;
+    }
+    Some([0, 1, 2].map(|row| [0, 1, 2].map(|col| cofactor(col, row) / determinant)))
+}
+
 fn apply(matrix: [[f64; 3]; 3], vector: [f64; 3]) -> [f64; 3] {
     matrix.map(|row| {
         row.iter()
@@ -431,5 +476,42 @@ mod tests {
     fn components_outside_the_range_are_clamped_rather_than_extrapolated() {
         assert_eq!(levels(-1.0, 0.0, 0.0, 0.0), levels(0.0, 0.0, 0.0, 0.0));
         assert_eq!(levels(2.0, 0.0, 0.0, 0.0), levels(1.0, 0.0, 0.0, 0.0));
+    }
+
+    use super::{cal_rgb_to_srgb, srgb_transfer};
+
+    const IDENTITY: [f64; 9] = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
+
+    fn close(got: [f64; 3], want: [f64; 3]) {
+        for (got, want) in got.iter().zip(want) {
+            assert!((got - want).abs() < 5e-4, "{got:?} against {want:?}");
+        }
+    }
+
+    #[test]
+    fn a_cal_rgb_space_stating_srgb_is_linear_srgb() {
+        let srgb = [
+            0.412_4, 0.212_6, 0.019_3, 0.357_6, 0.715_2, 0.119_2, 0.180_5, 0.072_2, 0.950_5,
+        ];
+        let white = [0.950_5, 1.0, 1.089_0];
+        let abc = [0.2, 0.5, 0.8];
+        let got = cal_rgb_to_srgb(abc, [1.0; 3], srgb, white).expect("a valid space");
+        close(got, abc.map(srgb_transfer));
+    }
+
+    #[test]
+    fn a_cal_rgb_white_comes_out_white() {
+        let d50 = [0.964_2, 1.0, 0.824_9];
+        close(
+            cal_rgb_to_srgb(d50, [1.0; 3], IDENTITY, d50).expect("a valid space"),
+            [1.0, 1.0, 1.0],
+        );
+    }
+
+    #[test]
+    fn the_test_kit_cal_rgb_swatch_is_pure_green() {
+        let got = cal_rgb_to_srgb([0.2, 0.7, 0.3], [2.2; 3], IDENTITY, [0.950_5, 1.0, 1.089])
+            .expect("a valid space");
+        close(got, [0.0, 0.921_6, 0.0]);
     }
 }

@@ -7,12 +7,13 @@ use pdf_edit::form::{
 };
 
 use crate::canvas::box_on_screen;
+use crate::dialog;
 use crate::window_state::{FieldDraft, PropertiesTab, Tool, Window};
 
 const PANEL_WIDTH: f32 = 380.0;
 
 pub(crate) fn beside_or_under(area: egui::Rect, screen: egui::Rect) -> egui::Pos2 {
-    if area.right() + 16.0 + PANEL_WIDTH <= screen.right() {
+    if area.right() + 16.0 + PANEL_WIDTH + crate::dialog::FRAME <= screen.right() {
         area.right_top() + egui::vec2(16.0, 0.0)
     } else {
         area.left_bottom() + egui::vec2(0.0, 16.0)
@@ -605,6 +606,31 @@ fn list_options(ui: &mut egui::Ui, draft: &mut FieldDraft, kind: FieldKind, lang
     );
 }
 
+fn the_tab(
+    ui: &mut egui::Ui,
+    draft: &mut FieldDraft,
+    (tab, field): (PropertiesTab, &FormField),
+    lang: Lang,
+) {
+    match tab {
+        PropertiesTab::General => general(ui, draft, lang),
+        PropertiesTab::Appearance => appearance(ui, draft, field.kind, lang),
+        PropertiesTab::Options => match field.kind {
+            FieldKind::Text => text_options(ui, draft, lang),
+            FieldKind::Checkbox | FieldKind::Radio => {
+                button_options(ui, draft, field.kind, lang);
+            }
+            FieldKind::Combo | FieldKind::List => {
+                list_options(ui, draft, field.kind, lang);
+            }
+            FieldKind::Push => push_options(ui, draft, lang),
+            FieldKind::Signature => {
+                ui.label(Message::FieldNoOptions.say(lang));
+            }
+        },
+    }
+}
+
 impl Window {
     pub(crate) fn field_properties(&mut self, ctx: &egui::Context) {
         if self.tool != Tool::Form {
@@ -627,9 +653,11 @@ impl Window {
         }
         let lang = self.lang;
         let area = box_on_screen(laid.placed, found.pixels);
-        let placed = beside_or_under(area, ctx.content_rect());
+        let canvas = self.canvas;
+        let placed = beside_or_under(area, canvas);
         let mut apply = false;
         let mut delete = false;
+        let mut close = false;
         let mut tab = self.properties_tab;
         let Some(draft) = self.field_draft.as_mut() else {
             return;
@@ -638,53 +666,42 @@ impl Window {
             clippy::cast_possible_truncation,
             reason = "a position on screen, rounded to a whole pixel to name the window"
         )]
-        egui::Window::new(Message::FieldProperties.say(lang))
-            .id(egui::Id::new((
-                "form field properties",
-                placed.x as i32,
-                placed.y as i32,
-            )))
-            .collapsible(false)
-            .resizable(false)
-            .default_pos(placed)
-            .constrain(false)
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    for (choice, word) in [
-                        (PropertiesTab::General, Message::FieldGeneral),
-                        (PropertiesTab::Appearance, Message::FieldAppearance),
-                        (PropertiesTab::Options, Message::FieldOptions),
-                    ] {
-                        ui.selectable_value(&mut tab, choice, word.say(lang));
-                    }
-                });
-                ui.separator();
-                match tab {
-                    PropertiesTab::General => general(ui, draft, lang),
-                    PropertiesTab::Appearance => appearance(ui, draft, field.kind, lang),
-                    PropertiesTab::Options => match field.kind {
-                        FieldKind::Text => text_options(ui, draft, lang),
-                        FieldKind::Checkbox | FieldKind::Radio => {
-                            button_options(ui, draft, field.kind, lang);
-                        }
-                        FieldKind::Combo | FieldKind::List => {
-                            list_options(ui, draft, field.kind, lang);
-                        }
-                        FieldKind::Push => push_options(ui, draft, lang),
-                        FieldKind::Signature => {
-                            ui.label(Message::FieldNoOptions.say(lang));
-                        }
-                    },
-                }
-                ui.separator();
-                ui.horizontal(|ui| {
-                    apply = ui.button(Message::Apply.say(lang)).clicked();
-                    delete = ui.button(Message::DeleteField.say(lang)).clicked();
-                });
+        let id = egui::Id::new(("form field properties", placed.x as i32, placed.y as i32));
+        let title = Message::FieldProperties.say(lang);
+        let shut = Message::Close.say(lang);
+        dialog::beside(ctx, canvas, (id, placed), PANEL_WIDTH, |ui, room| {
+            close = dialog::header(ui, &title, None, Some(&shut));
+            let tabs = [
+                (PropertiesTab::General, Message::FieldGeneral.say(lang)),
+                (
+                    PropertiesTab::Appearance,
+                    Message::FieldAppearance.say(lang),
+                ),
+                (PropertiesTab::Options, Message::FieldOptions.say(lang)),
+            ];
+            dialog::segments(ui, "field-tab", &mut tab, &tabs);
+            ui.add_space(10.0);
+            dialog::scrolling(ui, "field-body", room, |ui| {
+                the_tab(ui, draft, (tab, &field), lang);
             });
+            dialog::footer_with(
+                ui,
+                |ui| {
+                    delete = dialog::secondary(ui, &Message::DeleteField.say(lang)).clicked();
+                },
+                |ui| {
+                    apply = dialog::primary(ui, &Message::Apply.say(lang), true).clicked();
+                    close |= dialog::secondary(ui, &shut).clicked();
+                },
+            );
+        });
         self.properties_tab = tab;
         if delete {
             self.remove_the_chosen_fields();
+            return;
+        }
+        if close {
+            self.chosen_fields = None;
             return;
         }
         if !apply {

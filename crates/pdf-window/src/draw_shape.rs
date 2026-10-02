@@ -3,6 +3,7 @@ use eframe::egui;
 use pdf_app::view::{Quad, SWEEP_ENOUGH};
 use pdf_app::wording::Message;
 use pdf_edit::PenStep;
+use pdf_edit::figures::Figure;
 
 use crate::window_state::{Drag, Shape, Tool, Window};
 
@@ -217,7 +218,7 @@ impl Window {
     }
 
     pub(crate) fn shape_choices(&mut self, ui: &mut egui::Ui) {
-        for shape in Shape::ALL {
+        for shape in Shape::all() {
             let chosen = self.shape == shape;
             let response = crate::draw_pen::swatch_box(ui, chosen, 26.0);
             let colour = if chosen {
@@ -254,13 +255,14 @@ fn steps_of(shape: Shape, from: (f64, f64), to: (f64, f64), width: f64) -> Vec<P
     match shape {
         Shape::Line => vec![PenStep::Move(from), PenStep::Line(to)],
         Shape::Arrow => arrow(from, to, width),
-        Shape::Rectangle => vec![
+        Shape::Figure(Figure::Rectangle) => vec![
             PenStep::Move((box_of[0], box_of[1])),
             PenStep::Line((box_of[2], box_of[1])),
             PenStep::Line((box_of[2], box_of[3])),
             PenStep::Line((box_of[0], box_of[3])),
         ],
-        Shape::Ellipse => ellipse(box_of),
+        Shape::Figure(Figure::Ellipse) => ellipse(box_of),
+        Shape::Figure(figure) => figure.steps(box_of, true),
     }
 }
 
@@ -367,7 +369,7 @@ mod tests {
 
     #[test]
     fn a_rectangle_is_its_four_corners_once_each() {
-        let steps = steps_of(Shape::Rectangle, (10.0, 20.0), (50.0, 60.0), 1.0);
+        let steps = steps_of(Shape::RECTANGLE, (10.0, 20.0), (50.0, 60.0), 1.0);
         assert_eq!(
             steps,
             [
@@ -381,7 +383,7 @@ mod tests {
 
     #[test]
     fn a_closed_shape_is_closed_while_it_is_being_dragged() {
-        for shape in [Shape::Rectangle, Shape::Ellipse] {
+        for shape in [Shape::RECTANGLE, Shape::ELLIPSE] {
             let steps = steps_of(shape, (10.0, 20.0), (50.0, 60.0), 1.0);
             let points = preview_points(shape, &steps);
             assert_eq!(
@@ -390,7 +392,7 @@ mod tests {
                 "{shape:?} closes: {points:?}"
             );
             for corner in [(10.0, 20.0), (50.0, 20.0), (50.0, 60.0), (10.0, 60.0)] {
-                if shape == Shape::Rectangle {
+                if shape == Shape::RECTANGLE {
                     assert!(points.contains(&corner), "{corner:?} in {points:?}");
                 }
             }
@@ -403,8 +405,8 @@ mod tests {
     #[test]
     fn a_rectangle_dragged_backwards_is_the_same_rectangle() {
         assert_eq!(
-            steps_of(Shape::Rectangle, (50.0, 60.0), (10.0, 20.0), 1.0),
-            steps_of(Shape::Rectangle, (10.0, 20.0), (50.0, 60.0), 1.0)
+            steps_of(Shape::RECTANGLE, (50.0, 60.0), (10.0, 20.0), 1.0),
+            steps_of(Shape::RECTANGLE, (10.0, 20.0), (50.0, 60.0), 1.0)
         );
     }
 

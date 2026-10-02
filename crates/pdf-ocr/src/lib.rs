@@ -30,6 +30,22 @@ pub fn read_page(
     languages: &[String],
     cancel: &std::sync::atomic::AtomicBool,
 ) -> Result<Reading, OcrError> {
+    let page = page_image(layers, geometry)?;
+    let lines = recognize_choosing(engine, &page.grey, languages, cancel)?;
+    Ok(reading(&lines, page.scale, page.shown_height))
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct PageImage {
+    pub grey: Grey,
+    pub scale: f64,
+    pub shown_height: f64,
+}
+
+pub fn page_image(
+    layers: &[&pdf_paint::PaintGraph],
+    geometry: &pdf_content::PageGeometry,
+) -> Result<PageImage, OcrError> {
     let scale = f64::from(DPI) / 72.0;
     let options = pdf_render::RenderOptions {
         scale,
@@ -42,7 +58,9 @@ pub fn read_page(
         height: canvas.height,
         pixels: canvas
             .to_rgb8()
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|pixel| {
                 let sum = 299 * u32::from(pixel[0])
                     + 587 * u32::from(pixel[1])
@@ -51,9 +69,12 @@ pub fn read_page(
             })
             .collect(),
     };
-    let lines = recognize_choosing(engine, &grey, languages, cancel)?;
     let (_, shown_height) = geometry.rotated_size();
-    Ok(reading(&lines, scale, shown_height))
+    Ok(PageImage {
+        grey,
+        scale,
+        shown_height,
+    })
 }
 
 const LAO: std::ops::RangeInclusive<char> = '\u{0e80}'..='\u{0eff}';

@@ -5,6 +5,10 @@ use crate::json::Json;
 
 const VERSION: u32 = 1;
 
+const MOST_KEPT_TEXT_BYTES: usize = 100_000;
+
+const MOST_KEPT_RESULT_CHARACTERS: usize = 20_000;
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Chat {
     pub id: String,
@@ -40,18 +44,46 @@ pub fn title_of(turns: &[Turn]) -> String {
     if first.chars().count() <= MOST {
         return first.to_owned();
     }
-    let clipped: String = first.chars().take(MOST).collect();
-    let cut = clipped
-        .rfind(char::is_whitespace)
+    let letters: Vec<char> = first.chars().take(MOST).collect();
+    let mut kept = letters
+        .iter()
+        .rposition(|letter| letter.is_whitespace())
         .filter(|at| *at > MOST / 2)
-        .unwrap_or(clipped.len());
-    let mut title = clipped[..cut].trim_end().to_owned();
+        .unwrap_or(letters.len());
+    while kept > 0
+        && letters
+            .get(kept - 1)
+            .is_some_and(|letter| comes_before_its_letter(*letter))
+    {
+        kept -= 1;
+    }
+    let mut title: String = letters[..kept]
+        .iter()
+        .collect::<String>()
+        .trim_end()
+        .to_owned();
     title.push('\u{2026}');
     title
 }
 
+const fn comes_before_its_letter(letter: char) -> bool {
+    matches!(letter, '\u{0e40}'..='\u{0e44}' | '\u{0eC0}'..='\u{0eC4}')
+}
+
+#[must_use]
+pub fn is_a_chat_id(id: &str) -> bool {
+    let digits = |part: &str| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit());
+    let mut parts = id.splitn(2, '-');
+    parts.next().is_some_and(digits) && parts.next().is_none_or(digits)
+}
+
 #[must_use]
 pub fn write(chat: &Chat) -> String {
+    write_turns(chat, &chat.turns)
+}
+
+#[must_use]
+pub fn write_turns(chat: &Chat, turns: &[Turn]) -> String {
     let value = Json::object([
         ("version", Json::count(VERSION as usize)),
         ("id", Json::text(&chat.id)),
@@ -69,17 +101,14 @@ pub fn write(chat: &Chat) -> String {
             "places",
             Json::List(chat.places.iter().map(Json::text).collect()),
         ),
-        (
-            "turns",
-            Json::List(chat.turns.iter().map(turn_out).collect()),
-        ),
+        ("turns", Json::List(turns.iter().map(turn_out).collect())),
     ]);
     value.write()
 }
 
 #[must_use]
 pub fn read(text: &str) -> Option<Chat> {
-    let value = Json::parse(text).ok()?;
+    let value = Json::parse_stored(text).ok()?;
     let version = value.get("version")?.as_count()?;
     if version > VERSION as usize {
         return None;
@@ -97,8 +126,9 @@ pub fn read(text: &str) -> Option<Chat> {
         .iter()
         .map(turn_in)
         .collect::<Option<Vec<Turn>>>()?;
+    let id = word("id");
     Some(Chat {
-        id: word("id"),
+        id: if is_a_chat_id(&id) { id } else { String::new() },
         title: word("title"),
         changed: value
             .get("changed")
@@ -185,14 +215,21 @@ fn turn_in(value: &Json) -> Option<Turn> {
 }
 
 fn attachment_out(attachment: &Attachment) -> Json {
-    let kind = match &attachment.kind {
-        AttachmentKind::Text => "text".to_owned(),
-        AttachmentKind::Image { media_type } => media_type.clone(),
+    let (kind, kept) = match &attachment.kind {
+        AttachmentKind::Text => (
+            "text".to_owned(),
+            (attachment.bytes.len() <= MOST_KEPT_TEXT_BYTES)
+                .then(|| String::from_utf8_lossy(&attachment.bytes).into_owned()),
+        ),
+        AttachmentKind::Image { media_type } => (media_type.clone(), None),
     };
-    Json::object([
-        ("name", Json::text(&attachment.name)),
-        ("kind", Json::text(kind)),
-    ])
+    let mut members = std::collections::BTreeMap::new();
+    members.insert("name".to_owned(), Json::text(&attachment.name));
+    members.insert("kind".to_owned(), Json::text(kind));
+    if let Some(words) = kept {
+        members.insert("words".to_owned(), Json::text(words));
+    }
+    Json::Object(members)
 }
 
 fn attachment_in(value: &Json) -> Option<Attachment> {
@@ -207,7 +244,16 @@ fn attachment_in(value: &Json) -> Option<Attachment> {
                 media_type: kind.to_owned(),
             }
         },
-        bytes: Vec::new(),
+        bytes: if kind == "text" {
+            value
+                .get("words")
+                .and_then(Json::as_str)
+                .unwrap_or_default()
+                .as_bytes()
+                .to_vec()
+        } else {
+            Vec::new()
+        },
     })
 }
 
@@ -224,13 +270,23 @@ fn call_in(value: &Json) -> Option<ToolCall> {
         id: value.get("id")?.as_str()?.to_owned(),
         name: value.get("name")?.as_str()?.to_owned(),
         arguments: value.get("arguments").cloned().unwrap_or(Json::Null),
+        problem: None,
     })
+}
+
+fn kept_result(text: &str) -> String {
+    if text.chars().count() <= MOST_KEPT_RESULT_CHARACTERS {
+        return text.to_owned();
+    }
+    let mut kept: String = text.chars().take(MOST_KEPT_RESULT_CHARACTERS).collect();
+    kept.push_str("\n(cut short when this chat was saved: ask again for the rest)");
+    kept
 }
 
 fn result_out(result: &ToolResult) -> Json {
     Json::object([
         ("call_id", Json::text(&result.call_id)),
-        ("text", Json::text(&result.text)),
+        ("text", Json::text(kept_result(&result.text))),
         ("is_error", Json::Bool(result.is_error)),
     ])
 }
@@ -287,8 +343,12 @@ fn provider_of(name: &str) -> Option<Provider> {
 }
 
 #[must_use]
-pub fn newest_first(files: impl IntoIterator<Item = String>) -> Vec<Chat> {
-    let mut chats: Vec<Chat> = files.into_iter().filter_map(|text| read(&text)).collect();
+pub fn newest_first(files: impl IntoIterator<Item = (String, String)>) -> Vec<Chat> {
+    let mut chats: Vec<Chat> = files
+        .into_iter()
+        .filter(|(name, _)| is_a_chat_id(name))
+        .filter_map(|(name, text)| read(&text).map(|chat| Chat { id: name, ..chat }))
+        .collect();
     chats.sort_by(|a, b| b.changed.cmp(&a.changed).then_with(|| b.id.cmp(&a.id)));
     chats
 }

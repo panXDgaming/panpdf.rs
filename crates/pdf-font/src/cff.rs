@@ -754,7 +754,7 @@ impl Charstring<'_> {
                 self.stack.clear();
             }
             5 => {
-                for pair in std::mem::take(&mut self.stack).chunks_exact(2) {
+                for pair in std::mem::take(&mut self.stack).as_chunks::<2>().0 {
                     self.x += pair[0];
                     self.y += pair[1];
                     self.path.line_to(self.x, self.y);
@@ -773,7 +773,7 @@ impl Charstring<'_> {
                 }
             }
             8 => {
-                for values in std::mem::take(&mut self.stack).chunks_exact(6) {
+                for values in std::mem::take(&mut self.stack).as_chunks::<6>().0 {
                     self.curve(
                         values[0], values[1], values[2], values[3], values[4], values[5],
                     );
@@ -782,7 +782,7 @@ impl Charstring<'_> {
             24 => {
                 let values = std::mem::take(&mut self.stack);
                 let curves = values.len().saturating_sub(2) / 6;
-                for chunk in values[..curves * 6].chunks_exact(6) {
+                for chunk in values[..curves * 6].as_chunks::<6>().0 {
                     self.curve(chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5]);
                 }
                 if let Some(pair) = values.get(curves * 6..curves * 6 + 2) {
@@ -794,7 +794,7 @@ impl Charstring<'_> {
             25 => {
                 let values = std::mem::take(&mut self.stack);
                 let lines = values.len().saturating_sub(6) / 2;
-                for pair in values[..lines * 2].chunks_exact(2) {
+                for pair in values[..lines * 2].as_chunks::<2>().0 {
                     self.x += pair[0];
                     self.y += pair[1];
                     self.path.line_to(self.x, self.y);
@@ -863,7 +863,7 @@ impl Charstring<'_> {
         if values.len() % 4 == 1 {
             lead = values.remove(0);
         }
-        for chunk in values.chunks_exact(4) {
+        for chunk in values.as_chunks::<4>().0 {
             if vertical {
                 self.curve(lead, chunk[0], chunk[1], chunk[2], 0.0, chunk[3]);
             } else {

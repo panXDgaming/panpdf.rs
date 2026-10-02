@@ -1,12 +1,16 @@
+mod assistant;
 mod controls;
 mod edits;
 mod facts;
 mod home;
+mod tools;
 
+pub use assistant::Assistant;
 pub use controls::Control;
 pub use edits::{BlockMove, Done, Hidden, Layout, LayoutWhy, PictureMove, Refusal, Side, StampWhy};
 pub use facts::Fact;
 pub use home::Home;
+pub use tools::Tools;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Lang {
@@ -41,6 +45,12 @@ impl Lang {
 }
 
 const SEP: &str = " \u{00b7} ";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Tone {
+    Trouble,
+    Information,
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Message {
@@ -177,6 +187,7 @@ pub enum Message {
     StampHeader,
     StampFooter,
     StampMiddle,
+    StampLook,
     StampColour,
     StampOpacity,
     StampMargin,
@@ -203,16 +214,16 @@ pub enum Message {
         total: usize,
     },
     OcrNotInstalled,
+    OcrNeedsRecogniser,
+    OcrCannotInstallRecogniser,
     OcrNoLanguage,
-    OcrModel,
+    OcrLanguagesCost,
+    OcrAccuracy,
+    OcrQualityTradeoff(pdf_ocr::Quality),
     OcrQuality(pdf_ocr::Quality),
     OcrErrorRate {
         code: String,
         cer: f32,
-    },
-    OcrGetModel {
-        code: String,
-        bytes: u64,
     },
     OcrGettingModel(String),
     OcrModelFailed(String),
@@ -270,6 +281,10 @@ pub enum Message {
     },
     PrintButton,
     PrintPrinter,
+    PrintArrangement,
+    PrintLooking,
+    PrintPreviousSheet,
+    PrintNextSheet,
     PrintNoPrinter,
     PrintNoService(String),
     PrintCopies,
@@ -302,9 +317,11 @@ pub enum Message {
     PrintSheetFailed(String),
 
     SplitWhy,
+    SplitBySize,
     SplitEvery,
     SplitEveryPages,
     SplitAtPages,
+    SplitStartsHint,
     SplitInto {
         pages: usize,
         files: usize,
@@ -320,7 +337,6 @@ pub enum Message {
 
     ExportWhy,
     ExportResolution,
-    ExportDpi,
     ExportSize {
         pages: usize,
         width: u32,
@@ -352,6 +368,10 @@ pub enum Message {
     Contents,
     AddBookmarkSaid,
     RenameBookmark,
+    FieldEarlier,
+    FieldLater,
+    BookmarkShow,
+    BookmarkHide,
     BookmarkUp,
     BookmarkDown,
     BookmarkIn,
@@ -456,7 +476,16 @@ pub enum Message {
         page: usize,
         count: usize,
     },
-    ZoomPercent(u32),
+    PageAndZoom {
+        page: usize,
+        count: usize,
+        percent: u32,
+    },
+    WindowTitle {
+        name: String,
+        unsaved: bool,
+    },
+    ProgramName,
 
     Opening(String),
     OpeningFailed,
@@ -616,7 +645,6 @@ pub enum Message {
     AiProvider,
     AiAttach,
     AiHistory,
-    AiNewChatTitle,
     AiNoChatsYet,
     AiUntitledChat,
     AiForgetChat,
@@ -624,35 +652,23 @@ pub enum Message {
     AiKeepTheKeyMeans,
     AiKeptKeyUnreadable,
     AiNowOnDocument(String),
-    AiResetToDefault,
     AiFullAccessAsk,
     AiFullAccessMeans,
     AiFullAccessConfirm,
-    AiAdd,
-    AiAttachFiles,
-    AiAttachFilesMeans,
     AiEffortOffMeans,
     AiEffortNoneMeans,
     AiEffortLowMeans,
     AiEffortMediumMeans,
     AiEffortHighMeans,
-    AiTestConnection,
     AiCancel,
     AiDisconnect,
-    AiConnected,
-    AiConnectedTo,
-    AiNotConnected,
     AiCheckingConnection,
-    AiNotConnectedYet,
     AiThisDocumentsChat,
-    AiEdit,
     AiEditMeans,
-    AiAskAgain,
     AiAskAgainMeans,
     AiWentBack,
     AiWentBackDocumentStays,
     AiPutBack,
-    AiChatMenu,
     AiCopyWholeChat,
     AiDeleteThisChatSure,
     AiThisDocument,
@@ -663,17 +679,9 @@ pub enum Message {
     AiSkipQuestion,
     AiWritingTheAnswer,
     AiWaitingForModel(String),
-    AiWritingPieces {
-        written: usize,
-        pieces: usize,
-    },
     AiAskHint,
-    AiIncludeContext {
-        characters: usize,
-    },
     AiSend,
     AiResponse,
-    AiCopyResponse,
     AiPrivacy,
     AiWorkerStopped,
     AiNothingAskedYet,
@@ -682,10 +690,7 @@ pub enum Message {
     AiYou,
     AiThinking,
     AiKeyNeeded,
-    AiFindModels,
     AiNoModelChosen,
-    AiEnterSends,
-    AiSendThePage,
     AiConnectionInvalid,
     AiStopped,
     AiCouldNotReach,
@@ -698,9 +703,28 @@ pub enum Message {
     AiAllowForThisChat,
     AiRefuse,
     AiChangedTheDocument {
-        page: usize,
+        pages: Vec<usize>,
     },
-    AiTooManyRounds,
+    AiStepsUsedUp,
+    AiConversationTooLarge,
+    AiContinue,
+    AiGoOn,
+    AiRetry,
+    AiPlan {
+        done: usize,
+        total: usize,
+    },
+    AiAllowAll {
+        count: usize,
+    },
+    AiRunMadeChanges {
+        steps: usize,
+    },
+    AiUndoRun,
+    AiUndoRunPersonEdited,
+    AiRunTakenBack {
+        steps: usize,
+    },
     AiEffort,
     AiEffortOff,
     AiEffortNone,
@@ -728,6 +752,7 @@ pub enum Message {
     Refused(Refusal),
     Home(Home),
     Control(Control),
+    Assistant(Assistant),
     Quiet,
     DrawingSpeed(crate::speed::Summary),
     EditSpeed(pdf_session::stages::Stages),
@@ -780,11 +805,12 @@ pub enum Command {
     SendToBack,
     PreviousPage,
     NextPage,
+    Previous,
+    Next,
     ZoomIn,
     ZoomOut,
     NewDocument,
     AllowEditing,
-    Theme,
     File,
     Edit,
     View,
@@ -803,10 +829,7 @@ pub enum Command {
     Pages,
     HidePages,
     BackToReading,
-    Home,
     Page,
-    BlankPageBefore,
-    BlankPageAfter,
     SameSizeAsThisPage,
     Landscape,
     DeletePage,
@@ -820,19 +843,17 @@ pub enum Command {
     StampHeaderFooter,
     StampWatermark,
     RecognizeText,
+    EditMode,
+    SavePicture,
     AiAssistant,
     ConnectAgents,
     Print,
-    PagesFromFileBefore,
-    PagesFromFileAfter,
     SaveAs,
     DuplicatePage,
     PagesToNewFile,
     SplitDocument,
     PagesAsPictures,
     PdfFromPictures,
-    PicturesAsPagesBefore,
-    PicturesAsPagesAfter,
     Insert,
     Tools,
     InsertPictures,
@@ -844,6 +865,23 @@ pub enum Command {
     InsertHere,
     AddPages,
     MoreForPage,
+    OpenDocument,
+    CloseDocument,
+    Export,
+    CreateAPdf,
+    PagesToPictures,
+    PicturesToPdf,
+    DocumentProperties,
+    Arrange,
+    Move,
+    InsertABlankPage,
+    InsertPagesFromAFile,
+    PicturesAsPages,
+    BeforeThisPage,
+    AfterThisPage,
+    PickBeforeThisPage,
+    PickAfterThisPage,
+    Assistant,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -907,6 +945,50 @@ impl Message {
     pub fn say(&self, lang: Lang) -> String {
         match lang {
             Lang::English => self.english(),
+        }
+    }
+
+    #[must_use]
+    pub const fn tone(&self) -> Tone {
+        if matches!(
+            self,
+            Self::Refused { .. }
+                | Self::Plain { .. }
+                | Self::OpeningFailed
+                | Self::EditFailedUnexpectedly
+                | Self::PageWillNotReadBack { .. }
+                | Self::CouldNotSave { .. }
+                | Self::CouldNotOpen { .. }
+                | Self::PagesNotRead { .. }
+                | Self::PictureNotRead { .. }
+                | Self::PageWillNotOpen { .. }
+                | Self::WillNotOpenFromDocument { .. }
+                | Self::LinkKindNotOpenable
+                | Self::RangeCannotBeCopied
+                | Self::CouldNotTakePagesOut { .. }
+                | Self::CouldNotWritePictures { .. }
+                | Self::CouldNotMakePages { .. }
+                | Self::NotReplaced { .. }
+                | Self::AnotherEditIsRunning
+                | Self::ResolveDraftBeforeSaving
+                | Self::LinkIsAlreadyThat
+                | Self::NoTextWasTyped
+                | Self::NoAddressesToLink
+                | Self::CaretLostAfterEdit
+                | Self::CaretGoneBeforeStyling
+                | Self::CaretGoneBeforeTyping
+                | Self::CaretGoneBeforeDeleting
+                | Self::BlockTextNotFound
+                | Self::FieldNotADate
+                | Self::FieldNoLink
+                | Self::FieldIsReadOnly
+                | Self::ReplacementHoldsTheSearch
+                | Self::DraftBlocksDelete
+                | Self::AndPressesRefused { .. }
+        ) {
+            Tone::Trouble
+        } else {
+            Tone::Information
         }
     }
 
@@ -1137,15 +1219,16 @@ impl Message {
             Self::StampWhere => "Where".to_owned(),
             Self::StampHeader => "Header".to_owned(),
             Self::StampFooter => "Footer".to_owned(),
-            Self::StampMiddle => "Middle of the page (watermark)".to_owned(),
+            Self::StampMiddle => "Middle".to_owned(),
+            Self::StampLook => "Look".to_owned(),
             Self::StampColour | Self::PrintColour => "Colour".to_owned(),
             Self::StampOpacity => "Opacity".to_owned(),
             Self::StampMargin => "Margin (pt)".to_owned(),
             Self::StampPages => "Pages".to_owned(),
             Self::StampPagesHint => "all, or 1-5, 8, 11-".to_owned(),
             Self::StampOnly(pdf_edit::stamp::Only::Every) => "Every page".to_owned(),
-            Self::StampOnly(pdf_edit::stamp::Only::Odd) => "Odd pages only".to_owned(),
-            Self::StampOnly(pdf_edit::stamp::Only::Even) => "Even pages only".to_owned(),
+            Self::StampOnly(pdf_edit::stamp::Only::Odd) => "Odd pages".to_owned(),
+            Self::StampOnly(pdf_edit::stamp::Only::Even) => "Even pages".to_owned(),
             Self::StampStart => "First page of the range is number".to_owned(),
             Self::StampPreview { page, line } => format!("Page {}: \u{201c}{line}\u{201d}", page + 1),
             Self::StampPreviewNotShown { page } => {
@@ -1156,7 +1239,8 @@ impl Message {
             Self::OcrWhy => "Reads the words in scanned pages so they can be searched and \
                              copied. It runs on this computer; nothing is sent anywhere."
                 .to_owned(),
-            Self::OcrLanguages => "Languages on the pages (each one more takes longer)".to_owned(),
+            Self::OcrLanguages => "Languages".to_owned(),
+            Self::OcrLanguagesCost => "Each language you tick makes reading slower.".to_owned(),
             Self::OcrLanguage(code) => match crate::ocr_languages::Language::of(code) {
                 Some(language) => match language.shown_autonym() {
                     Some(own) => format!("{} ({own})", language.english),
@@ -1167,24 +1251,32 @@ impl Message {
             Self::OcrSkipText => "Skip pages that already have text".to_owned(),
             Self::OcrStart(1) => "Read 1 page".to_owned(),
             Self::OcrStart(count) => format!("Read {count} pages"),
-            Self::OcrStop => "Stop".to_owned(),
+            Self::OcrStop | Self::AiCancel => "Stop".to_owned(),
             Self::OcrProgress { done, total } => format!("Read {done} of {total} pages\u{2026}"),
             Self::OcrNotInstalled => "The text recogniser (Tesseract) is not installed. On Linux, \
                                       install tesseract-ocr with tesseract-ocr-lao, \
                                       tesseract-ocr-tha and tesseract-ocr-eng."
                 .to_owned(),
+            Self::OcrNeedsRecogniser => "Reading scans needs a text recogniser, and this computer \
+                                         does not have one yet."
+                .to_owned(),
+            Self::OcrCannotInstallRecogniser => "Reading scans needs a text recogniser, and \
+                                                 PanPDF cannot install one on this system by \
+                                                 itself."
+                .to_owned(),
             Self::OcrNoLanguage => "Choose at least one language".to_owned(),
-            Self::OcrModel => "Models".to_owned(),
-            Self::OcrQuality(pdf_ocr::Quality::Accurate) => "Accurate".to_owned(),
-            Self::OcrQuality(pdf_ocr::Quality::Fast) => "Fast".to_owned(),
+            Self::OcrAccuracy => "Accuracy".to_owned(),
+            Self::OcrQualityTradeoff(pdf_ocr::Quality::Accurate) => {
+                "Reads the most letters right, and takes longer.".to_owned()
+            }
+            Self::OcrQualityTradeoff(pdf_ocr::Quality::Fast) => {
+                "Reads sooner, with a few more letters wrong.".to_owned()
+            }
+            Self::OcrQuality(pdf_ocr::Quality::Accurate) => "High quality".to_owned(),
+            Self::OcrQuality(pdf_ocr::Quality::Fast) => "Fast and light".to_owned(),
             Self::OcrErrorRate { code, cer } => format!(
                 "{}: {cer:.1} % of letters read wrong",
                 Self::OcrLanguage(code.clone()).say(Lang::English)
-            ),
-            Self::OcrGetModel { code, bytes } => format!(
-                "Download {} ({})",
-                Self::OcrLanguage(code.clone()).say(Lang::English),
-                megabytes(*bytes)
             ),
             Self::OcrGettingModel(code) => format!(
                 "Getting {}\u{2026}",
@@ -1198,9 +1290,7 @@ impl Message {
             Self::OcrEngineFailed(said) => {
                 format!("The recogniser could not be installed: {said}")
             }
-            Self::OcrEngineElsewhere => "The text recogniser (Tesseract) is not on this \
-                                        computer, and this program cannot put it there by \
-                                        itself. On Windows, install it from \
+            Self::OcrEngineElsewhere => "The recogniser is Tesseract. On Windows, install it from \
                                         https://github.com/UB-Mannheim/tesseract/wiki ; on \
                                         macOS, run: brew install tesseract"
                 .to_owned(),
@@ -1297,8 +1387,14 @@ impl Message {
             } => format!("{pages} pages on {sheets} sheets of {paper}"),
             Self::PrintButton => "Print".to_owned(),
             Self::PrintPrinter => "Printer".to_owned(),
+            Self::PrintArrangement => "Layout".to_owned(),
+            Self::PrintLooking => "Looking for printers\u{2026}".to_owned(),
+            Self::PrintPreviousSheet => "Previous sheet".to_owned(),
+            Self::PrintNextSheet => "Next sheet".to_owned(),
             Self::PrintNoPrinter => "No printer is set up on this computer.".to_owned(),
-            Self::PrintNoService(why) => format!("The print service can't be reached: {why}"),
+            Self::PrintNoService(_) => {
+                "The print service isn't answering, so no printer can be found.".to_owned()
+            }
             Self::PrintCopies => "Copies".to_owned(),
             Self::PrintMonochrome => "Black and white".to_owned(),
             Self::PrintSides => "Sides".to_owned(),
@@ -1358,9 +1454,11 @@ impl Message {
             Self::SplitWhy => "Each file holds a run of pages, and together they hold every \
                                page of this document."
                 .to_owned(),
+            Self::SplitBySize => "Same size".to_owned(),
             Self::SplitEvery => "Files of".to_owned(),
             Self::SplitEveryPages => "pages each".to_owned(),
-            Self::SplitAtPages => "Start a new file at pages".to_owned(),
+            Self::SplitAtPages => "At pages".to_owned(),
+            Self::SplitStartsHint => "A new file starts at each page you list.".to_owned(),
             Self::SplitInto { pages: 1, files } => format!("1 page in {files} files"),
             Self::SplitInto { pages, files: 1 } => format!("{pages} pages in 1 file"),
             Self::SplitInto { pages, files } => format!("{pages} pages in {files} files"),
@@ -1375,8 +1473,7 @@ impl Message {
             Self::ExportWhy => "Each page is written out as a PNG picture of what is on \
                                 screen, one file for each page."
                 .to_owned(),
-            Self::ExportResolution => "Resolution".to_owned(),
-            Self::ExportDpi => "dots an inch".to_owned(),
+            Self::ExportResolution => "Resolution, in dots an inch".to_owned(),
             Self::ExportSize {
                 pages: 1,
                 width,
@@ -1419,6 +1516,10 @@ impl Message {
             Self::Contents => "Contents".to_owned(),
             Self::AddBookmarkSaid => "Add a bookmark for the page on screen".to_owned(),
             Self::RenameThePlace | Self::RenameBookmark => "Rename".to_owned(),
+            Self::FieldEarlier => "Earlier in the tab order".to_owned(),
+            Self::FieldLater => "Later in the tab order".to_owned(),
+            Self::BookmarkShow => "Show the bookmarks inside".to_owned(),
+            Self::BookmarkHide => "Hide the bookmarks inside".to_owned(),
             Self::BookmarkUp => "Move up".to_owned(),
             Self::BookmarkDown => "Move down".to_owned(),
             Self::BookmarkIn => "Make it a child of the one above".to_owned(),
@@ -1494,7 +1595,7 @@ impl Message {
             Self::FieldCheckedByDefault => "Checked by default".to_owned(),
             Self::FieldInUnison => "Buttons with the same name and choice are selected in unison".to_owned(),
             Self::FieldItem => "Item".to_owned(),
-            Self::FieldAddItem | Self::AiAdd => "Add".to_owned(),
+            Self::FieldAddItem => "Add".to_owned(),
             Self::FieldDeleteItem => "Delete".to_owned(),
             Self::FieldItemUp => "Up".to_owned(),
             Self::FieldItemDown => "Down".to_owned(),
@@ -1554,16 +1655,18 @@ impl Message {
                 Command::SendToBack => "Send to back",
                 Command::PreviousPage => "Previous page",
                 Command::NextPage => "Next page",
+                Command::Previous => "Previous",
+                Command::Next => "Next",
                 Command::ZoomIn => "Zoom in",
                 Command::ZoomOut => "Zoom out",
                 Command::NewDocument => "New document",
                 Command::AllowEditing => "Allow editing…",
-                Command::Theme => "Light or dark",
                 Command::File => "File",
-                Command::Edit => "Edit",
+                Command::Edit | Command::EditMode => "Edit",
+                Command::SavePicture => "Save picture\u{2026}",
                 Command::View => "View",
                 Command::Documents => "Documents in this folder",
-                Command::ShowFrames => "Show frames",
+                Command::ShowFrames => "Show all frames",
                 Command::Frames => "Frames",
                 Command::FramesOfText => "Around text",
                 Command::FramesOfPictures => "Around pictures",
@@ -1572,44 +1675,37 @@ impl Message {
                 Command::ShowDrawingSpeed => "Show drawing speed",
                 Command::Language => "Language",
                 Command::Help => "Help",
-                Command::ReportAProblem => "Report a problem...",
+                Command::ReportAProblem => "Report a problem\u{2026}",
                 Command::ShowTheLog => "Show the log",
                 Command::Pages => "Pages",
                 Command::HidePages => "Hide the pages",
                 Command::BackToReading => "Back to the document",
-                Command::Home => "Home",
                 Command::Page => "Page",
-                Command::BlankPageBefore => "Insert blank page before",
-                Command::BlankPageAfter => "Insert blank page after",
                 Command::SameSizeAsThisPage => "Same size as this page",
-                Command::Landscape => "Landscape",
+                Command::Landscape => "New pages in landscape",
                 Command::DeletePage => "Delete this page",
-                Command::MovePageEarlier => "Move page up",
-                Command::MovePageLater => "Move page down",
-                Command::MovePageFirst => "Move page to the start",
-                Command::MovePageLast => "Move page to the end",
+                Command::MovePageEarlier => "Up",
+                Command::MovePageLater => "Down",
+                Command::MovePageFirst => "To the start",
+                Command::MovePageLast => "To the end",
                 Command::RotateClockwise => "Rotate right",
                 Command::RotateCounterClockwise => "Rotate left",
                 Command::StampPageNumbers => "Page numbers\u{2026}",
                 Command::StampHeaderFooter => "Header & footer\u{2026}",
                 Command::StampWatermark => "Watermark\u{2026}",
                 Command::RecognizeText => "Recognize text (OCR)\u{2026}",
-                Command::AiAssistant => "AI assistant\u{2026}",
+                Command::AiAssistant => "AI assistant",
                 Command::ConnectAgents => "Connect agents\u{2026}",
                 Command::Print => "Print\u{2026}",
-                Command::PagesFromFileBefore => "Insert pages from a file before…",
-                Command::PagesFromFileAfter => "Insert pages from a file after…",
                 Command::SaveAs => "Save a copy as…",
                 Command::DuplicatePage => "Duplicate these pages",
                 Command::PagesToNewFile => "Save these pages as a new PDF…",
                 Command::SplitDocument => "Split into several PDFs…",
                 Command::PagesAsPictures => "Export pages as pictures…",
                 Command::PdfFromPictures => "Create a PDF from pictures…",
-                Command::PicturesAsPagesBefore => "Pictures as pages before these…",
-                Command::PicturesAsPagesAfter => "Pictures as pages after these…",
                 Command::Insert => "Insert",
                 Command::Tools => "Tools",
-                Command::InsertPictures => "Pictures…",
+                Command::InsertPictures => "Picture\u{2026}",
                 Command::InsertText => "Text box",
                 Command::InsertField => "Form field",
                 Command::InsertBlankPage => "Blank page",
@@ -1618,10 +1714,36 @@ impl Message {
                 Command::InsertHere => "Put pages in here",
                 Command::AddPages => "Add pages",
                 Command::MoreForPage => "More\u{2026}",
+                Command::OpenDocument => "Open\u{2026}",
+                Command::CloseDocument => "Close document",
+                Command::Export => "Export",
+                Command::CreateAPdf => "Create a PDF",
+                Command::PagesToPictures => "Pages as pictures\u{2026}",
+                Command::PicturesToPdf => "From pictures\u{2026}",
+                Command::DocumentProperties => "Document properties\u{2026}",
+                Command::Arrange => "Arrange",
+                Command::Move => "Move",
+                Command::InsertABlankPage => "Insert blank page",
+                Command::InsertPagesFromAFile => "Insert pages from a file",
+                Command::PicturesAsPages => "Pictures as pages",
+                Command::BeforeThisPage => "Before this page",
+                Command::AfterThisPage => "After this page",
+                Command::PickBeforeThisPage => "Before this page\u{2026}",
+                Command::PickAfterThisPage => "After this page\u{2026}",
+                Command::Assistant => "Assistant",
             }
             .to_owned(),
             Self::PageOf { page, count } => format!("{page} of {count}"),
-            Self::ZoomPercent(zoom) => format!("{zoom}%"),
+            Self::PageAndZoom {
+                page,
+                count,
+                percent,
+            } => format!("Page {page} of {count}{SEP}{percent}%"),
+            Self::WindowTitle { name, unsaved } => {
+                let mark = if *unsaved { "\u{2022} " } else { "" };
+                format!("{mark}{name} \u{2014} PanPDF")
+            }
+            Self::ProgramName => "PanPDF".to_owned(),
             Self::Opening(name) => format!("Opening {name}"),
             Self::OpeningFailed => "The document failed to open unexpectedly".to_owned(),
             Self::DocumentCount(count) => format!("{count} documents"),
@@ -1686,7 +1808,7 @@ impl Message {
             Self::RangeCannotBeCopied => {
                 format!("This range cannot be copied{SEP}the paragraph's text does not read")
             }
-            Self::Copied(count) => format!("{count} characters copied"),
+            Self::Copied(count) => format!("{} copied", edits::count(*count, "character")),
             Self::SelectionOf {
                 shown,
                 clusters,
@@ -1829,30 +1951,27 @@ impl Message {
             }
             Self::AiTitle => "AI assistant".to_owned(),
             Self::AiBaseUrl => "Base URL".to_owned(),
-            Self::AiApiKey => "API key (session only)".to_owned(),
+            Self::AiApiKey => "API key".to_owned(),
             Self::AiModel => "Model".to_owned(),
             Self::AiProvider => "Provider".to_owned(),
-            Self::AiAttach => "Attach a picture or a PDF".to_owned(),
-            Self::AiHistory => "Earlier chats".to_owned(),
+            Self::AiAttach => "Attach pictures, PDFs or text files".to_owned(),
+            Self::AiHistory => "Chats".to_owned(),
             Self::AiNoChatsYet => "No chats kept yet".to_owned(),
             Self::AiUntitledChat => "Untitled chat".to_owned(),
             Self::AiForgetChat => "Delete this chat".to_owned(),
-            Self::AiKeepTheKey => "Keep this key on this machine".to_owned(),
-            Self::AiKeepTheKeyMeans => "The key is written to a file only you can read, \
-                 locked with a secret made for this installation. It keeps the key out of \
-                 backups and screenshots; it does not protect it from a program already \
-                 running as you. Leave it unticked to give the key afresh each session."
+            Self::AiKeepTheKey => "Remember the key on this computer".to_owned(),
+            Self::AiKeepTheKeyMeans => "The key is saved in a file only you can read, scrambled with a \
+                 secret kept beside it. That keeps it from casual view, not from a program \
+                 running as you or from a backup of that folder. Leave this off to give the \
+                 key again each time."
                 .to_owned(),
             Self::AiNowOnDocument(name) => format!("Now on {name}"),
-            Self::AiResetToDefault => "Reset to default".to_owned(),
             Self::AiFullAccessAsk => "Turn on full access?".to_owned(),
             Self::AiFullAccessMeans => "The assistant will change the document and take pages \
                  out of any file on this computer without asking you first. Every change is \
                  still one step you can undo. You can turn this off again at any time."
                 .to_owned(),
             Self::AiFullAccessConfirm => "Turn it on".to_owned(),
-            Self::AiAttachFiles => "Pictures or PDFs".to_owned(),
-            Self::AiAttachFilesMeans => "Choose files to send with the question".to_owned(),
             Self::AiEffortOffMeans => "Leave it to the model".to_owned(),
             Self::AiEffortNoneMeans => "Answer straight away; fastest".to_owned(),
             Self::AiEffortLowMeans => "A little thought first".to_owned(),
@@ -1861,27 +1980,18 @@ impl Message {
             Self::AiKeptKeyUnreadable => "The key kept on this machine could not be read. \
                  Give it again."
                 .to_owned(),
-            Self::AiTestConnection => "Test connection".to_owned(),
-            Self::AiCancel => "Stop asking".to_owned(),
             Self::AiDisconnect => "Disconnect".to_owned(),
-            Self::AiConnected => "Connected".to_owned(),
-            Self::AiConnectedTo => "Connected \u{2713}".to_owned(),
-            Self::AiNotConnected => "Not connected \u{2014} open the settings and give a key".to_owned(),
             Self::AiCheckingConnection => "Checking the connection\u{2026}".to_owned(),
-            Self::AiNotConnectedYet => "Not connected \u{2014} open the settings".to_owned(),
             Self::AiThisDocumentsChat => "This document's chat, carried on from last time".to_owned(),
-            Self::AiEdit => "Edit".to_owned(),
             Self::AiEditMeans => "Go back to this question to change it and ask again".to_owned(),
-            Self::AiAskAgain => "Ask again".to_owned(),
             Self::AiAskAgainMeans => "Ask for this answer again".to_owned(),
             Self::AiWentBack => "Went back to an earlier question.".to_owned(),
             Self::AiWentBackDocumentStays => {
                 "What the assistant changed in the document is still there \u{2014} Undo takes it back.".to_owned()
             }
             Self::AiPutBack => "Put the conversation back".to_owned(),
-            Self::AiChatMenu => "More".to_owned(),
             Self::AiCopyWholeChat => "Copy the whole chat".to_owned(),
-            Self::AiDeleteThisChatSure => "Click again to delete it for good".to_owned(),
+            Self::AiDeleteThisChatSure => "Delete this chat for good?".to_owned(),
             Self::AiThisDocument => "This document".to_owned(),
             Self::AiOtherChats => "Other chats".to_owned(),
             Self::AiQuestionForYou => "A question for you".to_owned(),
@@ -1890,40 +2000,36 @@ impl Message {
             Self::AiSkipQuestion => "Skip".to_owned(),
             Self::AiWritingTheAnswer => "Writing the answer\u{2026}".to_owned(),
             Self::AiWaitingForModel(model) => format!("Waiting for {model}\u{2026}"),
-            Self::AiWritingPieces { written, pieces } => {
-                format!("Writing the document \u{2014} {written} of {pieces}")
-            }
-            Self::AiAskHint => "Ask a question\u{2026}".to_owned(),
-            Self::AiIncludeContext { characters } => {
-                format!("Include the text of the page on screen (up to {characters} characters)")
+            Self::AiAskHint => {
+                "Ask anything, or say what to change. Enter sends, Shift+Enter adds a line."
+                    .to_owned()
             }
             Self::AiSend => "Send".to_owned(),
             Self::AiResponse => "Response".to_owned(),
-            Self::AiCopyResponse => "Copy response".to_owned(),
             Self::AiPrivacy => {
-                "Finding models asks for the list and nothing else. The key stays in \
-                 memory and is never written to disc. In Chat only, what leaves this \
-                 machine is your question, and this page's text if you tick it. In the \
-                 other modes the assistant may also send what it reads of the document \
-                 -- its text, a search, its properties, a page as a picture -- and \
-                 nothing else. Nothing is sent unless you ask a question."
+                "What leaves this computer goes only to the provider you chose, at the \
+                 address shown: your questions and attached files, the text of the page if \
+                 its chip is on, and what the assistant reads of the document while it \
+                 works (text, searches, properties, pages as pictures). In Chat only it \
+                 reads nothing from the document. Connect asks the provider for its list \
+                 of models, and nothing else is sent unless you ask a question. The key \
+                 stays in memory unless you choose to remember it. Chats are kept as plain \
+                 files on this computer, with what the assistant read from your documents, \
+                 until you delete them."
                     .to_owned()
             }
             Self::AiWorkerStopped => {
                 "The worker asking the provider stopped without an answer".to_owned()
             }
             Self::AiNothingAskedYet => {
-                "Ask about the document on screen, or anything else.".to_owned()
+                "Ask about this document, or tell the assistant what to change.".to_owned()
             }
-            Self::AiNewChat | Self::AiNewChatTitle => "New chat".to_owned(),
-            Self::AiConnection => "Connection".to_owned(),
+            Self::AiNewChat => "New chat".to_owned(),
+            Self::AiConnection => "Settings".to_owned(),
             Self::AiYou => "You".to_owned(),
             Self::AiThinking => "Thinking\u{2026}".to_owned(),
             Self::AiKeyNeeded => "This provider needs a key".to_owned(),
-            Self::AiFindModels => "Find models".to_owned(),
             Self::AiNoModelChosen => "Choose a model".to_owned(),
-            Self::AiEnterSends => "Enter sends \u{00b7} Shift+Enter for a new line".to_owned(),
-            Self::AiSendThePage => "Send this page".to_owned(),
             Self::AiConnectionInvalid => {
                 format!("This connection cannot be used as it is{SEP}check the address and the model")
             }
@@ -1940,40 +2046,66 @@ impl Message {
             }
             Self::AiDismiss => "Dismiss".to_owned(),
             Self::AiWantsTo => "The assistant would like to".to_owned(),
-            Self::AiAllowOnce => "Allow once".to_owned(),
+            Self::AiAllowOnce => "Allow".to_owned(),
             Self::AiAllowForThisChat => "Allow for this chat".to_owned(),
             Self::AiRefuse => "Refuse".to_owned(),
-            Self::AiChangedTheDocument { page } => {
-                format!("The assistant changed page {page}. Undo takes it back.")
-            }
-            Self::AiTooManyRounds => {
-                "The assistant asked for too many actions for one question and was stopped. \
-                 Ask again, in smaller steps."
+            Self::AiChangedTheDocument { pages } => format!(
+                "The assistant changed {}. Undo takes it back.",
+                pages_said(pages)
+            ),
+            Self::AiStepsUsedUp => {
+                "The assistant used up the steps one request is allowed and has said what is \
+                 done and what is left"
                     .to_owned()
             }
+            Self::AiConversationTooLarge => {
+                "This conversation has grown too large to send in one piece. Start a new chat \
+                 and say where you were"
+                    .to_owned()
+            }
+            Self::AiContinue => "Continue".to_owned(),
+            Self::AiGoOn => "Please go on with what is left.".to_owned(),
+            Self::AiRetry => "Try again".to_owned(),
+            Self::AiPlan { done, total } => format!("Plan \u{00b7} {done} of {total} done"),
+            Self::AiAllowAll { count } => format!("Allow all {count}"),
+            Self::AiRunMadeChanges { steps } => format!(
+                "The assistant made {}",
+                edits::count(*steps, "change")
+            ),
+            Self::AiUndoRun => "Undo them all".to_owned(),
+            Self::AiUndoRunPersonEdited => {
+                "You changed the document after the assistant's last step, so its changes cannot \
+                 be undone together without undoing yours. Use Undo for your own changes."
+                    .to_owned()
+            }
+            Self::AiRunTakenBack { steps } => format!(
+                "The assistant's {} taken back.",
+                if *steps == 1 {
+                    "change was".to_owned()
+                } else {
+                    format!("{steps} changes were")
+                }
+            ),
             Self::AiEffort => "Thinking".to_owned(),
             Self::AiEffortOff => "Thinking: default".to_owned(),
             Self::AiEffortNone => "Thinking: off".to_owned(),
             Self::AiEffortLow => "Thinking: low".to_owned(),
             Self::AiEffortMedium => "Thinking: medium".to_owned(),
             Self::AiEffortHigh => "Thinking: high".to_owned(),
-            Self::AiMode => "What it may do".to_owned(),
+            Self::AiMode => "What the assistant may do".to_owned(),
             Self::AiModeChatOnly => "Chat only".to_owned(),
-            Self::AiModeAskBeforeChanges => "Ask for approval".to_owned(),
-            Self::AiModeDoIt => "Approve for me".to_owned(),
+            Self::AiModeAskBeforeChanges => "Ask before changes".to_owned(),
+            Self::AiModeDoIt => "Make changes".to_owned(),
             Self::AiModeFree => "Full access".to_owned(),
             Self::AiModeChatOnlyWhat => {
-                "It answers questions and cannot touch the document.".to_owned()
+                "Answers questions and never touches the document".to_owned()
             }
-            Self::AiModeAskBeforeChangesWhat => {
-                "Reads freely; asks you before every change".to_owned()
-            }
+            Self::AiModeAskBeforeChangesWhat => "Asks you before each change".to_owned(),
             Self::AiModeDoItWhat => {
-                "Changes without asking; asks only before taking pages from another file"
-                    .to_owned()
+                "Makes changes without asking; each one can be undone".to_owned()
             }
             Self::AiModeFreeWhat => {
-                "Never asks, even to read other files on this computer".to_owned()
+                "Also takes pages from other files on this computer, without asking".to_owned()
             }
             Self::AgentsTitle => "Connect agents".to_owned(),
             Self::AgentsWhat => {
@@ -1998,6 +2130,7 @@ impl Message {
             Self::Done(done) => done.say(Lang::English),
             Self::Home(home) => home.say(Lang::English),
             Self::Control(control) => control.say(Lang::English),
+            Self::Assistant(said) => said.say(Lang::English),
             Self::Refused(refusal) => refusal.say(Lang::English),
             Self::Quiet => String::new(),
             Self::DrawingSpeed(speed) => format!(
@@ -2026,10 +2159,28 @@ impl Message {
             Self::AiThinkingAloud => "thinking\u{2026}".to_owned(),
             Self::AiCopyCode => "Copy this code".to_owned(),
             Self::AiAPicture => "a picture".to_owned(),
-            Self::AiAnswerCutShort => {
-                "The model ran out of room and stopped here \u{2014} ask it to go on".to_owned()
-            }
+            Self::AiAnswerCutShort => "The model ran out of room and stopped here".to_owned(),
         }
+    }
+}
+
+fn pages_said(pages: &[usize]) -> String {
+    let named: Vec<String> = pages.iter().map(ToString::to_string).collect();
+    match pages {
+        [] => "the document".to_owned(),
+        [one] => format!("page {one}"),
+        [first, .., last]
+            if pages.windows(2).all(|pair| pair[1] == pair[0] + 1) && pages.len() > 2 =>
+        {
+            format!("pages {first} to {last}")
+        }
+        _ if pages.len() <= 4 => {
+            let (last, rest) = named
+                .split_last()
+                .map_or(("", &[][..]), |(last, rest)| (last.as_str(), rest));
+            format!("pages {} and {last}", rest.join(", "))
+        }
+        _ => format!("{} pages", pages.len()),
     }
 }
 
@@ -2109,17 +2260,18 @@ mod tests {
             Message::OcrStop,
             Message::OcrProgress { done: 2, total: 9 },
             Message::OcrNotInstalled,
+            Message::OcrNeedsRecogniser,
+            Message::OcrCannotInstallRecogniser,
             Message::OcrNoLanguage,
-            Message::OcrModel,
+            Message::OcrLanguagesCost,
+            Message::OcrAccuracy,
+            Message::OcrQualityTradeoff(pdf_ocr::Quality::Accurate),
+            Message::OcrQualityTradeoff(pdf_ocr::Quality::Fast),
             Message::OcrQuality(pdf_ocr::Quality::Accurate),
             Message::OcrQuality(pdf_ocr::Quality::Fast),
             Message::OcrErrorRate {
                 code: "lao".to_owned(),
                 cer: 9.0,
-            },
-            Message::OcrGetModel {
-                code: "tha".to_owned(),
-                bytes: 7_614_571,
             },
             Message::OcrGettingModel("eng".to_owned()),
             Message::OcrModelFailed("curl: (6)".to_owned()),
@@ -2129,9 +2281,11 @@ mod tests {
             Message::OcrEngineElsewhere,
             Message::OcrThisPage,
             Message::SplitWhy,
+            Message::SplitBySize,
             Message::SplitEvery,
             Message::SplitEveryPages,
             Message::SplitAtPages,
+            Message::SplitStartsHint,
             Message::SplitInto { pages: 1, files: 1 },
             Message::SplitInto { pages: 9, files: 3 },
             Message::SplitWhere,
@@ -2144,7 +2298,6 @@ mod tests {
             Message::CouldNotTakePagesOut("no room".to_owned()),
             Message::ExportWhy,
             Message::ExportResolution,
-            Message::ExportDpi,
             Message::ExportSize {
                 pages: 1,
                 width: 2480,
@@ -2205,6 +2358,10 @@ mod tests {
             },
             Message::PrintButton,
             Message::PrintPrinter,
+            Message::PrintArrangement,
+            Message::PrintLooking,
+            Message::PrintPreviousSheet,
+            Message::PrintNextSheet,
             Message::PrintNoPrinter,
             Message::PrintNoService("x".to_owned()),
             Message::PrintCopies,
@@ -2262,16 +2419,12 @@ mod tests {
     fn newest() -> Vec<Message> {
         vec![
             Message::AiCheckingConnection,
-            Message::AiNotConnectedYet,
             Message::AiThisDocumentsChat,
-            Message::AiEdit,
             Message::AiEditMeans,
-            Message::AiAskAgain,
             Message::AiAskAgainMeans,
             Message::AiWentBack,
             Message::AiWentBackDocumentStays,
             Message::AiPutBack,
-            Message::AiChatMenu,
             Message::AiCopyWholeChat,
             Message::AiDeleteThisChatSure,
             Message::AiThisDocument,
@@ -2282,10 +2435,6 @@ mod tests {
             Message::AiSkipQuestion,
             Message::AiWritingTheAnswer,
             Message::AiWaitingForModel("qwen".to_owned()),
-            Message::AiWritingPieces {
-                written: 3,
-                pieces: 10,
-            },
         ]
     }
 
@@ -2295,7 +2444,6 @@ mod tests {
             Message::AiProvider,
             Message::AiAttach,
             Message::AiHistory,
-            Message::AiNewChatTitle,
             Message::AiNoChatsYet,
             Message::AiUntitledChat,
             Message::AiForgetChat,
@@ -2303,13 +2451,9 @@ mod tests {
             Message::AiKeepTheKeyMeans,
             Message::AiKeptKeyUnreadable,
             Message::AiNowOnDocument("a.pdf".to_owned()),
-            Message::AiResetToDefault,
             Message::AiFullAccessAsk,
             Message::AiFullAccessMeans,
             Message::AiFullAccessConfirm,
-            Message::AiAdd,
-            Message::AiAttachFiles,
-            Message::AiAttachFilesMeans,
             Message::AiEffortOffMeans,
             Message::AiEffortNoneMeans,
             Message::AiEffortLowMeans,
@@ -2318,7 +2462,83 @@ mod tests {
             Message::AiAPicture,
             Message::AiAnswerCutShort,
             Message::AiEffortNone,
+            Message::AiStepsUsedUp,
+            Message::AiConversationTooLarge,
+            Message::AiContinue,
+            Message::AiGoOn,
+            Message::AiRetry,
+            Message::AiPlan { done: 1, total: 4 },
+            Message::AiAllowAll { count: 3 },
+            Message::AiRunMadeChanges { steps: 3 },
+            Message::AiUndoRun,
+            Message::AiUndoRunPersonEdited,
+            Message::AiRunTakenBack { steps: 3 },
+            Message::AiChangedTheDocument { pages: vec![2, 5] },
         ]
+    }
+
+    #[test]
+    fn a_note_about_a_change_names_the_pages_it_touched() {
+        let said = |pages: &[usize]| {
+            Message::AiChangedTheDocument {
+                pages: pages.to_vec(),
+            }
+            .say(Lang::English)
+        };
+        let note = |pages: &str| format!("The assistant changed {pages}. Undo takes it back.");
+        assert_eq!(said(&[2]), note("page 2"));
+        assert_eq!(said(&[2, 5]), note("pages 2 and 5"));
+        assert_eq!(said(&[3, 4]), note("pages 3 and 4"));
+        assert_eq!(said(&[1, 3, 5]), note("pages 1, 3 and 5"));
+        assert_eq!(said(&[1, 2, 3, 4, 5]), note("pages 1 to 5"));
+        assert_eq!(said(&[1, 3, 5, 7, 9]), note("5 pages"));
+        assert_eq!(said(&[]), note("the document"));
+    }
+
+    #[test]
+    fn the_four_modes_are_named_plainly_and_each_says_what_it_does() {
+        let say = |message: Message| message.say(Lang::English);
+        assert_eq!(say(Message::AiModeChatOnly), "Chat only");
+        assert_eq!(say(Message::AiModeAskBeforeChanges), "Ask before changes");
+        assert_eq!(say(Message::AiModeDoIt), "Make changes");
+        assert_eq!(say(Message::AiModeFree), "Full access");
+        assert!(say(Message::AiModeChatOnlyWhat).contains("never touches the document"));
+        assert!(say(Message::AiModeAskBeforeChangesWhat).contains("before each change"));
+        assert!(say(Message::AiModeDoItWhat).contains("can be undone"));
+        assert!(say(Message::AiModeFreeWhat).contains("other files"));
+    }
+
+    #[test]
+    fn the_privacy_text_does_not_promise_what_the_program_does_not_keep() {
+        let said = Message::AiPrivacy.say(Lang::English);
+        assert!(!said.contains("never written"), "{said}");
+        assert!(
+            said.contains("plain files"),
+            "chats are kept in plain files: {said}"
+        );
+        assert!(
+            said.contains("remember"),
+            "the key may be kept if asked: {said}"
+        );
+        let keeps = Message::AiKeepTheKeyMeans.say(Lang::English);
+        assert!(
+            !keeps.contains("backup") || keeps.contains("not from"),
+            "{keeps}"
+        );
+    }
+
+    #[test]
+    fn a_run_is_said_in_changes_and_in_what_was_taken_back() {
+        let made = |steps: usize| Message::AiRunMadeChanges { steps }.say(Lang::English);
+        assert_eq!(made(1), "The assistant made 1 change");
+        assert_eq!(made(4), "The assistant made 4 changes");
+        let back = |steps: usize| Message::AiRunTakenBack { steps }.say(Lang::English);
+        assert_eq!(back(1), "The assistant's change was taken back.");
+        assert_eq!(back(3), "The assistant's 3 changes were taken back.");
+        assert_eq!(
+            Message::AiAllowAll { count: 3 }.say(Lang::English),
+            "Allow all 3"
+        );
     }
 
     #[test]
@@ -2347,7 +2567,7 @@ mod tests {
     fn same_in_every_language(message: &Message) -> bool {
         matches!(
             message,
-            Message::ZoomPercent(_)
+            Message::ProgramName
                 | Message::Plain(_)
                 | Message::Quiet
                 | Message::OcrLanguage(_)
@@ -2358,7 +2578,7 @@ mod tests {
     #[test]
     fn a_message_that_is_the_same_everywhere_is_held_out_on_purpose() {
         for lang in Lang::ALL {
-            assert_eq!(Message::ZoomPercent(160).say(*lang), "160%");
+            assert_eq!(Message::ProgramName.say(*lang), "PanPDF");
             assert_eq!(
                 Message::Plain("xref 9 is past the end".to_owned()).say(*lang),
                 "xref 9 is past the end"
@@ -2367,6 +2587,72 @@ mod tests {
         let page_of = Message::PageOf { page: 3, count: 7 };
         assert_eq!(page_of.say(Lang::English), "3 of 7");
         assert!(!same_in_every_language(&page_of));
+    }
+
+    #[test]
+    fn the_status_line_names_the_page_and_the_zoom_in_one_breath() {
+        let said = Message::PageAndZoom {
+            page: 3,
+            count: 12,
+            percent: 100,
+        }
+        .say(Lang::English);
+        assert_eq!(said, "Page 3 of 12 \u{00b7} 100%");
+    }
+
+    #[test]
+    fn the_window_title_carries_a_dot_only_while_changes_are_unsaved() {
+        let title = |unsaved| {
+            Message::WindowTitle {
+                name: "invoice.pdf".to_owned(),
+                unsaved,
+            }
+            .say(Lang::English)
+        };
+        assert_eq!(title(false), "invoice.pdf \u{2014} PanPDF");
+        assert_eq!(title(true), "\u{2022} invoice.pdf \u{2014} PanPDF");
+        assert_eq!(Message::ProgramName.say(Lang::English), "PanPDF");
+    }
+
+    #[test]
+    fn one_character_copied_is_not_a_plural() {
+        assert_eq!(Message::Copied(1).say(Lang::English), "1 character copied");
+        assert_eq!(Message::Copied(0).say(Lang::English), "0 characters copied");
+        assert_eq!(
+            Message::Copied(12).say(Lang::English),
+            "12 characters copied"
+        );
+    }
+
+    #[test]
+    fn a_refusal_and_a_failure_are_trouble_and_a_report_is_not() {
+        use super::Tone;
+        let trouble = [
+            Message::Refused("no".to_owned().into()),
+            Message::Plain("xref 9 is past the end".to_owned()),
+            Message::OpeningFailed,
+            Message::CouldNotSave {
+                name: "a.pdf".to_owned(),
+                why: "disk full".to_owned(),
+            },
+            Message::AnotherEditIsRunning,
+        ];
+        for message in &trouble {
+            assert_eq!(message.tone(), Tone::Trouble, "{message:?}");
+        }
+        let information = [
+            Message::Quiet,
+            Message::SavedTo {
+                name: "a.pdf".to_owned(),
+                bytes: 10,
+            },
+            Message::StartedANewDocument,
+            Message::Copied(3),
+            Message::Opening("a.pdf".to_owned()),
+        ];
+        for message in &information {
+            assert_eq!(message.tone(), Tone::Information, "{message:?}");
+        }
     }
 
     #[test]
@@ -2492,7 +2778,7 @@ mod tests {
                 (pdf_ocr::Quality::Fast, "6.1 MB", "11.6"),
             ] {
                 let model = pdf_ocr::models::model("lao", quality).expect("a Lao model");
-                let offer = Message::OcrGetModel {
+                let offer = Message::OcrDownloadModel {
                     code: model.code.to_owned(),
                     bytes: model.bytes,
                 }

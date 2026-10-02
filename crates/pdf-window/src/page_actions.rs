@@ -29,6 +29,7 @@ pub(crate) enum Choosing {
     },
     PdfOfPictures(Vec<std::sync::Arc<[u8]>>),
     ChatAttachment,
+    PictureOut(Vec<u8>),
 }
 
 impl Window {
@@ -68,44 +69,48 @@ impl Window {
     pub(crate) fn pages_in_menu(&mut self, ui: &mut egui::Ui) {
         let lang = self.lang;
         let say = |command| Message::Command(command).say(lang);
-        for (before, command) in [
-            (true, Command::BlankPageBefore),
-            (false, Command::BlankPageAfter),
-        ] {
-            ui.menu_button(say(command), |ui| {
-                if let Some(size) = self.page_size_menu(ui) {
-                    self.add_blank_page(before, size);
+        ui.menu_button(say(Command::InsertABlankPage), |ui| {
+            for (before, command) in [
+                (true, Command::BeforeThisPage),
+                (false, Command::AfterThisPage),
+            ] {
+                ui.menu_button(say(command), |ui| {
+                    if let Some(size) = self.page_size_menu(ui) {
+                        self.add_blank_page(before, size);
+                        ui.close();
+                    }
+                });
+            }
+        });
+        ui.menu_button(say(Command::InsertPagesFromAFile), |ui| {
+            for (before, command) in [
+                (true, Command::PickBeforeThisPage),
+                (false, Command::PickAfterThisPage),
+            ] {
+                if ui.button(say(command)).clicked() {
+                    self.choosing_for = Choosing::Pages { before };
+                    self.asking_to_open = true;
                     ui.close();
                 }
-            });
-        }
-        for (before, command) in [
-            (true, Command::PagesFromFileBefore),
-            (false, Command::PagesFromFileAfter),
-        ] {
-            if ui.button(say(command)).clicked() {
-                self.choosing_for = Choosing::Pages { before };
-                self.asking_to_open = true;
-                ui.close();
             }
-        }
-        for (before, command) in [
-            (true, Command::PicturesAsPagesBefore),
-            (false, Command::PicturesAsPagesAfter),
-        ] {
-            if ui.button(say(command)).clicked() {
-                self.choose_pictures(Some(before));
-                ui.close();
+        });
+        ui.menu_button(say(Command::PicturesAsPages), |ui| {
+            for (before, command) in [
+                (true, Command::PickBeforeThisPage),
+                (false, Command::PickAfterThisPage),
+            ] {
+                if ui.button(say(command)).clicked() {
+                    self.choose_pictures(Some(before));
+                    ui.close();
+                }
             }
-        }
+        });
     }
 
     pub(crate) fn page_menu(&mut self, ui: &mut egui::Ui, working: bool) {
         let lang = self.lang;
         let say = |command| Message::Command(command).say(lang);
         ui.add_enabled_ui(working, |ui| {
-            let _ = ui.checkbox(&mut self.landscape, say(Command::Landscape));
-            ui.separator();
             self.pages_in_menu(ui);
             ui.separator();
             let pages = self.pages_acted_on();
@@ -113,21 +118,24 @@ impl Window {
             let first = pages[0];
             let block = pages.len();
             let last_place = count.saturating_sub(block);
-            for (command, to, possible) in [
-                (Command::MovePageFirst, 0, first > 0),
-                (Command::MovePageEarlier, first.saturating_sub(1), first > 0),
-                (Command::MovePageLater, first + 1, first < last_place),
-                (Command::MovePageLast, last_place, first < last_place),
-            ] {
-                if ui
-                    .add_enabled(possible, egui::Button::new(say(command)))
-                    .clicked()
-                {
-                    self.move_pages(&pages, to);
-                    ui.close();
-                }
-            }
-            ui.separator();
+            ui.add_enabled_ui(first > 0 || first < last_place, |ui| {
+                ui.menu_button(say(Command::Move), |ui| {
+                    for (command, to, possible) in [
+                        (Command::MovePageFirst, 0, first > 0),
+                        (Command::MovePageEarlier, first.saturating_sub(1), first > 0),
+                        (Command::MovePageLater, first + 1, first < last_place),
+                        (Command::MovePageLast, last_place, first < last_place),
+                    ] {
+                        if ui
+                            .add_enabled(possible, egui::Button::new(say(command)))
+                            .clicked()
+                        {
+                            self.move_pages(&pages, to);
+                            ui.close();
+                        }
+                    }
+                });
+            });
             for (command, quarter_turns) in [
                 (Command::RotateClockwise, 1),
                 (Command::RotateCounterClockwise, -1),
@@ -146,6 +154,12 @@ impl Window {
                 self.take_these_pages_out();
                 ui.close();
             }
+            if ui.button(say(Command::SplitDocument)).clicked() {
+                self.open_the_split_panel();
+                ui.close();
+            }
+            ui.separator();
+            let _ = ui.checkbox(&mut self.landscape, say(Command::Landscape));
             ui.separator();
             if ui
                 .add_enabled(block < count, egui::Button::new(say(Command::DeletePage)))

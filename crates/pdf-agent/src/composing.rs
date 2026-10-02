@@ -1,6 +1,9 @@
 pub mod chart;
+pub mod drawing;
 pub mod expr;
+pub mod form;
 pub mod math;
+pub mod placing;
 pub mod shapes;
 pub mod theme;
 
@@ -57,6 +60,7 @@ pub enum Mark {
         stroke: Option<(Colour, f64)>,
         fill: Option<Colour>,
     },
+    Field(crate::fielding::Asked),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -86,6 +90,45 @@ pub struct Composed {
 
 pub const MONO: &str = "Liberation Mono";
 
+#[must_use]
+pub const fn stand_in(letter: char) -> Option<&'static str> {
+    Some(match letter {
+        '\u{2192}' => "->",
+        '\u{2190}' => "<-",
+        '\u{2194}' => "<->",
+        '\u{21D2}' => "=>",
+        '\u{2264}' => "<=",
+        '\u{2265}' => ">=",
+        '\u{2260}' => "!=",
+        '\u{2248}' => "~",
+        '\u{00D7}' => "x",
+        '\u{00F7}' => "/",
+        '\u{2212}' => "-",
+        '\u{00B2}' => "^2",
+        '\u{00B3}' => "^3",
+        '\u{00B9}' => "^1",
+        '\u{221A}' => "sqrt",
+        '\u{221E}' => "inf",
+        '\u{2211}' => "sum",
+        '\u{03B1}' => "alpha",
+        '\u{03B2}' => "beta",
+        '\u{03B3}' => "gamma",
+        '\u{03B4}' => "delta",
+        '\u{03B5}' => "epsilon",
+        '\u{03B8}' => "theta",
+        '\u{03BB}' => "lambda",
+        '\u{03BC}' => "mu",
+        '\u{03C0}' => "pi",
+        '\u{03C3}' => "sigma",
+        '\u{03C6}' => "phi",
+        '\u{03C9}' => "omega",
+        '\u{0394}' => "Delta",
+        '\u{03A3}' => "Sigma",
+        '\u{03A9}' => "Omega",
+        _ => return None,
+    })
+}
+
 pub const WIDER: [&str; 3] = ["DejaVu Sans", "Noto Sans Math", "Noto Sans Symbols"];
 
 pub fn compose(
@@ -102,11 +145,13 @@ pub fn compose(
         pages: 1,
         pieces: 0,
         titled: false,
+        names: std::collections::BTreeSet::new(),
         keep: 0.0,
         left_out: std::cell::RefCell::new(std::collections::BTreeSet::new()),
     };
-    if setting.start.is_none() {
-        composer.paper();
+    match setting.start {
+        None => composer.paper(0.0),
+        Some(from) => composer.paper(from),
     }
     let mut at = 0;
     while at < parts.len() {
@@ -141,6 +186,21 @@ pub fn compose(
                 space_before,
                 indent,
             } => composer.chart(spec, f64::from(*space_before), f64::from(*indent))?,
+            Part::Form {
+                spec,
+                space_before,
+                indent,
+            } => composer.form(spec, f64::from(*space_before), f64::from(*indent))?,
+            Part::Drawing {
+                spec,
+                space_before,
+                indent,
+            } => drawing::set_out(
+                &mut composer,
+                spec,
+                f64::from(*space_before),
+                f64::from(*indent),
+            )?,
         }
         at += 1;
     }
@@ -181,6 +241,7 @@ pub(crate) struct Composer<'a> {
     pages: usize,
     pieces: usize,
     titled: bool,
+    names: std::collections::BTreeSet<String>,
     keep: f64,
     left_out: std::cell::RefCell<std::collections::BTreeSet<char>>,
 }
@@ -206,14 +267,16 @@ impl Composer<'_> {
         self.top <= self.setting.sheet.margin + 1e-6
     }
 
-    fn paper(&mut self) {
+    fn paper(&mut self, from: f64) {
         if let Some(paper) = self.theme().paper {
             let sheet = self.setting.sheet;
-            self.shape(
-                shapes::rect(0.0, 0.0, sheet.wide, sheet.high),
-                None,
-                Some(paper),
-            );
+            if from < sheet.high {
+                self.shape(
+                    shapes::rect(0.0, from.max(0.0), sheet.wide, sheet.high),
+                    None,
+                    Some(paper),
+                );
+            }
         }
     }
 
@@ -222,7 +285,7 @@ impl Composer<'_> {
         self.page += 1;
         self.pages += 1;
         self.top = self.setting.sheet.margin;
-        self.paper();
+        self.paper(0.0);
     }
 
     fn start_of(&self, part: &Part) -> f64 {
@@ -237,6 +300,10 @@ impl Composer<'_> {
                 .unwrap_or_else(|| ((self.right() - self.left()) * 0.58).min(300.0))
                 .max(120.0),
             Part::Table(_) => body * 1.2 * 2.0 + 20.0,
+            Part::Form { spec, indent, .. } => form::keep_height(self, spec, f64::from(*indent)),
+            Part::Drawing { spec, indent, .. } => {
+                drawing::keep_height(self, spec, f64::from(*indent))
+            }
             Part::Text(paragraph) if paragraph.kind == Kind::Math => {
                 f64::from(paragraph.size) * 3.0
             }
@@ -272,6 +339,25 @@ impl Composer<'_> {
             stroke,
             fill,
         });
+    }
+
+    pub(crate) fn field(
+        &mut self,
+        area: [f64; 4],
+        kind: pdf_edit::new_field::NewFieldKind,
+        name: String,
+        options: Vec<String>,
+    ) -> Result<(), String> {
+        let asked = crate::fielding::Asked {
+            page: self.page,
+            kind,
+            area,
+            name: Some(name),
+            options,
+        };
+        asked.check()?;
+        self.marks.push(Mark::Field(asked));
+        Ok(())
     }
 
     pub(crate) fn text(&mut self, (x, top): (f64, f64), width: f64, fitted: Fitted) {
@@ -323,8 +409,114 @@ impl Composer<'_> {
                 }
             }
         }
+        if let Some(repaired) = self.without_what_the_face_cannot_draw(text, style, width) {
+            return Ok(repaired);
+        }
         let shown: String = text.chars().take(40).collect();
         Err(format!("{first}, in \"{shown}\""))
+    }
+
+    fn without_what_the_face_cannot_draw(
+        &self,
+        text: &str,
+        style: &Style,
+        width: f64,
+    ) -> Option<Fitted> {
+        let mut seen: std::collections::BTreeMap<char, usize> = std::collections::BTreeMap::new();
+        for letter in text
+            .chars()
+            .filter(|letter| !letter.is_ascii() && !letter.is_whitespace())
+        {
+            *seen.entry(letter).or_default() += 1;
+        }
+        let anchor = seen
+            .iter()
+            .filter(|(letter, _)| stand_in(**letter).is_none())
+            .max_by_key(|(letter, times)| (**times, std::cmp::Reverse(**letter)))
+            .map(|(letter, _)| *letter);
+        let mut cannot: std::collections::BTreeSet<char> = std::collections::BTreeSet::new();
+        for letter in seen
+            .keys()
+            .copied()
+            .filter(|letter| Some(*letter) != anchor)
+        {
+            let drawn_with = anchor.map(|anchor| format!("{anchor}{letter}"));
+            let held = drawn_with.is_some_and(|together| {
+                self.measure.room(&together, style, width.max(1.0)).is_ok()
+            });
+            if !held {
+                cannot.insert(letter);
+            }
+        }
+        if cannot.is_empty() {
+            return None;
+        }
+        let mut mended = String::with_capacity(text.len());
+        let mut dropped: std::collections::BTreeSet<char> = std::collections::BTreeSet::new();
+        for letter in text.chars() {
+            if !cannot.contains(&letter) {
+                mended.push(letter);
+            } else if let Some(stand) = stand_in(letter) {
+                mended.push_str(stand);
+            } else {
+                dropped.insert(letter);
+            }
+        }
+        if mended.trim().is_empty() {
+            return None;
+        }
+        let room = self.measure.room(&mended, style, width.max(1.0)).ok()?;
+        self.left_out.borrow_mut().extend(dropped);
+        Some(Fitted {
+            text: mended,
+            style: style.clone(),
+            room,
+        })
+    }
+
+    pub(crate) fn usable(&self) -> f64 {
+        self.bottom() - self.setting.sheet.margin
+    }
+
+    fn fit_part(
+        &self,
+        text: &str,
+        style: &Style,
+        width: f64,
+        available: f64,
+    ) -> Result<(Fitted, String), String> {
+        let whole = self.fit(text, style, width)?;
+        if whole.room.height <= available {
+            return Ok((whole, String::new()));
+        }
+        let mut cuts: Vec<usize> = text
+            .char_indices()
+            .filter(|(_, letter)| letter.is_whitespace())
+            .map(|(at, _)| at)
+            .collect();
+        if cuts.len() < 2 {
+            cuts = text.char_indices().map(|(at, _)| at).skip(1).collect();
+        }
+        let (mut low, mut high) = (0, cuts.len());
+        let mut best: Option<Fitted> = None;
+        let mut taken = cuts.first().copied().unwrap_or(text.len());
+        while low < high {
+            let middle = usize::midpoint(low, high);
+            let prefix = text[..cuts[middle]].trim_end();
+            match self.fit(prefix, style, width) {
+                Ok(fitted) if fitted.room.height <= available => {
+                    taken = cuts[middle];
+                    best = Some(fitted);
+                    low = middle + 1;
+                }
+                _ => high = middle,
+            }
+        }
+        let fitted = match best {
+            Some(fitted) => fitted,
+            None => self.fit(text[..taken].trim_end(), style, width)?,
+        };
+        Ok((fitted, text[taken..].trim_start().to_owned()))
     }
 
     fn ink(&self) -> Colour {
@@ -358,7 +550,11 @@ impl Composer<'_> {
     fn body(&mut self, paragraph: &Paragraph) -> Result<(), String> {
         let x = self.left() + f64::from(paragraph.indent);
         let width = self.right() - x;
-        let fitted = self.fit(&paragraph.text, &self.style(paragraph, self.ink()), width)?;
+        let style = self.style(paragraph, self.ink());
+        let fitted = self.fit(&paragraph.text, &style, width)?;
+        if fitted.room.height > self.usable() {
+            return self.body_over_pages(paragraph, (x, width), &style);
+        }
         let top = self.place(f64::from(paragraph.space_before), fitted.room.height);
         let size = fitted.style.size;
         let bottom = top + fitted.room.height;
@@ -376,6 +572,53 @@ impl Composer<'_> {
             );
         }
         self.top = bottom;
+        Ok(())
+    }
+
+    fn body_over_pages(
+        &mut self,
+        paragraph: &Paragraph,
+        (x, width): (f64, f64),
+        style: &Style,
+    ) -> Result<(), String> {
+        let mut rest = paragraph.text.clone();
+        let mut space_before = f64::from(paragraph.space_before);
+        let mut first = true;
+        while !rest.trim().is_empty() {
+            let top = if self.fresh() {
+                self.top
+            } else {
+                self.top + space_before
+            };
+            let available = self.bottom() - top;
+            let (fitted, left_over) = self.fit_part(&rest, style, width, available)?;
+            if fitted.room.height > available && !self.fresh() {
+                self.new_page();
+                continue;
+            }
+            let bottom = top + fitted.room.height;
+            let size = fitted.style.size;
+            self.text((x, top), width, fitted);
+            if paragraph.bullet && first {
+                let colour = if self.theme().dressed {
+                    self.theme().accent
+                } else {
+                    self.ink()
+                };
+                self.shape(
+                    shapes::circle(x - size * 0.75, top + size * 0.62, size * 0.17),
+                    None,
+                    Some(colour),
+                );
+            }
+            self.top = bottom;
+            first = false;
+            space_before = 0.0;
+            rest = left_over;
+            if !rest.trim().is_empty() {
+                self.new_page();
+            }
+        }
         Ok(())
     }
 
@@ -478,6 +721,12 @@ impl Composer<'_> {
             fitted.push((above, piece));
         }
         let boxed = height + 2.0 * pad;
+        if boxed > self.usable() {
+            for paragraph in run {
+                self.body(paragraph)?;
+            }
+            return Ok(());
+        }
         let top = self.place(f64::from(first.space_before) + size * 0.2, boxed);
         let right = self.right();
         if theme.dressed {
@@ -514,8 +763,12 @@ impl Composer<'_> {
         let x = self.left() + f64::from(paragraph.indent);
         let pad = f64::from(paragraph.size) * 0.8;
         let inner = self.right() - x - 2.0 * pad;
-        let fitted = self.fit(&paragraph.text, &self.style(paragraph, theme.ink), inner)?;
+        let style = self.style(paragraph, theme.ink);
+        let fitted = self.fit(&paragraph.text, &style, inner)?;
         let boxed = fitted.room.height + 2.0 * pad;
+        if boxed > self.usable() {
+            return self.code_over_pages(paragraph, (x, inner, pad), &style);
+        }
         let top = self.place(f64::from(paragraph.space_before), boxed);
         let right = self.right();
         let fill = theme.dressed.then_some(theme.code);
@@ -527,6 +780,86 @@ impl Composer<'_> {
         self.text((x + pad, top + pad), inner, fitted);
         self.top = top + boxed;
         Ok(())
+    }
+
+    fn code_over_pages(
+        &mut self,
+        paragraph: &Paragraph,
+        (x, inner, pad): (f64, f64, f64),
+        style: &Style,
+    ) -> Result<(), String> {
+        let theme = *self.theme();
+        let mut rest = paragraph.text.clone();
+        let mut space_before = f64::from(paragraph.space_before);
+        while !rest.trim().is_empty() {
+            let top = if self.fresh() {
+                self.top
+            } else {
+                self.top + space_before
+            };
+            let available = self.bottom() - top - 2.0 * pad;
+            let (fitted, left_over) = self.fit_lines(&rest, style, inner, available)?;
+            let boxed = fitted.room.height + 2.0 * pad;
+            if boxed > self.bottom() - top && !self.fresh() {
+                self.new_page();
+                continue;
+            }
+            let right = self.right();
+            let fill = theme.dressed.then_some(theme.code);
+            self.shape(
+                shapes::rounded(x, top, right, top + boxed, 4.0),
+                Some((theme.line, 0.6)),
+                fill,
+            );
+            self.text((x + pad, top + pad), inner, fitted);
+            self.top = top + boxed;
+            space_before = 0.0;
+            rest = left_over;
+            if !rest.trim().is_empty() {
+                self.new_page();
+            }
+        }
+        Ok(())
+    }
+
+    fn fit_lines(
+        &self,
+        text: &str,
+        style: &Style,
+        width: f64,
+        available: f64,
+    ) -> Result<(Fitted, String), String> {
+        let whole = self.fit(text, style, width)?;
+        if whole.room.height <= available {
+            return Ok((whole, String::new()));
+        }
+        let cuts: Vec<usize> = text
+            .char_indices()
+            .filter(|(_, letter)| *letter == '\n')
+            .map(|(at, _)| at)
+            .collect();
+        if cuts.is_empty() {
+            return self.fit_part(text, style, width, available);
+        }
+        let (mut low, mut high) = (0, cuts.len());
+        let mut best: Option<(Fitted, usize)> = None;
+        while low < high {
+            let middle = usize::midpoint(low, high);
+            let prefix = &text[..cuts[middle]];
+            match self.fit(prefix, style, width) {
+                Ok(fitted) if fitted.room.height <= available => {
+                    best = Some((fitted, cuts[middle]));
+                    low = middle + 1;
+                }
+                _ => high = middle,
+            }
+        }
+        if let Some((fitted, at)) = best {
+            return Ok((fitted, text[at + 1..].to_owned()));
+        }
+        let at = cuts[0];
+        let fitted = self.fit(&text[..at], style, width)?;
+        Ok((fitted, text[at + 1..].to_owned()))
     }
 
     fn equation(&mut self, paragraph: &Paragraph) -> Result<(), String> {
@@ -567,6 +900,10 @@ impl Composer<'_> {
 
     fn chart(&mut self, spec: &str, space_before: f64, indent: f64) -> Result<(), String> {
         chart::set_out(self, spec, space_before, indent)
+    }
+
+    fn form(&mut self, spec: &str, space_before: f64, indent: f64) -> Result<(), String> {
+        form::set_out(self, spec, space_before, indent)
     }
 
     fn table(&mut self, table: &Table) -> Result<(), String> {

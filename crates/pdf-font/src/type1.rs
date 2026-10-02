@@ -143,7 +143,9 @@ fn decrypt_eexec(bytes: &[u8]) -> Vec<u8> {
     let cipher: Vec<u8> = if hex {
         let digits: Vec<u8> = body.iter().copied().filter(u8::is_ascii_hexdigit).collect();
         digits
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|pair| (hex_value(pair[0]) << 4) | hex_value(pair[1]))
             .collect()
     } else {

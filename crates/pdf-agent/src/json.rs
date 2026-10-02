@@ -3,6 +3,8 @@ use std::fmt::Write as _;
 
 pub const MOST_BYTES: usize = 16 * 1024 * 1024;
 
+pub const MOST_STORED_BYTES: usize = 256 * 1024 * 1024;
+
 pub const MOST_DEPTH: usize = 64;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -10,6 +12,7 @@ pub enum Json {
     Null,
     Bool(bool),
     Number(f64),
+    Whole(String),
     Text(String),
     List(Vec<Json>),
     Object(BTreeMap<String, Json>),
@@ -29,9 +32,17 @@ impl std::fmt::Display for JsonError {
 
 impl Json {
     pub fn parse(text: &str) -> Result<Self, JsonError> {
-        if text.len() > MOST_BYTES {
+        Self::parse_up_to(text, MOST_BYTES)
+    }
+
+    pub fn parse_stored(text: &str) -> Result<Self, JsonError> {
+        Self::parse_up_to(text, MOST_STORED_BYTES)
+    }
+
+    fn parse_up_to(text: &str, most: usize) -> Result<Self, JsonError> {
+        if text.len() > most {
             return Err(JsonError {
-                at: MOST_BYTES,
+                at: most,
                 reason: "message too long",
             });
         }
@@ -88,9 +99,10 @@ impl Json {
     }
 
     #[must_use]
-    pub const fn as_f64(&self) -> Option<f64> {
+    pub fn as_f64(&self) -> Option<f64> {
         match self {
             Self::Number(number) => Some(*number),
+            Self::Whole(digits) => digits.parse().ok(),
             _ => None,
         }
     }
@@ -138,6 +150,7 @@ impl Json {
             Self::Bool(true) => out.push_str("true"),
             Self::Bool(false) => out.push_str("false"),
             Self::Number(number) => write_number(*number, out),
+            Self::Whole(digits) => out.push_str(digits),
             Self::Text(text) => write_text(text, out),
             Self::List(items) => {
                 out.push('[');
@@ -340,10 +353,12 @@ impl Reader<'_> {
         let text = std::str::from_utf8(&self.bytes[start..self.at])
             .map_err(|_| self.fail("not a number"))?;
         let number: f64 = text.parse().map_err(|_| self.fail("not a number"))?;
-        if number.is_finite() {
-            Ok(Json::Number(number))
-        } else {
+        if !number.is_finite() {
             Err(self.fail("a number too large to hold"))
+        } else if number.abs() >= 9_007_199_254_740_992.0 && !text.contains(['.', 'e', 'E']) {
+            Ok(Json::Whole(text.to_owned()))
+        } else {
+            Ok(Json::Number(number))
         }
     }
 

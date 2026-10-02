@@ -131,7 +131,7 @@ fn walk(
     if let Some(names) = reader.entry(node, b"/Names")
         && let ObjectKind::Array(items) = names.value.kind()
     {
-        for pair in items.chunks_exact(2) {
+        for pair in items.as_chunks::<2>().0 {
             let key = reader
                 .follow(&names, &pair[0])
                 .and_then(|found| match found.value.kind() {

@@ -1,9 +1,16 @@
 pub mod blocks;
+pub mod entities;
 pub mod inlines;
 pub mod laying_out;
+pub mod present;
 pub mod tree;
 
-pub use blocks::blocks;
+pub use blocks::{Options, blocks, blocks_with};
+
+#[must_use]
+pub fn document(text: &str) -> Vec<Block> {
+    present::present(blocks(text))
+}
 pub use tree::{Align, Block, Inline, List, plain};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -41,7 +48,7 @@ impl Line {
 #[must_use]
 pub fn marked_up(text: &str) -> Vec<Line> {
     let mut out = Vec::new();
-    flatten(&blocks(text), 0, &mut out);
+    flatten(&document(text), 0, &mut out);
     while out.last().is_some_and(Line::is_empty) {
         out.pop();
     }
@@ -115,6 +122,7 @@ fn one_block(block: &Block, depth: usize, out: &mut Vec<Line>) {
                 });
             }
         }
+        Block::Html(_) | Block::Footnotes(_) => {}
     }
 }
 
@@ -202,7 +210,7 @@ fn walk(inlines: &[Inline], so_far: &Piece, out: &mut Vec<Piece>) {
                 text: " ".to_owned(),
                 ..so_far.clone()
             }),
-            Inline::Hard => {}
+            Inline::Hard | Inline::Html(_) => {}
             Inline::Code(text) => out.push(Piece {
                 text: text.clone(),
                 code: true,
@@ -216,7 +224,7 @@ fn walk(inlines: &[Inline], so_far: &Piece, out: &mut Vec<Piece>) {
                 },
                 out,
             ),
-            Inline::Strong(inside) => walk(
+            Inline::Strong(inside) | Inline::Highlight(inside) => walk(
                 inside,
                 &Piece {
                     bold: true,
@@ -227,6 +235,12 @@ fn walk(inlines: &[Inline], so_far: &Piece, out: &mut Vec<Piece>) {
             Inline::Strike(inside)
             | Inline::Link { text: inside, .. }
             | Inline::Image { text: inside, .. } => walk(inside, so_far, out),
+            Inline::Check(_) | Inline::Note(_) | Inline::Superscript(_) | Inline::Subscript(_) => {
+                out.push(Piece {
+                    text: inline.plain(),
+                    ..so_far.clone()
+                });
+            }
         }
     }
 }
