@@ -20,6 +20,14 @@ pub struct Paragraph {
     pub indent: f32,
     pub kind: Kind,
     pub bullet: bool,
+    pub links: Vec<TextLink>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TextLink {
+    pub from: usize,
+    pub to: usize,
+    pub url: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -348,6 +356,37 @@ impl Reading<'_> {
         (self.put_back(&text), bold, italic)
     }
 
+    fn links(&self, inlines: &[Inline], mark: Option<&str>) -> Vec<TextLink> {
+        let mut text = mark.unwrap_or_default().to_owned();
+        let mut out: Vec<TextLink> = Vec::new();
+        for (at, line) in inlines
+            .split(|inline| matches!(inline, Inline::Hard))
+            .enumerate()
+        {
+            if at > 0 {
+                text.push('\n');
+            }
+            for piece in pieces(line) {
+                let from = self.put_back(&text).chars().count();
+                text.push_str(&piece.text);
+                let to = self.put_back(&text).chars().count();
+                let Some(url) = piece.link.filter(|url| {
+                    let lower = url.to_ascii_lowercase();
+                    lower.starts_with("https://")
+                        || lower.starts_with("http://")
+                        || lower.starts_with("mailto:")
+                }) else {
+                    continue;
+                };
+                match out.last_mut() {
+                    Some(last) if last.url == url && last.to == from => last.to = to,
+                    _ => out.push(TextLink { from, to, url }),
+                }
+            }
+        }
+        out
+    }
+
     fn put_back(&self, text: &str) -> String {
         let mut out = String::with_capacity(text.len());
         for letter in text.chars() {
@@ -392,6 +431,7 @@ impl Reading<'_> {
                     indent,
                     kind: Kind::Heading(*level),
                     bullet,
+                    links: Vec::new(),
                 }));
             }
             Block::Paragraph { inlines } => {
@@ -405,6 +445,7 @@ impl Reading<'_> {
                         indent,
                         kind: Kind::Math,
                         bullet,
+                        links: Vec::new(),
                     }));
                     return;
                 }
@@ -412,6 +453,7 @@ impl Reading<'_> {
                 if text.trim().is_empty() {
                     return;
                 }
+                let links = self.links(inlines, number);
                 self.out.push(Part::Text(Paragraph {
                     text,
                     size: body,
@@ -425,6 +467,7 @@ impl Reading<'_> {
                         Kind::Body
                     },
                     bullet,
+                    links,
                 }));
             }
             Block::Code { info, text } => {
@@ -449,6 +492,7 @@ impl Reading<'_> {
                     indent,
                     kind: if maths { Kind::Math } else { Kind::Code },
                     bullet,
+                    links: Vec::new(),
                 }));
             }
             Block::Break => self.out.push(Part::Rule {
@@ -502,6 +546,22 @@ impl Reading<'_> {
             let (text, bold, italic) = row
                 .get(column)
                 .map_or_else(Default::default, |cell| self.words(cell, None));
+            let cut = text
+                .chars()
+                .take_while(|letter| letter.is_whitespace())
+                .count();
+            let kept = text.trim().chars().count();
+            let links = row
+                .get(column)
+                .map(|cell| self.links(cell, None))
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|link| {
+                    let from = link.from.saturating_sub(cut).min(kept);
+                    let to = link.to.saturating_sub(cut).min(kept);
+                    (to > from).then_some(TextLink { from, to, ..link })
+                })
+                .collect();
             Paragraph {
                 text: text.trim().to_owned(),
                 size: body,
@@ -511,6 +571,7 @@ impl Reading<'_> {
                 indent: 0.0,
                 kind: Kind::Body,
                 bullet: false,
+                links,
             }
         };
         let heads = head

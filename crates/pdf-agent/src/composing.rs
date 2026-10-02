@@ -16,6 +16,39 @@ use theme::Theme;
 
 pub type Colour = [f64; 3];
 
+pub(crate) const LINK: Colour = [0.067, 0.333, 0.8];
+
+#[derive(Clone, Debug)]
+enum Lay {
+    Lines {
+        lines: Vec<(usize, usize)>,
+        pitch: f64,
+        height: f64,
+    },
+    Whole {
+        height: f64,
+    },
+}
+
+impl Lay {
+    const fn height(&self) -> f64 {
+        match self {
+            Self::Lines { height, .. } | Self::Whole { height } => *height,
+        }
+    }
+}
+
+fn wholly_a_link(paragraph: &Paragraph) -> bool {
+    let [link] = paragraph.links.as_slice() else {
+        return false;
+    };
+    paragraph
+        .text
+        .chars()
+        .enumerate()
+        .all(|(at, letter)| (link.from..link.to).contains(&at) || letter.is_whitespace())
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Style {
     pub family: String,
@@ -48,6 +81,9 @@ pub enum Mark {
     NewPage {
         after: usize,
     },
+    FreshPage {
+        page: usize,
+    },
     Text {
         page: usize,
         area: [f64; 4],
@@ -61,6 +97,17 @@ pub enum Mark {
         fill: Option<Colour>,
     },
     Field(crate::fielding::Asked),
+    Link {
+        page: usize,
+        area: [f64; 4],
+        url: String,
+    },
+}
+
+impl Composed {
+    pub fn on_a_fresh_page(&mut self, page: usize) {
+        self.marks.insert(0, Mark::FreshPage { page });
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -341,6 +388,233 @@ impl Composer<'_> {
         });
     }
 
+    fn link_areas(
+        &self,
+        paragraph: &Paragraph,
+        fitted: &Fitted,
+        (x, top): (f64, f64),
+        width: f64,
+    ) -> Vec<([f64; 4], String)> {
+        let bottom = top + fitted.room.height;
+        let one_line = fitted.room.lines <= 1 && !paragraph.text.contains('\n');
+        paragraph
+            .links
+            .iter()
+            .map(|link| {
+                let wide = |text: &str| self.width_of(text, &fitted.style);
+                let area = if one_line {
+                    let before: String = paragraph.text.chars().take(link.from).collect();
+                    let words: String = paragraph
+                        .text
+                        .chars()
+                        .skip(link.from)
+                        .take(link.to - link.from)
+                        .collect();
+                    let left = x + wide(&before);
+                    [
+                        left,
+                        top,
+                        (left + wide(&words)).max(left + 3.0),
+                        bottom.max(top + 3.0),
+                    ]
+                } else {
+                    [x, top, x + fitted.room.widest.min(width), bottom]
+                };
+                (area, link.url.clone())
+            })
+            .collect()
+    }
+
+    fn width_of(&self, text: &str, style: &Style) -> f64 {
+        let wide = |text: &str| {
+            if text.is_empty() {
+                return 0.0;
+            }
+            self.measure
+                .room(text, style, 10_000.0)
+                .map_or(0.0, |room| room.widest)
+        };
+        let words = text.trim_end();
+        let spaces = &text[words.len()..];
+        if spaces.is_empty() {
+            return wide(text);
+        }
+        wide(words) + wide(&format!("x{spaces}x")) - wide("xx")
+    }
+
+    fn lay(&self, paragraph: &Paragraph, fitted: &Fitted, width: f64) -> Result<Lay, String> {
+        let lines = if paragraph.links.is_empty() {
+            None
+        } else {
+            self.lines_of(&paragraph.text, &fitted.style, width)
+        };
+        let Some(lines) = lines else {
+            return Ok(Lay::Whole {
+                height: fitted.room.height,
+            });
+        };
+        let one = self.measure.room("x", &fitted.style, 10_000.0)?.height;
+        let pitch = self.measure.room("x\nx", &fitted.style, 10_000.0)?.height - one;
+        #[expect(clippy::cast_precision_loss, reason = "a paragraph's lines")]
+        let height = one + pitch * (lines.len().max(1) - 1) as f64;
+        Ok(Lay::Lines {
+            lines,
+            pitch,
+            height,
+        })
+    }
+
+    fn set_laid(
+        &mut self,
+        paragraph: &Paragraph,
+        fitted: Fitted,
+        lay: Lay,
+        (x, top): (f64, f64),
+        width: f64,
+    ) {
+        let links = match lay {
+            Lay::Lines { lines, pitch, .. } => {
+                let mut links = Vec::new();
+                for (at, range) in lines.into_iter().enumerate() {
+                    #[expect(clippy::cast_precision_loss, reason = "a paragraph's lines")]
+                    let line_top = top + pitch * at as f64;
+                    links.extend(self.linked_runs(paragraph, &fitted.style, range, (x, line_top)));
+                }
+                links
+            }
+            Lay::Whole { .. } => {
+                let links = self.link_areas(paragraph, &fitted, (x, top), width);
+                let mut fitted = fitted;
+                if wholly_a_link(paragraph) {
+                    fitted.style.colour = Some(LINK);
+                }
+                self.text((x, top), width, fitted);
+                links
+            }
+        };
+        for (area, url) in links {
+            self.marks.push(Mark::Link {
+                page: self.page,
+                area,
+                url,
+            });
+        }
+    }
+
+    fn lines_of(&self, text: &str, style: &Style, width: f64) -> Option<Vec<(usize, usize)>> {
+        let letters: Vec<char> = text.chars().collect();
+        let fits = |from: usize, to: usize| {
+            let words: String = letters[from..to].iter().collect();
+            self.measure
+                .room(words.trim(), style, width)
+                .is_ok_and(|room| room.lines <= 1)
+        };
+        let mut lines = Vec::new();
+        let mut start = 0;
+        for hard in text.split('\n') {
+            let end = start + hard.chars().count();
+            let mut from = start;
+            while from < end {
+                let mut ends: Vec<usize> = (from + 1..end)
+                    .filter(|&at| letters[at].is_whitespace() && !letters[at - 1].is_whitespace())
+                    .collect();
+                ends.push(end);
+                let mut taken = None;
+                for &stop in &ends {
+                    if fits(from, stop) {
+                        taken = Some(stop);
+                    } else {
+                        break;
+                    }
+                }
+                let stop = taken?;
+                lines.push((from, stop));
+                from = stop;
+                while from < end && letters[from].is_whitespace() {
+                    from += 1;
+                }
+            }
+            if hard.trim().is_empty() {
+                lines.push((start, end));
+            }
+            start = end + 1;
+        }
+        Some(lines)
+    }
+
+    fn linked_runs(
+        &mut self,
+        paragraph: &Paragraph,
+        style: &Style,
+        (start, end): (usize, usize),
+        (x, top): (f64, f64),
+    ) -> Vec<([f64; 4], String)> {
+        let letters: Vec<char> = paragraph.text.chars().collect();
+        let end = end.min(letters.len());
+        let mut cuts: Vec<(usize, usize, Option<&str>)> = Vec::new();
+        let mut at = start;
+        for link in &paragraph.links {
+            let (from, to) = (link.from.clamp(start, end), link.to.clamp(start, end));
+            if to <= from || to <= at {
+                continue;
+            }
+            if from > at {
+                cuts.push((at, from, None));
+            }
+            cuts.push((from.max(at), to, Some(link.url.as_str())));
+            at = to;
+        }
+        if at < end {
+            cuts.push((at, end, None));
+        }
+        let size = style.size;
+        let mut areas = Vec::new();
+        for (from, to, url) in cuts {
+            let mut from = from;
+            while from < to && letters[from].is_whitespace() {
+                from += 1;
+            }
+            let words: String = letters[from..to]
+                .iter()
+                .collect::<String>()
+                .trim_end()
+                .to_owned();
+            if words.is_empty() {
+                continue;
+            }
+            let before: String = letters[start..from].iter().collect();
+            let mut run_style = style.clone();
+            if url.is_some() {
+                run_style.colour = Some(LINK);
+            }
+            let left = x + self.width_of(&before, style);
+            let Ok(run) = self.fit(&words, &run_style, 10_000.0) else {
+                continue;
+            };
+            let wide = run.room.widest;
+            let high = run.room.height;
+            self.text((left, top), wide + 1.0, run);
+            if let Some(url) = url {
+                let under = top + size * 1.02;
+                self.shape(
+                    shapes::rect(left, under, left + wide, under + (size * 0.06).max(0.5)),
+                    None,
+                    Some(LINK),
+                );
+                areas.push((
+                    [
+                        left,
+                        top,
+                        (left + wide).max(left + 3.0),
+                        top + high.max(3.0),
+                    ],
+                    url.to_owned(),
+                ));
+            }
+        }
+        areas
+    }
+
     pub(crate) fn field(
         &mut self,
         area: [f64; 4],
@@ -555,10 +829,11 @@ impl Composer<'_> {
         if fitted.room.height > self.usable() {
             return self.body_over_pages(paragraph, (x, width), &style);
         }
-        let top = self.place(f64::from(paragraph.space_before), fitted.room.height);
         let size = fitted.style.size;
-        let bottom = top + fitted.room.height;
-        self.text((x, top), width, fitted);
+        let lay = self.lay(paragraph, &fitted, width)?;
+        let top = self.place(f64::from(paragraph.space_before), lay.height());
+        let bottom = top + lay.height();
+        self.set_laid(paragraph, fitted, lay, (x, top), width);
         if paragraph.bullet {
             let colour = if self.theme().dressed {
                 self.theme().accent
@@ -712,13 +987,14 @@ impl Composer<'_> {
         let mut height = 0.0;
         for (at, paragraph) in run.iter().enumerate() {
             let piece = self.fit(&paragraph.text, &self.style(paragraph, theme.ink), inner)?;
+            let lay = self.lay(paragraph, &piece, inner)?;
             let above = if at == 0 {
                 0.0
             } else {
                 f64::from(paragraph.space_before)
             };
-            height += above + piece.room.height;
-            fitted.push((above, piece));
+            height += above + lay.height();
+            fitted.push((above, *paragraph, piece, lay));
         }
         let boxed = height + 2.0 * pad;
         if boxed > self.usable() {
@@ -748,10 +1024,10 @@ impl Composer<'_> {
             );
         }
         let mut y = top + pad;
-        for (above, piece) in fitted {
+        for (above, paragraph, piece, lay) in fitted {
             y += above;
-            let height = piece.room.height;
-            self.text((x + bar + pad, y), inner, piece);
+            let height = lay.height();
+            self.set_laid(paragraph, piece, lay, (x + bar + pad, y), inner);
             y += height;
         }
         self.top = top + boxed + size * 0.2;
@@ -981,8 +1257,9 @@ impl Composer<'_> {
                 continue;
             }
             let piece = self.fit(&cell.text, &self.style(cell, colour), width)?;
-            tallest = tallest.max(piece.room.height);
-            fitted.push(Some(piece));
+            let lay = self.lay(cell, &piece, width)?;
+            tallest = tallest.max(lay.height());
+            fitted.push(Some((cell.clone(), piece, lay)));
         }
         let least = cells
             .first()
@@ -1003,9 +1280,15 @@ impl Composer<'_> {
                 .push((fill, shapes::rect(left, top, right, bottom)));
         }
         for (at, cell) in row.cells.iter().enumerate() {
-            if let Some(cell) = cell {
+            if let Some((paragraph, fitted, lay)) = cell {
                 let width = (edges[at + 1] - edges[at] - 2.0 * row.pad).max(1.0);
-                self.text((edges[at] + row.pad, top + row.pad), width, cell.clone());
+                self.set_laid(
+                    paragraph,
+                    fitted.clone(),
+                    lay.clone(),
+                    (edges[at] + row.pad, top + row.pad),
+                    width,
+                );
             }
         }
         segment
@@ -1023,7 +1306,7 @@ pub(crate) struct Fitted {
 }
 
 struct FittedRow {
-    cells: Vec<Option<Fitted>>,
+    cells: Vec<Option<(Paragraph, Fitted, Lay)>>,
     height: f64,
     pad: f64,
 }

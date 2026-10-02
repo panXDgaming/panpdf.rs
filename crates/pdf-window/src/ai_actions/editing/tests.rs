@@ -767,7 +767,7 @@ fn a_block_the_assistant_deletes_is_said_to_be_deleted_and_no_neighbour_is_read_
 }
 
 #[test]
-fn new_text_on_a_page_shown_turned_is_refused_for_the_assistant_and_nothing_is_written() {
+fn new_text_on_a_page_shown_turned_is_refused_for_the_assistant_unless_the_page_is_replaced() {
     let mut window = a_blank_window();
     said(
         &mut window,
@@ -785,7 +785,7 @@ fn new_text_on_a_page_shown_turned_is_refused_for_the_assistant_and_nothing_is_w
     let written = refused(
         &mut window,
         "write_pages",
-        r#"{"document":"doc-1","markdown":"A paragraph.","font":"DejaVu Sans","replace":true}"#,
+        r#"{"document":"doc-1","markdown":"A paragraph.","font":"DejaVu Sans"}"#,
     );
     assert!(written.contains("shown turned"), "{written}");
     assert_eq!(
@@ -793,4 +793,10 @@ fn new_text_on_a_page_shown_turned_is_refused_for_the_assistant_and_nothing_is_w
         steps,
         "and not half a document"
     );
+    said(
+        &mut window,
+        "write_pages",
+        r#"{"document":"doc-1","markdown":"A paragraph.","font":"DejaVu Sans","replace":true}"#,
+    );
+    assert!(text_of_page(&mut window, 0).contains("A paragraph."));
 }

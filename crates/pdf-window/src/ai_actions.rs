@@ -1107,7 +1107,7 @@ impl Window {
             theme,
             body: size,
         };
-        let composed = match compose(&parts, &setting, &Faces(fonts)) {
+        let mut composed = match compose(&parts, &setting, &Faces(fonts)) {
             Ok(composed) => composed,
             Err(why) => {
                 return Performed::Done(ToolResult::failed(
@@ -1116,6 +1116,9 @@ impl Window {
                 ));
             }
         };
+        if replace {
+            composed.on_a_fresh_page(from_page);
+        }
         let commands = match placing::as_commands(&composed.marks, &|page| {
             self.editor.geometry(page).copied()
         }) {
@@ -1127,7 +1130,11 @@ impl Window {
                 ));
             }
         };
-        let said = written_in_words(&composed, (family, theme.name), replace);
+        let said = written_in_words(
+            &composed,
+            (family, theme.name),
+            replace.then_some(pages + composed.pages - 1),
+        );
         let job = self.editor.begin_commands(
             commands,
             Done::Wrote {
@@ -1578,7 +1585,7 @@ fn what_changed(request: &Request, page: usize, now: Option<&Block>) -> String {
 fn written_in_words(
     composed: &pdf_agent::composing::Composed,
     (family, theme): (&str, &str),
-    replace: bool,
+    replaced: Option<usize>,
 ) -> String {
     let left_out = if composed.left_out.is_empty() {
         String::new()
@@ -1593,11 +1600,14 @@ fn written_in_words(
     } else {
         family
     };
-    let covers = if replace {
-        " What was on the first page is covered, not removed: it is still in the file underneath."
-    } else {
-        ""
-    };
+    let covers = replaced.map_or_else(String::new, |pages| {
+        format!(
+            " The page written on was replaced: what was on it, fields and links too, is gone \
+             (undo brings it back). The document has {pages} page{} now; pages after the ones \
+             written are as they were.",
+            plural(pages)
+        )
+    });
     format!(
         "Written: {} pieces of text over {} page{} in {family}, theme {theme}, as one step the \
          person can undo.{left_out}{covers}",

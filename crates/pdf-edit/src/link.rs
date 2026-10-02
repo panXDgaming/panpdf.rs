@@ -285,7 +285,8 @@ fn checked_box(rect: [f64; 4]) -> Result<[f64; 4], SpikeError> {
     if ![x0, y0, x1, y1].iter().all(|edge| edge.is_finite()) {
         return Err(refused("a link's box is four numbers"));
     }
-    let rect = [x0.min(x1), y0.min(y1), x0.max(x1), y0.max(y1)];
+    let snap = |edge: f64| (edge * 10_000.0).round() / 10_000.0;
+    let rect = [x0.min(x1), y0.min(y1), x0.max(x1), y0.max(y1)].map(snap);
     if rect[2] - rect[0] < SMALLEST || rect[3] - rect[1] < SMALLEST {
         return Err(refused("this box is too small to click"));
     }
@@ -985,6 +986,21 @@ mod tests {
             found[0].2,
             Some(Target::Address("https://example.org/a b".to_owned()))
         );
+    }
+
+    #[test]
+    fn a_link_in_a_box_measured_finely_reads_back() {
+        let source = after(
+            &two_pages(),
+            &added(
+                [20.123_456_7, 200.987_654_3, 180.000_049, 220.5],
+                Target::Address("mailto:jobs@example.com".to_owned()),
+            ),
+        )
+        .expect("the link is added");
+        let found = links(&source);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].1, [20.1235, 200.9877, 180.0, 220.5]);
     }
 
     #[test]

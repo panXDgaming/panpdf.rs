@@ -630,3 +630,80 @@ fn a_drawing_block_is_drawn_on_the_page() {
     assert!((4500..=5500).contains(&green), "{green} green pixels");
     assert!(count([255, 0, 0]) > 2000, "the heart");
 }
+
+#[test]
+fn a_markdown_link_is_a_link_on_the_written_page() {
+    let folder = folder("markdown-link");
+    let path = document(&folder, "one.pdf", "Words.");
+    let mut desk = Desk::with_fonts(Some(fonts()));
+    let handle = desk.open(&path, "", false).expect("opens").handle;
+    crate::tools::call(
+        &mut desk,
+        "write_pages",
+        &crate::json::Json::object([
+            ("document", crate::json::Json::text(handle.clone())),
+            (
+                "markdown",
+                crate::json::Json::text(
+                    "See [the jobs page](https://example.com/jobs).\n\nSend it to [hr@example.com](mailto:hr@example.com).\n",
+                ),
+            ),
+            ("font", crate::json::Json::text("DejaVu Sans")),
+            ("replace", crate::json::Json::Bool(true)),
+        ]),
+    )
+    .expect("written");
+    let listed = crate::tools::call(
+        &mut desk,
+        "links",
+        &crate::json::Json::object([
+            ("document", crate::json::Json::text(handle.clone())),
+            ("action", crate::json::Json::text("list")),
+            ("page", crate::json::Json::count(1)),
+        ]),
+    )
+    .expect("listed");
+    assert!(
+        listed.text.contains("https://example.com/jobs"),
+        "{}",
+        listed.text
+    );
+    assert!(
+        listed.text.contains("mailto:hr@example.com"),
+        "{}",
+        listed.text
+    );
+}
+
+#[test]
+fn a_page_written_again_with_replace_holds_only_the_new_words() {
+    let folder = folder("replace-page");
+    let path = document(&folder, "one.pdf", "Old words that must go.");
+    let mut desk = Desk::with_fonts(Some(fonts()));
+    let handle = desk.open(&path, "", false).expect("opens").handle;
+    let call = |desk: &mut Desk, name: &str, rest: &str| {
+        let mut arguments = crate::json::Json::parse(rest).expect("JSON");
+        if let crate::json::Json::Object(members) = &mut arguments {
+            members.insert(
+                "document".to_owned(),
+                crate::json::Json::text(handle.clone()),
+            );
+        }
+        crate::tools::call(desk, name, &arguments)
+    };
+    let said = call(
+        &mut desk,
+        "write_pages",
+        r#"{"markdown":"New words only.","font":"DejaVu Sans","theme":"plain","replace":true}"#,
+    )
+    .expect("written");
+    assert!(said.text.contains("was replaced"), "{}", said.text);
+    assert!(said.text.contains("1 page now"), "{}", said.text);
+    let read = call(&mut desk, "read_text", "{}").expect("read");
+    assert!(read.text.contains("New words only."), "{}", read.text);
+    assert!(!read.text.contains("Old words"), "{}", read.text);
+    assert_eq!(
+        desk.page_sizes(&handle).expect("sizes"),
+        vec![[595.0, 842.0]]
+    );
+}

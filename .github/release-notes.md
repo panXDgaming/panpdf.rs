@@ -17,31 +17,19 @@ you did not touch.
 
 ## What's new
 
-- **Install with one command.** Windows (PowerShell):
-  `irm https://panpdf.org/install.ps1 | iex` -- Linux and macOS:
-  `curl -fsSL https://panpdf.org/install.sh | sh`. No administrator rights,
-  a Start menu or applications-menu entry, and run it again to update.
-- **Every converter inside the program.** A Tools room on the home screen
-  and in the menus: PDF to Word, Excel, PowerPoint, JPG, HTML, Markdown and
-  text, and back; compress, repair, OCR, PDF/A, protect, unlock, sign,
-  redact and compare -- all on your computer, nothing uploaded.
-- **An assistant that finishes the job.** It plans a whole task, carries it
-  out, and everything it did can be undone in one step. It can convert,
-  make scanned pages searchable, add links, shapes and form fields, write a
-  new document from nothing -- and draw: a cartoon for a lesson, a diagram,
-  a sign. A "Get a key" link beside each provider (Gemini's is free).
-- **Nineteen shapes.** Rectangle, rounded rectangle, oval, triangles,
-  diamond, parallelogram, trapezoid, pentagon, hexagon, octagon, star,
-  heart, cross, block arrow, speech bubble, cloud, moon and lightning.
-- **Markdown, all of it.** Documents the assistant writes read every example
-  of CommonMark 0.31.2, with GitHub's tables, task lists and
-  strikethrough, footnotes, highlight, superscript and subscript, notes and
-  simple HTML -- no stray marks on the page.
-- **Read first, edit when you choose.** A document opens for reading;
-  the Edit button brings every tool. A protected document asks about its
-  restrictions only when you start editing.
-- **Calmer windows.** Menus without repeats, quieter dialogs that can be
-  moved, and High quality or Fast and light text recognition.
+- **Links you can see and click.** A link the assistant writes is blue and
+  underlined on the page, and it stays a real link wherever it lands: in a
+  long paragraph that runs over several lines, inside a quote box, inside a
+  table cell. Web addresses and email addresses both work.
+- **Forms that fill in one click.** A checkbox or a radio button ticks on the
+  first click, even right after typing into the field before it.
+- **Redo a page cleanly.** When the assistant rewrites a page it puts a blank
+  page in its place first, so the new version never lands on top of the old.
+- **Drawings that stay in their frame.** A cartoon or diagram the assistant
+  draws is checked shape by shape: a triangle is drawn as a triangle, and
+  nothing is placed outside the page.
+- **Interface size.** `PANPDF_UI_SCALE=1.5` (anything from 0.5 to 4) makes
+  the whole window larger or smaller, whatever the system setting says.
 
 ## Download
 

@@ -776,3 +776,209 @@ fn a_bad_drawing_refuses_the_document() {
     let why = compose(&parts("```draw\ncircle 1\n```\n", 10.0), &setting, &Even).unwrap_err();
     assert!(why.contains("line 1"), "{why}");
 }
+
+#[test]
+fn a_link_is_set_in_blue_and_underlined() {
+    let written = composed(
+        "Apply at [our jobs page](https://example.com/jobs) today.\n",
+        theme::named("plain").unwrap(),
+    );
+    let runs: Vec<(String, f64, Option<super::Colour>)> = written
+        .marks
+        .iter()
+        .filter_map(|mark| match mark {
+            Mark::Text {
+                text, area, style, ..
+            } => Some((text.clone(), area[0], style.colour)),
+            _ => None,
+        })
+        .collect();
+    let ink = theme::named("plain").unwrap().ink;
+    assert_eq!(
+        runs,
+        vec![
+            ("Apply at".to_owned(), 50.0, Some(ink)),
+            ("our jobs page".to_owned(), 95.0, Some(super::LINK)),
+            ("today.".to_owned(), 165.0, Some(ink)),
+        ]
+    );
+    let under: Vec<&Mark> = written
+        .marks
+        .iter()
+        .filter(
+            |mark| matches!(mark, Mark::Shape { fill: Some(colour), .. } if *colour == super::LINK),
+        )
+        .collect();
+    assert_eq!(under.len(), 1, "one hairline, under the link only");
+}
+
+#[test]
+fn a_link_over_a_line_end_is_a_link_on_both_lines() {
+    let nine = |letter: char| letter.to_string().repeat(9);
+    let plain = vec![nine('a'); 9].join(" ");
+    let after = vec![nine('d'); 3].join(" ");
+    let markdown = format!(
+        "{plain} [{} {}](https://example.com/terms) {after}\n",
+        nine('b'),
+        nine('c')
+    );
+    let written = composed(&markdown, theme::named("plain").unwrap());
+    let ink = theme::named("plain").unwrap().ink;
+    let runs: Vec<(String, f64, Option<super::Colour>)> = written
+        .marks
+        .iter()
+        .filter_map(|mark| match mark {
+            Mark::Text {
+                text, area, style, ..
+            } => Some((text.clone(), area[0], style.colour)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        runs,
+        vec![
+            (plain, 50.0, Some(ink)),
+            (nine('b'), 500.0, Some(super::LINK)),
+            (nine('c'), 50.0, Some(super::LINK)),
+            (after, 100.0, Some(ink)),
+        ]
+    );
+    let areas: Vec<([f64; 4], &str)> = written
+        .marks
+        .iter()
+        .filter_map(|mark| match mark {
+            Mark::Link { area, url, .. } => Some((*area, url.as_str())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(areas.len(), 2, "{areas:?}");
+    assert!(
+        areas
+            .iter()
+            .all(|(_, url)| *url == "https://example.com/terms")
+    );
+    let close = |area: [f64; 4], left: f64, right: f64| {
+        (area[0] - left).abs() < 1e-9 && (area[2] - right).abs() < 1e-9
+    };
+    assert!(close(areas[0].0, 500.0, 545.0), "{areas:?}");
+    assert!(close(areas[1].0, 50.0, 95.0), "{areas:?}");
+    assert!((areas[1].0[1] - areas[0].0[1] - 12.0).abs() < 1e-9);
+    let under = written
+        .marks
+        .iter()
+        .filter(
+            |mark| matches!(mark, Mark::Shape { fill: Some(colour), .. } if *colour == super::LINK),
+        )
+        .count();
+    assert_eq!(under, 2, "a hairline under the link on each line");
+}
+
+struct TrimsTrailingSpaces;
+
+impl Measure for TrimsTrailingSpaces {
+    fn room(&self, text: &str, style: &Style, width: f64) -> Result<Room, String> {
+        Even.room(text.trim_end(), style, width)
+    }
+}
+
+#[test]
+fn a_link_after_a_space_starts_after_the_space() {
+    let setting = Setting {
+        sheet: A4,
+        from_page: 0,
+        start: None,
+        family: "Noto Sans",
+        theme: theme::named("plain").unwrap(),
+        body: 10.0,
+    };
+    let written = compose(
+        &parts(
+            "Apply at [our jobs page](https://example.com/jobs) today.\n",
+            10.0,
+        ),
+        &setting,
+        &TrimsTrailingSpaces,
+    )
+    .expect("it composes");
+    let starts: Vec<f64> = written
+        .marks
+        .iter()
+        .filter_map(|mark| match mark {
+            Mark::Text { area, .. } => Some(area[0]),
+            Mark::Link { area, .. } => Some(-area[0]),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(starts, vec![50.0, 95.0, 165.0, -95.0]);
+}
+
+#[test]
+fn a_markdown_link_becomes_a_clickable_area_over_its_words() {
+    let written = composed(
+        "Apply at [our jobs page](https://example.com/jobs) today.\n",
+        theme::named("plain").unwrap(),
+    );
+    let links: Vec<&Mark> = written
+        .marks
+        .iter()
+        .filter(|mark| matches!(mark, Mark::Link { .. }))
+        .collect();
+    assert_eq!(links.len(), 1, "{:?}", written.marks);
+    let Mark::Link { area, url, .. } = links[0] else {
+        unreachable!()
+    };
+    assert_eq!(url, "https://example.com/jobs");
+    assert!((area[0] - (50.0 + 45.0)).abs() < 1e-6, "{area:?}");
+    assert!(
+        (area[2] - area[0] - 65.0).abs() < 1e-6,
+        "13 letters wide: {area:?}"
+    );
+    let none = composed(
+        "See [a page](#top) or [a file](notes.txt).\n",
+        theme::named("plain").unwrap(),
+    );
+    assert!(
+        !none
+            .marks
+            .iter()
+            .any(|mark| matches!(mark, Mark::Link { .. })),
+        "only web and e-mail addresses are made clickable"
+    );
+}
+
+#[test]
+fn links_in_a_quote_and_a_table_are_links() {
+    let written = composed(
+        "> Read [the terms](https://example.com/terms) first.\n\n\
+         | Site | Mail |\n|---|---|\n| [Home](https://example.com) | [Write](mailto:a@example.com) |\n",
+        theme::named("plain").unwrap(),
+    );
+    let mut urls: Vec<&str> = written
+        .marks
+        .iter()
+        .filter_map(|mark| match mark {
+            Mark::Link { url, .. } => Some(url.as_str()),
+            _ => None,
+        })
+        .collect();
+    urls.sort_unstable();
+    assert_eq!(
+        urls,
+        vec![
+            "https://example.com",
+            "https://example.com/terms",
+            "mailto:a@example.com"
+        ]
+    );
+    let blue: Vec<&str> = written
+        .marks
+        .iter()
+        .filter_map(|mark| match mark {
+            Mark::Text { text, style, .. } if style.colour == Some(super::LINK) => {
+                Some(text.as_str())
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(blue, vec!["the terms", "Home", "Write"]);
+}

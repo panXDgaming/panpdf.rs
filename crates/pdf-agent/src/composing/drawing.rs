@@ -169,9 +169,47 @@ fn read(spec: &str) -> Result<Vec<Command>, String> {
         }
         let command =
             command(line).map_err(|why| format!("drawing, line {}: {why}", number + 1))?;
-        out.push(command);
+        out.push((number + 1, command));
     }
-    Ok(out)
+    let (wide, high) = out
+        .iter()
+        .find_map(|(_, command)| match command {
+            Command::Size(wide, high) => Some((*wide, *high)),
+            _ => None,
+        })
+        .unwrap_or(DEFAULT_SIZE);
+    for (number, command) in &out {
+        if let Command::Draw { steps, paint } = command {
+            inside((wide, high), steps, paint.width)
+                .map_err(|why| format!("drawing, line {number}: {why}"))?;
+        }
+    }
+    Ok(out.into_iter().map(|(_, command)| command).collect())
+}
+
+fn inside((wide, high): (f64, f64), steps: &[PenStep], pen: f64) -> Result<(), String> {
+    let spare = 0.05 * wide.max(high) + pen;
+    for step in steps {
+        let points = match *step {
+            PenStep::Move(point) | PenStep::Line(point) => vec![point],
+            PenStep::Curve(one, other, end) => vec![one, other, end],
+        };
+        for (x, y) in points {
+            if x < -spare || x > wide + spare {
+                return Err(format!(
+                    "this reaches x {x:.0}, out of the drawing, which is {wide:.0} wide: \
+                     keep every shape inside `size {wide:.0} {high:.0}`, or make the size bigger"
+                ));
+            }
+            if y < -spare || y > high + spare {
+                return Err(format!(
+                    "this reaches y {y:.0}, out of the drawing, which is {high:.0} high: \
+                     keep every shape inside `size {wide:.0} {high:.0}`, or make the size bigger"
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn words(line: &str) -> Result<Vec<String>, String> {
@@ -235,10 +273,11 @@ impl Said {
     }
 
     fn numbers(&self, want: usize, shape: &str, form: &str) -> Result<&[f64], String> {
-        if self.numbers.len() < want {
-            return Err(format!("{shape} takes {form}"));
+        match self.numbers.len() {
+            had if had < want => Err(format!("{shape} takes {form}")),
+            had if had > want => Err(format!("{shape} takes {form}: {want} numbers, not {had}")),
+            _ => Ok(&self.numbers[..want]),
         }
-        Ok(&self.numbers[..want])
     }
 
     fn paint(&self, open: bool) -> Result<Paint, String> {
@@ -431,7 +470,10 @@ fn command(line: &str) -> Result<Command, String> {
             draw(steps, (cx, cy))
         }
         "text" | "label" => {
-            let n = said.numbers(2, "text", "x y and the words in quotes")?;
+            let n = said
+                .numbers
+                .get(..2)
+                .ok_or("text takes x y and the words in quotes")?;
             let words = quoted_text()
                 .or(said.text.clone())
                 .ok_or("text takes its words in quotes")?;
@@ -462,6 +504,17 @@ fn command(line: &str) -> Result<Command, String> {
                 italic: said.flags.iter().any(|flag| flag == "italic"),
             })
         }
+        "triangle" if said.numbers.len() == 6 || said.points.len() == 3 => {
+            let points: Vec<(f64, f64)> = if said.points.len() == 3 {
+                said.points.clone()
+            } else {
+                said.numbers
+                    .chunks_exact(2)
+                    .map(|pair| (pair[0], pair[1]))
+                    .collect()
+            };
+            draw(shapes::polygon(&points), centre_of(&points))
+        }
         other => {
             let regular = matches!(other, "regular" | "polygonn" | "ngon");
             let figure = Figure::named(other);
@@ -473,7 +526,15 @@ fn command(line: &str) -> Result<Command, String> {
                     Figure::ALL.map(Figure::keyword).join(", ")
                 ));
             }
-            let n = said.numbers(4, other, "the box it fills: left top width height")?;
+            let n = said.numbers(
+                4,
+                other,
+                if other == "triangle" {
+                    "the box it fills: left top width height, or three corners x1 y1 x2 y2 x3 y3"
+                } else {
+                    "the box it fills: left top width height"
+                },
+            )?;
             let frame = [n[0], n[1], n[0] + n[2], n[1] + n[3]];
             let steps = match figure {
                 Some(Figure::Star) => {
@@ -722,6 +783,46 @@ mod tests {
         let why = read("blob 1 2 3 4").unwrap_err();
         assert!(why.contains("blob") && why.contains("heart"), "{why}");
         assert!(read("size 100 100\n# a comment\n// another\nrect 0 0 10 10\n").is_ok());
+    }
+
+    #[test]
+    fn a_triangle_is_drawn_through_three_corners() {
+        let (steps, _) = draws("triangle 199 51 222 31 221 57");
+        let corners: Vec<(f64, f64)> = steps
+            .iter()
+            .filter_map(|step| match step {
+                PenStep::Move(point) | PenStep::Line(point) => Some(*point),
+                PenStep::Curve(..) => None,
+            })
+            .collect();
+        for corner in [(199.0, 51.0), (222.0, 31.0), (221.0, 57.0)] {
+            assert!(corners.contains(&corner), "{corners:?}");
+        }
+        assert!(corners.iter().all(|(x, _)| (199.0..=222.0).contains(x)));
+        let (pointed, _) = draws("triangle 199,51 222,31 221,57");
+        assert_eq!(pointed, steps);
+        assert!(command("triangle 0 0 10 10").is_ok(), "a box still fills");
+    }
+
+    #[test]
+    fn a_number_too_many_is_refused() {
+        let why = command("circle 10 10 5 7").unwrap_err();
+        assert!(why.contains("3 numbers, not 4"), "{why}");
+        let why = command("rect 0 0 10 10 12").unwrap_err();
+        assert!(why.contains("4 numbers, not 5"), "{why}");
+        assert!(
+            command("text 10 20 \"5\"").is_ok(),
+            "words that read as a number"
+        );
+    }
+
+    #[test]
+    fn a_shape_out_of_its_drawing_is_refused() {
+        let why = read("size 460 105\ncircle 40 40 20\ntriangle 409 50 437 34\n").unwrap_err();
+        assert!(why.contains("line 3") && why.contains("460"), "{why}");
+        assert!(read("size 100 100\nrect 0 0 100 100 width=4\nline 0 50 104 50\n").is_ok());
+        let why = read("circle 400 150 40\n").unwrap_err();
+        assert!(why.contains("400 wide"), "the default size: {why}");
     }
 
     #[test]

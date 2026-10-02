@@ -36,6 +36,27 @@ fn blank(size: [f64; 2]) -> Surface {
     }
 }
 
+fn fresh_page(
+    at: usize,
+    page: &dyn Fn(usize) -> Option<PageGeometry>,
+    commands: &mut Vec<Command>,
+    put_in: &mut BTreeMap<usize, Surface>,
+) {
+    let size = page(at)
+        .as_ref()
+        .and_then(of_a_page)
+        .map_or([595.276, 841.89], |surface| surface.size);
+    commands.push(Command::AddBlankPage {
+        beside: at,
+        before: true,
+        size,
+    });
+    commands.push(Command::RemovePages {
+        pages: vec![at + 1],
+    });
+    put_in.insert(at, blank(size));
+}
+
 pub fn as_commands(
     marks: &[Mark],
     page: &dyn Fn(usize) -> Option<PageGeometry>,
@@ -44,6 +65,7 @@ pub fn as_commands(
     let mut commands = Vec::with_capacity(marks.len());
     for mark in marks {
         match mark {
+            Mark::FreshPage { page: at } => fresh_page(*at, page, &mut commands, &mut put_in),
             Mark::NewPage { after } => {
                 let size = match put_in.get(after) {
                     Some(surface) => surface.size,
@@ -101,6 +123,21 @@ pub fn as_commands(
                     closed: false,
                     stroke: stroke.map(|(colour, width)| PenStroke::pen(colour, width)),
                     fill: *fill,
+                });
+            }
+            Mark::Link {
+                page: at,
+                area,
+                url,
+            } => {
+                let rect = on(&put_in, *at, page, |surface| {
+                    crate::desk::to_user_with(&surface.shown, *area)
+                })?;
+                commands.push(Command::AddLink {
+                    page_index: *at,
+                    rect,
+                    target: pdf_edit::link::Target::Address(url.clone()),
+                    look: pdf_edit::link::Look::default(),
                 });
             }
             Mark::Field(asked) => {

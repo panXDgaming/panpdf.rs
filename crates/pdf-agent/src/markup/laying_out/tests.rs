@@ -22,6 +22,7 @@ fn a_written_document_becomes_paragraphs() {
             indent: 0.0,
             kind: Kind::Heading(1),
             bullet: false,
+            links: Vec::new(),
         }
     );
     assert!((out[1].size - 11.0).abs() < 0.001);
@@ -136,6 +137,7 @@ fn mathematics_is_held_out_of_the_markdown() {
                 indent: 0.0,
                 kind: Kind::Body,
                 bullet: false,
+                links: Vec::new(),
             }),
             _ => None,
         })

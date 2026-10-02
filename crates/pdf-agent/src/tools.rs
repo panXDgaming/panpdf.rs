@@ -211,7 +211,8 @@ tables (a grid with a coloured head and striped rows), `---` (a line across the 
 All of CommonMark 0.31.2 is read, with GitHub's task lists (`- [ ]`, `- [x]`), ~~strikethrough~~ and bare links, \
 footnotes (`[^1]` and `[^1]: text`), ==highlight==, x^2^ and H~2~O, `> [!NOTE]` / TIP / IMPORTANT / WARNING / CAUTION, \
 `Term` over `: meaning` lines, HTML entities (&copy;) and simple HTML (<br>, <b>, <i>, <sup>, <sub>, <mark>): none of it \
-is printed as marks. \
+is printed as marks. LINKS: [words](https://...) and [an address](mailto:someone@example.com) are real links on the page, \
+clicked open in a reader -- a careers page, an e-mail to send a form back to. \
 MATHS: `$...$` inside a line is set as Unicode (x², α, ∑); a paragraph that is only `$$...$$` is set out like a book -- \
 stacked fractions, roots, sums and integrals with limits, matrices (pmatrix/bmatrix), cases, \\left( \\right). \
 CHARTS: a fenced block with the language `chart` holding JSON: \
@@ -238,14 +239,15 @@ Later lines are drawn over earlier ones: build a cartoon from the back forward (
 A paragraph is bold or italic only when all of it is. No emoji: they are left out. Adds pages when it runs out of room. \
 Everything is checked before anything is written: a chart or form that cannot be read refuses the whole call, saying why. \
 Use this rather than a frame at a time whenever more than one paragraph is being written: it is one call, and the \
-spacing and colours come out the same all the way down. `from_page` says which page to start on. `replace` starts at \
-the top of the page instead of under what is already there, and paints the new page over it: what was there is covered, \
-not removed, and stays in the file under the new page. The whole write is one step the person can undo.",
+spacing and colours come out the same all the way down. `from_page` says which page to start on. `replace` puts a \
+blank page of the same size in place of page `from_page` and writes from its top: what was on that page, its fields and \
+links too, is gone; pages after it stay, so delete_pages any an earlier write left that are no longer wanted. Use it \
+to write a page again rather than writing over it. The whole write is one step the person can undo.",
             input: r#"{"type":"object","properties":{DOCUMENT,
 "markdown":{"type":"string","description":"The document, in CommonMark, with $maths$, ```chart, ```form and ```draw blocks."},
 "theme":{"type":"string","enum":["classic","ocean","sunset","forest","grape","rose","slate","midnight","plain"],"description":"The colours. Default classic (navy). midnight is a dark page; plain is black on white."},
 "from_page":{"type":"integer","minimum":1,"description":"Default 1."},
-"replace":{"type":"boolean","description":"Start at the top of the page. Default false."},
+"replace":{"type":"boolean","description":"Put a blank page in place of from_page and write on it. Default false."},
 "size":{"type":"number","exclusiveMinimum":0,"description":"Point size of ordinary text. Default 11."},
 "font":{"type":"string","description":"A family list_fonts names. Default: one that has every character."},
 "margin":{"type":"number","exclusiveMinimum":0,"description":"Points of blank edge. Default 56."}},
@@ -1542,7 +1544,10 @@ fn write_pages(desk: &mut Desk, args: &Args) -> Result<Answer, String> {
         theme: theme::named(&theme_name).unwrap_or_else(theme::default_theme),
         body: size,
     };
-    let composed = compose(&written, &setting, &Faces(fonts))?;
+    let mut composed = compose(&written, &setting, &Faces(fonts))?;
+    if replace {
+        composed.on_a_fresh_page(from_page);
+    }
     let geometries = desk.page_geometries(handle)?;
     let commands = crate::composing::placing::as_commands(&composed.marks, &|page| {
         geometries.get(page).copied()
@@ -1557,10 +1562,21 @@ fn write_pages(desk: &mut Desk, args: &Args) -> Result<Answer, String> {
             composed.left_out
         )
     };
+    let replaced = if replace {
+        let now = sizes.len() + pages - 1;
+        format!(
+            " The page written on was replaced: what was on it, fields and links too, is gone \
+             (undo brings it back). The document has {now} page{} now; pages after the ones \
+             written are as they were.",
+            if now == 1 { "" } else { "s" }
+        )
+    } else {
+        String::new()
+    };
     Ok(Answer::of(
         format!(
             "Written: {} pieces over {pages} page{} in {family}, theme {theme_name}, as one step \
-             undo takes back.{left_out}",
+             undo takes back.{left_out}{replaced}",
             composed.pieces,
             if pages == 1 { "" } else { "s" }
         ),

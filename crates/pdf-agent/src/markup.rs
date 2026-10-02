@@ -19,6 +19,7 @@ pub struct Piece {
     pub bold: bool,
     pub italic: bool,
     pub code: bool,
+    pub link: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -232,9 +233,17 @@ fn walk(inlines: &[Inline], so_far: &Piece, out: &mut Vec<Piece>) {
                 },
                 out,
             ),
-            Inline::Strike(inside)
-            | Inline::Link { text: inside, .. }
-            | Inline::Image { text: inside, .. } => walk(inside, so_far, out),
+            Inline::Link { to, text, .. } => walk(
+                text,
+                &Piece {
+                    link: Some(to.clone()),
+                    ..so_far.clone()
+                },
+                out,
+            ),
+            Inline::Strike(inside) | Inline::Image { text: inside, .. } => {
+                walk(inside, so_far, out);
+            }
             Inline::Check(_) | Inline::Note(_) | Inline::Superscript(_) | Inline::Subscript(_) => {
                 out.push(Piece {
                     text: inline.plain(),

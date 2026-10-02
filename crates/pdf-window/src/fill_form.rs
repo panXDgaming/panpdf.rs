@@ -88,6 +88,10 @@ impl Window {
                 let Some(state) = field.states.first().cloned() else {
                     return false;
                 };
+                if self.editor.is_busy() {
+                    self.tick_after_the_field = Some((page, field.widget));
+                    return true;
+                }
                 let value = if !field.is_on() {
                     FieldValue::State(state)
                 } else if field.kind == FieldKind::Checkbox {
@@ -138,6 +142,28 @@ impl Window {
             return;
         }
         self.write_the_field(filling.page, &filling.field, value);
+    }
+
+    pub(crate) fn tick_what_waited(&mut self, ctx: &egui::Context) {
+        let Some((page, widget)) = self.tick_after_the_field else {
+            return;
+        };
+        if self.editor.is_busy() {
+            return;
+        }
+        let fields = self.editor.fields_on(page);
+        if fields.is_empty() {
+            ctx.request_repaint();
+            return;
+        }
+        self.tick_after_the_field = None;
+        if let Some(found) = fields
+            .iter()
+            .find(|found| found.field.widget == widget)
+            .cloned()
+        {
+            self.answer_the_field(page, found);
+        }
     }
 
     fn write_the_field(&mut self, page: usize, found: &FieldBox, value: FieldValue) {
@@ -299,5 +325,110 @@ impl Window {
         } else if finished {
             self.finish_the_field();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use pdf_app::document::Editor;
+    use pdf_edit::form::FieldKind;
+
+    use crate::window_state::Window;
+
+    fn a_form() -> pdf_bytes::ByteStore {
+        let objects = [
+            "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [4 0 R 5 0 R] /DA (/Helv 0 Tf 0 g) \
+             /DR << /Font << /Helv 8 0 R >> >> >> >>",
+            "<< /Type /Pages /MediaBox [0 0 300 300] /Kids [3 0 R] /Count 1 >>",
+            "<< /Type /Page /Parent 2 0 R /Contents 9 0 R /Resources << >> /Annots [4 0 R 5 0 R] >>",
+            "<< /Type /Annot /Subtype /Widget /FT /Tx /T (name) /Rect [20 240 200 260] /P 3 0 R \
+             /DA (/Helv 10 Tf 0 g) /F 4 >>",
+            "<< /Type /Annot /Subtype /Widget /FT /Btn /T (agree) /Rect [20 200 34 214] /P 3 0 R \
+             /V /Off /AS /Off /F 4 /AP << /N << /Yes 6 0 R /Off 7 0 R >> >> >>",
+            "<< /Type /XObject /Subtype /Form /BBox [0 0 14 14] /Length 13 >>\nstream\n2 2 10 10 re f\nendstream",
+            "<< /Type /XObject /Subtype /Form /BBox [0 0 14 14] /Length 0 >>\nstream\n\nendstream",
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+            "<< /Length 21 >>\nstream\n0 0 m 100 100 l S    \nendstream",
+        ];
+        let mut bytes = b"%PDF-1.7\n".to_vec();
+        let mut offsets = Vec::new();
+        for (at, body) in objects.iter().enumerate() {
+            offsets.push(bytes.len());
+            bytes.extend_from_slice(format!("{} 0 obj\n{body}\nendobj\n", at + 1).as_bytes());
+        }
+        let xref = bytes.len();
+        let size = objects.len() + 1;
+        bytes.extend_from_slice(format!("xref\n0 {size}\n0000000000 65535 f \n").as_bytes());
+        for offset in offsets {
+            bytes.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        bytes.extend_from_slice(
+            format!("trailer\n<< /Size {size} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n")
+                .as_bytes(),
+        );
+        pdf_bytes::ByteStore::new(
+            pdf_bytes::SourceId::new(512),
+            std::sync::Arc::<[u8]>::from(bytes),
+        )
+    }
+
+    fn read_the_page(window: &mut Window) {
+        let view = pdf_session::interpret_page_fully(
+            window.editor.source().expect("no edit is away"),
+            0,
+            b"",
+            window.editor.grouping(0).as_deref(),
+            pdf_cli::font_provider(),
+        )
+        .expect("the page reads");
+        window.editor.adopt_page(0, std::sync::Arc::new(view));
+    }
+
+    fn finish_what_is_running(window: &mut Window, ctx: &eframe::egui::Context) {
+        while let Some(running) = window.running.as_ref() {
+            while !running.handle.is_finished() {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            window.collect(ctx);
+            read_the_page(window);
+            window.tick_what_waited(ctx);
+        }
+    }
+
+    #[test]
+    fn one_click_ticks_a_box_while_the_field_before_it_is_written() {
+        let ctx = eframe::egui::Context::default();
+        let editor = Editor::open(a_form()).expect("the form opens");
+        let mut window = Window::new(editor, PathBuf::from("/missing/form.pdf"), Vec::new());
+        read_the_page(&mut window);
+        let fields = window.editor.fields_on(0);
+        let name = fields
+            .iter()
+            .find(|found| found.field.kind == FieldKind::Text)
+            .expect("a text field")
+            .clone();
+        let agree = fields
+            .iter()
+            .find(|found| found.field.kind == FieldKind::Checkbox)
+            .expect("a checkbox")
+            .clone();
+        assert!(window.answer_the_field(0, name));
+        window.filling.as_mut().expect("the field opened").text = "Alex".to_owned();
+        assert!(window.answer_the_field(0, agree));
+        assert!(window.running.is_some(), "the typed field is being written");
+        finish_what_is_running(&mut window, &ctx);
+        let fields = window.editor.fields_on(0);
+        let name = fields
+            .iter()
+            .find(|found| found.field.kind == FieldKind::Text)
+            .expect("a text field");
+        assert_eq!(name.field.value.shown(), "Alex");
+        let agree = fields
+            .iter()
+            .find(|found| found.field.kind == FieldKind::Checkbox)
+            .expect("a checkbox");
+        assert!(agree.field.is_on(), "the one click did not tick the box");
     }
 }

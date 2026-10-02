@@ -28,6 +28,13 @@ pub(crate) enum Opened {
 
 pub(crate) fn install_look(ctx: &egui::Context) {
     ctx.options_mut(|options| options.zoom_with_keyboard = false);
+    if let Some(scale) = std::env::var("PANPDF_UI_SCALE")
+        .ok()
+        .and_then(|value| value.trim().parse::<f32>().ok())
+        .filter(|scale| (0.5..=4.0).contains(scale))
+    {
+        ctx.set_zoom_factor(scale);
+    }
     ctx.all_styles_mut(|style| {
         style.spacing.item_spacing = egui::vec2(2.0, 4.0);
         style.spacing.button_padding = egui::vec2(6.0, 4.0);
@@ -977,6 +984,7 @@ pub(crate) struct Window {
     pub(crate) picture_minis: Vec<Option<egui::TextureHandle>>,
     pub(crate) finding: Option<Finding>,
     pub(crate) filling: Option<Filling>,
+    pub(crate) tick_after_the_field: Option<(usize, pdf_syntax::Reference)>,
     pub(crate) pen: Pen,
     pub(crate) marker: Pen,
     pub(crate) shape: Shape,

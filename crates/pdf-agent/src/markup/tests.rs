@@ -6,6 +6,7 @@ fn plain(text: &str, bold: bool, italic: bool) -> Piece {
         bold,
         italic,
         code: false,
+        link: None,
     }
 }
 
@@ -65,6 +66,7 @@ fn a_whole_little_answer_is_read() {
                 bold: false,
                 italic: false,
                 code: true,
+                link: None,
             },
             plain(".", false, false),
         ]
