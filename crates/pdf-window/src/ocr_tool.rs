@@ -268,21 +268,26 @@ impl Window {
             width: PANEL_WIDTH,
         };
         dialog::panel(ctx, canvas, &spec, |ui, room| {
-            let closed = dialog::header(
+            let closed = dialog::tool_header(
                 ui,
                 title.trim_end_matches('\u{2026}'),
                 Some(&why),
                 (!busy).then_some(close.as_str()),
+                lang,
             );
             if closed {
                 asked.pressed = Pressed::Close;
             }
-            dialog::scrolling(ui, "ocr-body", room, |ui| {
-                the_choices(ui, draft, (lang, count), &mut asked);
+            dialog::body(ui, |ui| {
+                dialog::scrolling(ui, "ocr-body", room, |ui| {
+                    the_choices(ui, draft, (lang, count), &mut asked);
+                });
+                what_stands_in_the_way(ui, draft, lang, pages.as_ref());
             });
-            what_stands_in_the_way(ui, draft, lang, pages.as_ref());
             how_far(ui, draft, lang);
-            the_buttons(ui, draft, (lang, pages.as_ref()), &mut asked);
+            dialog::body(ui, |ui| {
+                the_buttons(ui, draft, (lang, pages.as_ref()), &mut asked);
+            });
         });
         if asked.pressed == Pressed::Stop {
             if let Some(reading) = draft.reading.as_ref() {

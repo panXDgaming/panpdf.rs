@@ -17,19 +17,19 @@ you did not touch.
 
 ## What's new
 
-- **Links you can see and click.** A link the assistant writes is blue and
-  underlined on the page, and it stays a real link wherever it lands: in a
-  long paragraph that runs over several lines, inside a quote box, inside a
-  table cell. Web addresses and email addresses both work.
-- **Forms that fill in one click.** A checkbox or a radio button ticks on the
-  first click, even right after typing into the field before it.
-- **Redo a page cleanly.** When the assistant rewrites a page it puts a blank
-  page in its place first, so the new version never lands on top of the old.
-- **Drawings that stay in their frame.** A cartoon or diagram the assistant
-  draws is checked shape by shape: a triangle is drawn as a triangle, and
-  nothing is placed outside the page.
-- **Interface size.** `PANPDF_UI_SCALE=1.5` (anything from 0.5 to 4) makes
-  the whole window larger or smaller, whatever the system setting says.
+- **See what you can edit.** Press Edit and every paragraph, heading and
+  picture shows its outline straight away; there is no need to hover over
+  it first. View > Frames (or F2) still hides them.
+- **Tool windows fold away.** Watermark, Recognize text (OCR), Link, Field
+  properties and Named places have an arrow beside the close button: one
+  click folds the window to its title so the page is clear, another click
+  brings it back with everything still set. A text recognition that is
+  running keeps showing its progress while folded.
+- **Clearer buttons.** The main button of each window is solid blue, so it
+  no longer looks switched off.
+- **A tidier installer.** The one-command install shows each step with a
+  tick and a progress bar with the size downloaded, on Windows, Linux and
+  macOS.
 
 ## Download
 

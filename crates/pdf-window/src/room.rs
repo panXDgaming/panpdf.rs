@@ -339,7 +339,7 @@ impl Default for View {
             pages_folded: false,
             pages_width: PANEL_WIDTH,
             dark: None,
-            frames: false,
+            frames: true,
         }
     }
 }
@@ -352,7 +352,7 @@ impl View {
             None => "",
         };
         format!(
-            "pages-folded {}\npages-width {:.0}\nframes {}\n{theme}",
+            "pages-folded {}\npages-width {:.0}\nframes-shown {}\n{theme}",
             u8::from(self.pages_folded),
             self.pages_width,
             u8::from(self.frames)
@@ -365,7 +365,7 @@ impl View {
             let mut words = line.split_whitespace();
             match (words.next(), words.next()) {
                 (Some("pages-folded"), Some(value)) => view.pages_folded = value == "1",
-                (Some("frames"), Some(value)) => view.frames = value == "1",
+                (Some("frames-shown"), Some(value)) => view.frames = value == "1",
                 (Some("theme"), Some("dark")) => view.dark = Some(true),
                 (Some("theme"), Some("light")) => view.dark = Some(false),
                 (Some("pages-width"), Some(value)) => {
@@ -748,7 +748,18 @@ mod tests {
             "a person who never chose is not written down as having chosen"
         );
         assert_eq!(View::read(""), View::default());
-        assert!(!View::default().frames, "frames stay quiet until asked for");
+        assert!(
+            View::default().frames,
+            "what can be edited is outlined at rest"
+        );
+        assert!(
+            View::read("frames 0\n").frames,
+            "the line 0.2.0 wrote for everyone does not hide the frames"
+        );
+        assert!(
+            !View::read("frames-shown 0\n").frames,
+            "turned off is kept off"
+        );
         assert_eq!(View::read("moon-phase waxing\n"), View::default());
         assert_eq!(View::read("pages-width nonsense\n"), View::default());
         assert_eq!(View::read("pages-width -5\n"), View::default());

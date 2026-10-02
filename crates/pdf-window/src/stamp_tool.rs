@@ -179,51 +179,55 @@ impl Window {
             width: PANEL_WIDTH,
         };
         dialog::panel(ctx, canvas, &spec, |ui, room| {
-            close = dialog::header(
+            close = dialog::tool_header(
                 ui,
                 title.trim_end_matches('\u{2026}'),
                 Some(&why),
                 Some(&shut),
+                lang,
             );
-            dialog::scrolling(ui, "stamp-body", room, |ui| {
-                wording_box(ui, draft, lang);
-                dialog::divide(ui);
-                where_it_goes(ui, draft, lang);
-                dialog::divide(ui);
-                how_it_looks(ui, draft, lang);
-                dialog::divide(ui);
-                which_pages(ui, draft, lang);
-            });
-            match &shown {
-                Some((page, Ok(line))) => {
+            dialog::body(ui, |ui| {
+                dialog::scrolling(ui, "stamp-body", room, |ui| {
+                    wording_box(ui, draft, lang);
+                    dialog::divide(ui);
+                    where_it_goes(ui, draft, lang);
+                    dialog::divide(ui);
+                    how_it_looks(ui, draft, lang);
+                    dialog::divide(ui);
+                    which_pages(ui, draft, lang);
+                });
+                match &shown {
+                    Some((page, Ok(line))) => {
+                        ui.add_space(8.0);
+                        let said = Message::StampPreview {
+                            page: *page,
+                            line: line.clone(),
+                        };
+                        dialog::note(ui, dialog::Tone::Calm, &said.say(lang));
+                    }
+                    Some((_, Err(why))) => {
+                        ui.add_space(8.0);
+                        dialog::note(ui, dialog::Tone::Warning, &why.say(lang));
+                    }
+                    None => {}
+                }
+                if let Some(Err(why)) = &pages {
                     ui.add_space(8.0);
-                    let said = Message::StampPreview {
-                        page: *page,
-                        line: line.clone(),
-                    };
-                    dialog::note(ui, dialog::Tone::Calm, &said.say(lang));
+                    dialog::note(ui, dialog::Tone::Trouble, &why.say(lang));
                 }
-                Some((_, Err(why))) => {
-                    ui.add_space(8.0);
-                    dialog::note(ui, dialog::Tone::Warning, &why.say(lang));
-                }
-                None => {}
-            }
-            if let Some(Err(why)) = &pages {
-                ui.add_space(8.0);
-                dialog::note(ui, dialog::Tone::Trouble, &why.say(lang));
-            }
-            let count = pages
-                .as_ref()
-                .and_then(|pages| pages.as_ref().ok())
-                .map_or(0, Vec::len);
-            let refused = matches!(shown, Some((_, Err(Message::Refused(_)))));
-            dialog::footer(ui, |ui| {
-                let ready = count > 0 && !busy && !refused;
-                apply = dialog::primary(ui, &Message::StampApply(count).say(lang), ready).clicked();
-                if dialog::secondary(ui, &Message::Close.say(lang)).clicked() {
-                    close = true;
-                }
+                let count = pages
+                    .as_ref()
+                    .and_then(|pages| pages.as_ref().ok())
+                    .map_or(0, Vec::len);
+                let refused = matches!(shown, Some((_, Err(Message::Refused(_)))));
+                dialog::footer(ui, |ui| {
+                    let ready = count > 0 && !busy && !refused;
+                    apply =
+                        dialog::primary(ui, &Message::StampApply(count).say(lang), ready).clicked();
+                    if dialog::secondary(ui, &Message::Close.say(lang)).clicked() {
+                        close = true;
+                    }
+                });
             });
         });
         if close {

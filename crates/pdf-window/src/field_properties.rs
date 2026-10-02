@@ -670,30 +670,32 @@ impl Window {
         let title = Message::FieldProperties.say(lang);
         let shut = Message::Close.say(lang);
         dialog::beside(ctx, canvas, (id, placed), PANEL_WIDTH, |ui, room| {
-            close = dialog::header(ui, &title, None, Some(&shut));
-            let tabs = [
-                (PropertiesTab::General, Message::FieldGeneral.say(lang)),
-                (
-                    PropertiesTab::Appearance,
-                    Message::FieldAppearance.say(lang),
-                ),
-                (PropertiesTab::Options, Message::FieldOptions.say(lang)),
-            ];
-            dialog::segments(ui, "field-tab", &mut tab, &tabs);
-            ui.add_space(10.0);
-            dialog::scrolling(ui, "field-body", room, |ui| {
-                the_tab(ui, draft, (tab, &field), lang);
+            close = dialog::tool_header(ui, &title, None, Some(&shut), lang);
+            dialog::body(ui, |ui| {
+                let tabs = [
+                    (PropertiesTab::General, Message::FieldGeneral.say(lang)),
+                    (
+                        PropertiesTab::Appearance,
+                        Message::FieldAppearance.say(lang),
+                    ),
+                    (PropertiesTab::Options, Message::FieldOptions.say(lang)),
+                ];
+                dialog::segments(ui, "field-tab", &mut tab, &tabs);
+                ui.add_space(10.0);
+                dialog::scrolling(ui, "field-body", room, |ui| {
+                    the_tab(ui, draft, (tab, &field), lang);
+                });
+                dialog::footer_with(
+                    ui,
+                    |ui| {
+                        delete = dialog::secondary(ui, &Message::DeleteField.say(lang)).clicked();
+                    },
+                    |ui| {
+                        apply = dialog::primary(ui, &Message::Apply.say(lang), true).clicked();
+                        close |= dialog::secondary(ui, &shut).clicked();
+                    },
+                );
             });
-            dialog::footer_with(
-                ui,
-                |ui| {
-                    delete = dialog::secondary(ui, &Message::DeleteField.say(lang)).clicked();
-                },
-                |ui| {
-                    apply = dialog::primary(ui, &Message::Apply.say(lang), true).clicked();
-                    close |= dialog::secondary(ui, &shut).clicked();
-                },
-            );
         });
         self.properties_tab = tab;
         if delete {

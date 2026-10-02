@@ -841,29 +841,33 @@ fn ask_where_it_goes(
     let id = egui::Id::new(("link target", placed.x as i32, placed.y as i32));
     let title = Message::LinkProperties.say(lang);
     dialog::beside(ctx, canvas, (id, placed), PANEL_WIDTH, |ui, room| {
-        answered.close = dialog::header(ui, &title, None, Some(&close_word));
-        let tabs = [
-            (LinkTab::Goes, Message::LinkGoesTo.say(lang)),
-            (LinkTab::Appearance, Message::FieldAppearance.say(lang)),
-        ];
-        dialog::segments(ui, "link-tab", &mut answered.tab, &tabs);
-        ui.add_space(10.0);
-        dialog::scrolling(ui, "link-body", room, |ui| match answered.tab {
-            LinkTab::Goes => where_it_goes(ui, draft, (pages, names), lang),
-            LinkTab::Appearance => how_it_is_drawn(ui, &mut draft.look, lang),
+        answered.close = dialog::tool_header(ui, &title, None, Some(&close_word), lang);
+        dialog::body(ui, |ui| {
+            let tabs = [
+                (LinkTab::Goes, Message::LinkGoesTo.say(lang)),
+                (LinkTab::Appearance, Message::FieldAppearance.say(lang)),
+            ];
+            dialog::segments(ui, "link-tab", &mut answered.tab, &tabs);
+            ui.add_space(10.0);
+            dialog::scrolling(ui, "link-body", room, |ui| match answered.tab {
+                LinkTab::Goes => where_it_goes(ui, draft, (pages, names), lang),
+                LinkTab::Appearance => how_it_is_drawn(ui, &mut draft.look, lang),
+            });
+            dialog::footer_with(
+                ui,
+                |ui| {
+                    if !making
+                        && dialog::secondary(ui, &Message::TakeTheLinkOff.say(lang)).clicked()
+                    {
+                        answered.remove = true;
+                    }
+                },
+                |ui| {
+                    answered.apply = dialog::primary(ui, &apply_word, true).clicked();
+                    answered.close |= dialog::secondary(ui, &close_word).clicked();
+                },
+            );
         });
-        dialog::footer_with(
-            ui,
-            |ui| {
-                if !making && dialog::secondary(ui, &Message::TakeTheLinkOff.say(lang)).clicked() {
-                    answered.remove = true;
-                }
-            },
-            |ui| {
-                answered.apply = dialog::primary(ui, &apply_word, true).clicked();
-                answered.close |= dialog::secondary(ui, &close_word).clicked();
-            },
-        );
     });
     answered
 }

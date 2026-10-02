@@ -382,7 +382,7 @@ dependencies = [
 
 [[package]]
 name = "compare-pdf"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "convert-cli",
  "convert-pdftool",
@@ -394,7 +394,7 @@ dependencies = [
 
 [[package]]
 name = "compress-pdf"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "convert-files",
  "convert-pdfdoc",
@@ -416,7 +416,7 @@ dependencies = [
 
 [[package]]
 name = "convert-cli"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "convert-structure",
  "convert-zip",
@@ -425,7 +425,7 @@ dependencies = [
 
 [[package]]
 name = "convert-drawingml"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "convert-office-read",
  "convert-pdf-canvas",
@@ -433,18 +433,18 @@ dependencies = [
 
 [[package]]
 name = "convert-files"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "convert-zip",
 ]
 
 [[package]]
 name = "convert-gif"
-version = "0.2.1"
+version = "0.2.2"
 
 [[package]]
 name = "convert-layout"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "convert-pdf-canvas",
  "convert-svg",
@@ -454,7 +454,7 @@ dependencies = [
 
 [[package]]
 name = "convert-office-read"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "convert-zip",
  "pdf-syntax",
@@ -462,7 +462,7 @@ dependencies = [
 
 [[package]]
 name = "convert-ooxml"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "convert-structure",
  "convert-xml",
@@ -471,7 +471,7 @@ dependencies = [
 
 [[package]]
 name = "convert-pdf-canvas"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "convert-gif",
  "pdf-font",
@@ -480,7 +480,7 @@ dependencies = [
 
 [[package]]
 name = "convert-pdfdoc"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "pdf-bytes",
  "pdf-security",
@@ -489,11 +489,11 @@ dependencies = [
 
 [[package]]
 name = "convert-pdftool"
-version = "0.2.1"
+version = "0.2.2"
 
 [[package]]
 name = "convert-raster"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "pdf-bytes",
  "pdf-edit",
@@ -504,7 +504,7 @@ dependencies = [
 
 [[package]]
 name = "convert-structure"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "pdf-bytes",
  "pdf-content",
@@ -518,14 +518,14 @@ dependencies = [
 
 [[package]]
 name = "convert-svg"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "convert-pdf-canvas",
 ]
 
 [[package]]
 name = "convert-wasm"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "convert-structure",
  "convert-zip",
@@ -533,11 +533,11 @@ dependencies = [
 
 [[package]]
 name = "convert-xml"
-version = "0.2.1"
+version = "0.2.2"
 
 [[package]]
 name = "convert-zip"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "pdf-syntax",
 ]
@@ -911,7 +911,7 @@ dependencies = [
 
 [[package]]
 name = "excel-to-pdf"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "convert-cli",
  "convert-drawingml",
@@ -1302,7 +1302,7 @@ checksum = "dfa686283ad6dd069f105e5ab091b04c62850d3e4cf5d67debad1933f55023df"
 
 [[package]]
 name = "html-to-pdf"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "convert-cli",
  "convert-gif",
@@ -1488,7 +1488,7 @@ dependencies = [
 
 [[package]]
 name = "image-to-pdf"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "convert-files",
  "convert-gif",
@@ -2187,7 +2187,7 @@ dependencies = [
 
 [[package]]
 name = "ocr-pdf"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "convert-files",
  "convert-pdfdoc",
@@ -2251,7 +2251,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-agent"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "pdf-bytes",
  "pdf-cli",
@@ -2267,7 +2267,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-app"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "pdf-agent",
  "pdf-bytes",
@@ -2286,11 +2286,11 @@ dependencies = [
 
 [[package]]
 name = "pdf-bytes"
-version = "0.2.1"
+version = "0.2.2"
 
 [[package]]
 name = "pdf-cli"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "pdf-bytes",
  "pdf-content",
@@ -2304,11 +2304,11 @@ dependencies = [
 
 [[package]]
 name = "pdf-compose"
-version = "0.2.1"
+version = "0.2.2"
 
 [[package]]
 name = "pdf-content"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "pdf-bytes",
  "pdf-font",
@@ -2318,7 +2318,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-convert"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "compare-pdf",
  "compress-pdf",
@@ -2354,7 +2354,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-desktop"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "pdf-app",
  "pdf-bytes",
@@ -2367,7 +2367,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-edit"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "icu_segmenter",
  "pdf-bytes",
@@ -2380,7 +2380,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-font"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "pdf-bytes",
  "pdf-syntax",
@@ -2389,11 +2389,11 @@ dependencies = [
 
 [[package]]
 name = "pdf-heap"
-version = "0.2.1"
+version = "0.2.2"
 
 [[package]]
 name = "pdf-ocr"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "pdf-bytes",
  "pdf-content",
@@ -2405,7 +2405,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-paint"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "hayro-jbig2",
  "jpeg-decoder",
@@ -2417,7 +2417,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-print"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "pdf-bytes",
  "pdf-content",
@@ -2428,7 +2428,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-render"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "pdf-bytes",
  "pdf-content",
@@ -2437,11 +2437,11 @@ dependencies = [
 
 [[package]]
 name = "pdf-scan"
-version = "0.2.1"
+version = "0.2.2"
 
 [[package]]
 name = "pdf-security"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "aes",
  "cbc",
@@ -2454,7 +2454,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-semantics"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "icu_segmenter",
  "pdf-bytes",
@@ -2465,7 +2465,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-session"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "pdf-bytes",
  "pdf-content",
@@ -2477,7 +2477,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-syntax"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "flate2",
  "pdf-bytes",
@@ -2485,7 +2485,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-to-excel"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "convert-cli",
  "convert-ooxml",
@@ -2497,7 +2497,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-to-html"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "convert-cli",
  "convert-structure",
@@ -2507,7 +2507,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-to-image"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "convert-cli",
  "convert-files",
@@ -2521,7 +2521,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-to-markdown"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "convert-cli",
  "convert-structure",
@@ -2530,7 +2530,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-to-pdfa"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "convert-pdfdoc",
  "convert-pdftool",
@@ -2538,7 +2538,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-to-powerpoint"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "convert-cli",
  "convert-ooxml",
@@ -2550,7 +2550,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-to-text"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "convert-cli",
  "convert-structure",
@@ -2559,7 +2559,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-to-word"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "convert-cli",
  "convert-ooxml",
@@ -2571,7 +2571,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-window"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "eframe",
  "js-sys",
@@ -2722,7 +2722,7 @@ dependencies = [
 
 [[package]]
 name = "powerpoint-to-pdf"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "convert-cli",
  "convert-drawingml",
@@ -2764,7 +2764,7 @@ checksum = "3d595e54a326bc53c1c197b32d295e14b169e3cfeaa8dc82b529f947fba6bcf5"
 
 [[package]]
 name = "protect-pdf"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "convert-pdfdoc",
  "convert-pdftool",
@@ -2858,7 +2858,7 @@ dependencies = [
 
 [[package]]
 name = "redact-pdf"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "convert-cli",
  "convert-pdfdoc",
@@ -2906,7 +2906,7 @@ checksum = "19b30a45b0cd0bcca8037f3d0dc3421eaf95327a17cad11964fb8179b4fc4832"
 
 [[package]]
 name = "repair-pdf"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "convert-pdfdoc",
  "convert-pdftool",
@@ -2994,7 +2994,7 @@ dependencies = [
 
 [[package]]
 name = "scan-to-pdf"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "convert-files",
  "convert-raster",
@@ -3064,7 +3064,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "sign-pdf"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "convert-cli",
  "convert-pdfdoc",
@@ -3450,7 +3450,7 @@ checksum = "b4ac048d71ede7ee76d585517add45da530660ef4390e49b098733c6e897f254"
 
 [[package]]
 name = "unlock-pdf"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "convert-pdfdoc",
  "convert-pdftool",
@@ -4295,7 +4295,7 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 
 [[package]]
 name = "word-to-pdf"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "convert-cli",
  "convert-layout",

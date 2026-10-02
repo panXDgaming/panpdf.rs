@@ -4,6 +4,7 @@ use pdf_app::wording::{Lang, Message};
 use pdf_edit::destination::{Naming, Spot};
 use pdf_edit::link::Arrival;
 
+use crate::dialog;
 use crate::link_tool::{DEFAULT_PERCENT, percent_of, same_choice, zoom_word};
 use crate::window_state::{NamingDraft, Window};
 
@@ -44,26 +45,30 @@ impl Window {
         };
         let mut asked: Option<Naming> = None;
         let mut close = false;
-        egui::Window::new(Message::NamedPlaces.say(lang))
-            .collapsible(false)
-            .resizable(false)
-            .default_width(PANEL_WIDTH)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .show(ctx, |ui| {
-                ui.label(
-                    egui::RichText::new(Message::NamedPlacesWhy.say(lang))
-                        .size(11.0)
-                        .color(ui.visuals().weak_text_color()),
-                );
-                ui.separator();
-                asked = listed(ui, draft, (&places, busy), lang);
-                ui.separator();
-                if asked.is_none() {
-                    asked = naming_this_page(ui, draft, (page, busy), lang);
-                }
-                ui.separator();
-                close = ui.button(Message::Close.say(lang)).clicked();
+        let spec = dialog::Spec {
+            id: "named-places-panel",
+            width: PANEL_WIDTH,
+        };
+        let (title, why, shut) = (
+            Message::NamedPlaces.say(lang),
+            Message::NamedPlacesWhy.say(lang),
+            Message::Close.say(lang),
+        );
+        dialog::panel(ctx, self.canvas, &spec, |ui, room| {
+            close = dialog::tool_header(ui, &title, Some(&why), Some(&shut), lang);
+            dialog::body(ui, |ui| {
+                dialog::scrolling(ui, "named-places-body", room, |ui| {
+                    asked = listed(ui, draft, (&places, busy), lang);
+                    dialog::divide(ui);
+                    if asked.is_none() {
+                        asked = naming_this_page(ui, draft, (page, busy), lang);
+                    }
+                });
+                dialog::footer(ui, |ui| {
+                    close |= dialog::secondary(ui, &shut).clicked();
+                });
             });
+        });
         if close {
             self.naming_draft = None;
             return;

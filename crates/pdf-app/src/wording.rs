@@ -119,6 +119,8 @@ pub enum Message {
         searching: bool,
     },
     Close,
+    Fold,
+    Unfold,
     ReplaceAllQuestion {
         count: usize,
         pages: usize,
@@ -1127,6 +1129,8 @@ impl Message {
             }
             .to_owned(),
             Self::Close => "Close".to_owned(),
+            Self::Fold => "Fold away".to_owned(),
+            Self::Unfold => "Unfold".to_owned(),
             Self::ReplaceAllQuestion { count, pages } => format!(
                 "Replace {} on {}?",
                 edits::count(*count, "place"),

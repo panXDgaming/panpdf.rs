@@ -50,11 +50,28 @@ pub(crate) fn panel<R>(
         .frame(egui::Frame::window(&ctx.global_style()).inner_margin(egui::Margin::same(16)))
         .min_width(spec.width)
         .max_width(spec.width)
-        .pivot(egui::Align2::RIGHT_TOP)
-        .default_pos(canvas.right_top() + egui::vec2(-EDGE, EDGE))
+        .default_pos(opening_corner(ctx, canvas, spec.width))
+        .default_size(egui::vec2(outer_width(ctx, spec.width), 100.0))
         .constrain_to(canvas)
-        .show(ctx, |ui| content(ui, room))
+        .show(ctx, |ui| {
+            ui.set_width(spec.width);
+            content(ui, room)
+        })
         .and_then(|shown| shown.inner)
+}
+
+fn outer_width(ctx: &egui::Context, width: f32) -> f32 {
+    width + FRAME + 2.0 * ctx.global_style().visuals.window_stroke.width
+}
+
+fn opening_corner(ctx: &egui::Context, canvas: egui::Rect, width: f32) -> egui::Pos2 {
+    let outer = outer_width(ctx, width);
+    let x = if canvas.width() - outer < 4.0 * EDGE {
+        canvas.center().x - outer / 2.0
+    } else {
+        canvas.right() - EDGE - outer
+    };
+    egui::pos2(x, canvas.top() + EDGE)
 }
 
 pub(crate) fn beside<R>(
@@ -135,6 +152,73 @@ pub(crate) fn header(
     closed
 }
 
+pub(crate) fn tool_header(
+    ui: &mut egui::Ui,
+    title: &str,
+    about: Option<&str>,
+    close: Option<&str>,
+    lang: pdf_app::wording::Lang,
+) -> bool {
+    let key = folded_key(ui);
+    let folded = is_folded(ui);
+    let mut closed = false;
+    let mut flip = false;
+    ui.horizontal(|ui| {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if let Some(close) = close {
+                closed = quiet_icon_button(ui, Icon::Close, close).clicked();
+            }
+            let (icon, word) = if folded {
+                (Icon::Expand, pdf_app::wording::Message::Unfold)
+            } else {
+                (Icon::Up, pdf_app::wording::Message::Fold)
+            };
+            flip = quiet_icon_button(ui, icon, &word.say(lang)).clicked();
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                let title = egui::RichText::new(title).size(15.0).strong();
+                let label = egui::Label::new(title).truncate();
+                let label = if folded {
+                    label.sense(egui::Sense::click())
+                } else {
+                    label
+                };
+                if ui.add(label).clicked() {
+                    flip = true;
+                }
+            });
+        });
+    });
+    if flip {
+        ui.data_mut(|data| data.insert_temp(key, !folded));
+    }
+    if closed {
+        ui.data_mut(|data| data.remove::<bool>(key));
+    }
+    if !folded {
+        if let Some(about) = about {
+            ui.add_space(2.0);
+            ui.add(egui::Label::new(egui::RichText::new(about).size(12.0).color(weak(ui))).wrap());
+        }
+        ui.add_space(10.0);
+    }
+    closed
+}
+
+pub(crate) fn body(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
+    if !is_folded(ui) {
+        add(ui);
+    }
+}
+
+fn folded_key(ui: &egui::Ui) -> egui::Id {
+    ui.layer_id().id.with("folded")
+}
+
+pub(crate) fn is_folded(ui: &egui::Ui) -> bool {
+    ui.data(|data| data.get_temp::<bool>(folded_key(ui)))
+        .unwrap_or(false)
+}
+
 pub(crate) fn caption(ui: &mut egui::Ui, text: &str) {
     ui.add_space(2.0);
     ui.label(
@@ -212,8 +296,8 @@ pub(crate) fn footer_with(
 
 pub(crate) fn primary(ui: &mut egui::Ui, text: &str, enabled: bool) -> egui::Response {
     let visuals = ui.visuals();
-    let button = egui::Button::new(egui::RichText::new(text).color(visuals.selection.stroke.color))
-        .fill(visuals.selection.bg_fill)
+    let button = egui::Button::new(egui::RichText::new(text).color(egui::Color32::WHITE))
+        .fill(visuals.selection.stroke.color)
         .corner_radius(ROUND)
         .min_size(egui::vec2(96.0, CONTROL_HEIGHT));
     ui.add_enabled(enabled, button)
@@ -444,8 +528,92 @@ pub(crate) fn bar(ui: &mut egui::Ui, fraction: Option<f32>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{Spec, panel};
+    use super::{Spec, body, panel, tool_header};
     use eframe::egui;
+
+    #[test]
+    fn a_tool_window_folds_to_its_header_and_opens_again() {
+        let ctx = egui::Context::default();
+        let canvas = egui::Rect::from_min_size(egui::pos2(0.0, 40.0), egui::vec2(1200.0, 760.0));
+        let frame = |events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1200.0, 800.0),
+                )),
+                events,
+                ..egui::RawInput::default()
+            };
+            let mut drew_the_body = false;
+            let _ = ctx.run_ui(input, |ui| {
+                let spec = Spec {
+                    id: "fold-probe",
+                    width: 300.0,
+                };
+                panel(ui.ctx(), canvas, &spec, |ui, _| {
+                    let _ = tool_header(
+                        ui,
+                        "Watermark",
+                        Some("One line on every page."),
+                        Some("Close"),
+                        pdf_app::wording::Lang::English,
+                    );
+                    body(ui, |ui| {
+                        ui.add_space(300.0);
+                        drew_the_body = true;
+                    });
+                });
+            });
+            let placed = ctx
+                .memory(|memory| memory.area_rect(egui::Id::new("fold-probe")))
+                .unwrap_or(egui::Rect::NOTHING);
+            (placed, drew_the_body)
+        };
+        let buttons = || {
+            let window = egui::LayerId::new(egui::Order::Middle, egui::Id::new("fold-probe"));
+            let mut found: Vec<egui::Rect> = ctx.viewport(|viewport| {
+                viewport
+                    .prev_pass
+                    .widgets
+                    .get_layer(window)
+                    .filter(|widget| widget.sense.senses_click() && widget.rect.width() < 40.0)
+                    .map(|widget| widget.rect)
+                    .collect()
+            });
+            found.sort_by(|a, b| b.right().total_cmp(&a.right()));
+            found
+        };
+        let click = |at: egui::Pos2| {
+            let press = |pressed| egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            let _ = frame(vec![egui::Event::PointerMoved(at)]);
+            let _ = frame(vec![press(true)]);
+            let _ = frame(vec![press(false)]);
+            frame(Vec::new())
+        };
+        let _ = frame(Vec::new());
+        let (open, drawn) = frame(Vec::new());
+        assert!(drawn && open.height() > 300.0, "{open:?}");
+        let found = buttons();
+        assert!(found.len() >= 2, "{found:?}");
+        let (folded, drawn) = click(found[1].center());
+        assert!(!drawn, "a folded window leaves its body out");
+        assert!(folded.height() < 80.0, "folded to {folded:?}");
+        assert!(
+            (folded.top() - open.top()).abs() < 1.0,
+            "{open:?} -> {folded:?}"
+        );
+        let (again, drawn) = click(buttons()[1].center());
+        assert!(drawn, "unfolded, the body is back");
+        assert!(
+            (again.height() - open.height()).abs() < 1.0,
+            "{open:?} -> {again:?}"
+        );
+    }
 
     fn frame_of(canvas: egui::Rect, width: f32) -> egui::Rect {
         let ctx = egui::Context::default();
